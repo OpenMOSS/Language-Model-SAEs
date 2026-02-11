@@ -593,9 +593,6 @@ class SearchlessChessBehavioralCloningModel(TransformerLensLanguageModel):
             else:
                 tokens = torch.tensor(tokens)
         tokens = tokens.to(self.cfg.device)
-        # print(f"{tokens.shape = }") # [2048, 78]
-
-        # Return the activations and tokens
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens}
 
 
@@ -604,7 +601,6 @@ class LeelaChessModel(TransformerLensLanguageModel):
     def __init__(self, cfg: LanguageModelConfig):
         # 不调用父类的 __init__ 方法，这样可以避免继承父类的 tokenizer 初始化
         self.cfg = cfg
-        print(f'{self.cfg = }')
         
         self.device = (
             torch.device(f"cuda:{torch.cuda.current_device()}") if cfg.device == "cuda" else torch.device(cfg.device)
@@ -637,8 +633,6 @@ class LeelaChessModel(TransformerLensLanguageModel):
     @torch.no_grad()
     def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
         assert len(raw["fen"]) == len(raw["meta"])
-        
-        # 处理所有32个元素
         texts = []
         metas = []
         for i in range(len(raw["fen"])):

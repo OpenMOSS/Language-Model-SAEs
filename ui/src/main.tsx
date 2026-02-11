@@ -11,11 +11,18 @@ import { DictionaryPage } from "./routes/dictionaries/page";
 import { ModelsPage } from "./routes/models/page";
 import BookmarksPage from "./routes/bookmarks/page";
 import { CircuitsPage } from "./routes/circuits/page";
+import { SearchCircuitsPage } from "./routes/search-circuits/page";
 import ThreeDVisualPage from "./routes/3D-visualization/page";
 import { PlayGamePage } from "./routes/play-game/page";
 import { PlotGraphPage } from "./routes/plot-graph/page";
 import { LogitLensPage } from "./routes/logit-lens/page";
 import { TacticFeaturesPage } from "./routes/tactic-features/page";
+import { GlobalWeightPage } from "./routes/global-weight/page";
+import { FunctionalMicrocircuitPage } from "./routes/functional-microcircuit/page";
+import { PositionFeaturePage } from "./routes/position-feature/page";
+import { FeatureInteractionPage } from "./routes/feature-interaction/page";
+import { InteractionCircuitPage } from "./routes/interaction-circuit/page";
+
 
 const router = createBrowserRouter([
   {
@@ -51,6 +58,10 @@ const router = createBrowserRouter([
     element: <PlayGamePage />,
   },
   {
+    path: "/search-circuits",
+    element: <SearchCircuitsPage />,
+  },
+  {
     path: "/plot-graph",
     element: <PlotGraphPage />,
   },
@@ -61,6 +72,26 @@ const router = createBrowserRouter([
   {
     path: "/tactic-features",
     element: <TacticFeaturesPage />,
+  },
+  {
+    path: "/global-weight",
+    element: <GlobalWeightPage />,
+  },
+  {
+    path: "/functional-microcircuit",
+    element: <FunctionalMicrocircuitPage />,
+  },
+  {
+    path: "/position-feature",
+    element: <PositionFeaturePage />,
+  },
+  {
+    path: "/feature-interaction",
+    element: <FeatureInteractionPage />,
+  },
+  {
+    path: "/interaction-circuit",
+    element: <InteractionCircuitPage />,
   },
   {
     path: "/",

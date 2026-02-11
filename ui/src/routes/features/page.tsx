@@ -3,6 +3,7 @@ import { SectionNavigator } from "@/components/app/section-navigator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
@@ -13,6 +14,7 @@ import { z } from "zod";
 
 const FeatureCard = lazy(() => import("@/components/feature/feature-card").then(module => ({ default: module.FeatureCard })));
 import { ChessBoard } from "@/components/chess/chess-board";
+import { CustomFenInput } from "@/components/feature/custom-fen-input";
 
 // 全局计数器确保唯一ID
 let boardCounter = 0;
@@ -154,6 +156,7 @@ export const FeaturesPage = () => {
     }
   );
 
+
   useMount(async () => {
     // 预加载模型
     await preloadModel();
@@ -199,6 +202,16 @@ export const FeaturesPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDictionary]);
 
+
+  // Memoize dictionary options for Combobox
+  const dictionaryOptions = useMemo(() => {
+    if (!dictionariesState.value) return [];
+    return dictionariesState.value.map((dict) => ({
+      value: dict,
+      label: dict,
+    }));
+  }, [dictionariesState.value]);
+
   // Memoize sections calculation
   const sections = useMemo(() => [
     {
@@ -239,24 +252,18 @@ export const FeaturesPage = () => {
       <div className="pt-4 pb-20 px-20 flex flex-col items-center gap-12">
         <div className="container grid grid-cols-[auto_600px_auto_auto] justify-center items-center gap-4">
           <span className="font-bold justify-self-end">Select dictionary:</span>
-          <Select
+          <Combobox
             disabled={dictionariesState.loading || featureLoading}
-            value={selectedDictionary || undefined}
-            onValueChange={(value) => {
+            value={selectedDictionary || null}
+            onChange={(value) => {
               setSelectedDictionary(value);
             }}
-          >
-            <SelectTrigger className="bg-white">
-              <SelectValue placeholder="Select a dictionary" />
-            </SelectTrigger>
-            <SelectContent>
-              {dictionariesState.value?.map((dictionary, i) => (
-                <SelectItem key={i} value={dictionary}>
-                  {dictionary}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={dictionaryOptions}
+            placeholder="选择字典..."
+            commandPlaceholder="搜索字典..."
+            emptyIndicator="未找到匹配的字典"
+            className="w-full"
+          />
           <Button
             disabled={dictionariesState.loading || featureLoading}
             onClick={async () => {
@@ -318,6 +325,15 @@ export const FeaturesPage = () => {
             Show Random Feature
           </Button>
                     </div>
+
+        {/* 自定义FEN分析区域 */}
+        <div className="container w-full max-w-6xl mx-auto mb-8">
+          <CustomFenInput
+            dictionary={selectedDictionary}
+            featureIndex={featureIndex}
+            disabled={dictionariesState.loading || selectedDictionary === null || featureLoading}
+          />
+        </div>
 
         {featureLoading && !loadingRandomFeature && (
           <div>

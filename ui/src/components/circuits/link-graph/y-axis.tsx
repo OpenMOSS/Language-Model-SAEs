@@ -5,11 +5,13 @@ import d3 from "../static_js/d3";
 interface YAxisProps {
   positionedNodes: any[];
   y: d3.ScaleBand<number>;
+  hideEmbLogit?: boolean; // 是否隐藏 Emb 和 Logit 层
 }
 
 export const YAxis: React.FC<YAxisProps> = React.memo(({
   positionedNodes,
-  y
+  y,
+  hideEmbLogit = false
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -26,6 +28,19 @@ export const YAxis: React.FC<YAxisProps> = React.memo(({
       const yPos = y(layerIdx) + y.bandwidth() / 2;
       
       let label: string;
+      if (hideEmbLogit) {
+        // Interaction circuit 模式：去掉 Emb 和 Logit，直接根据 layerIdx 计算：A0/M0 从 layerIdx 0/1 开始
+        // layerIdx % 2 === 0 表示 A 层，否则是 M 层
+        // A0=0, M0=1, A1=2, M1=3, A2=4, M2=5, ...
+        if (layerIdx % 2 === 0) {
+          // A 层：A0, A1, A2, ...
+          label = `A${Math.floor(layerIdx / 2)}`;
+        } else {
+          // M 层：M0, M1, M2, ...
+          label = `M${Math.floor(layerIdx / 2)}`;
+        }
+      } else {
+        // Circuit tracing 模式：保留 Emb 和 Logit
       if (layerIdx === 0) {
         label = "Emb";
       } else if (layerIdx === yNumTicks - 1) {
@@ -34,6 +49,7 @@ export const YAxis: React.FC<YAxisProps> = React.memo(({
         label = `M${Math.floor(layerIdx / 2) - 1}`;
       } else {
         label = `A${Math.floor(layerIdx / 2)}`;
+        }
       }
       
       svg.append("line")
@@ -53,7 +69,7 @@ export const YAxis: React.FC<YAxisProps> = React.memo(({
         .attr("fill", "#666")
         .text(label);
     });
-  }, [positionedNodes, y]);
+  }, [positionedNodes, y, hideEmbLogit]);
 
   return (
     <g ref={svgRef} className="y-axis" />

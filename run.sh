@@ -48,16 +48,25 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29640 --nproc_per_no
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29642 --nproc_per_node=8 exp/gen_lc0_tc_2d_T82_M14.py
 
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29620 --nproc_per_node=8 exp/gen_lc0_tc_BT4.py
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29640 --nproc_per_node=8 exp/gen_lc0_tc_BT4_M13.py
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29640 --nproc_per_node=8 exp/gen_lc0_tc_BT4_M14.py
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29610 --nproc_per_node=8 exp/gen_lc0_tc_2d_BT4.py
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29680 --nproc_per_node=8 exp/gen_lc0_tc_2d_BT4_M14.py
 
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29680 --nproc_per_node=8 exp/gen_lc0_tc_2d_BT4_lichess_puzzle.py
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29690 --nproc_per_node=8 exp/gen_lc0_tc_2d_BT4_lichess_puzzle_M14.py
+
+# gen sae
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29690 --nproc_per_node=8 exp/gen_lc0_sae_BT4_resid_post_after_ln.py
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29690 --nproc_per_node=8 exp/gen_lc0_sae_2d_BT4_resid_post_after_ln.py
+
 # gen lorsa
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29620 --nproc_per_node=8 exp/gen_lc0_lorsa_2d_T82.py
 CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 torchrun --master_port=29630 --nproc_per_node=6 exp/gen_lc0_lorsa_2d_T82.py
+
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29620 --nproc_per_node=8 exp/gen_lc0_lorsa_2d_BT4.py
 
+
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29690 --nproc_per_node=8 exp/gen_lc0_lorsa_2d_BT4_lichess_puzzle.py
 # eval
 # eval tc
 CUDA_VISIBLE_DEVICES=0 torchrun --master_port=30010 --nproc-per-node=1 exp/eval_lc0_tc.py --layer 14
@@ -70,7 +79,7 @@ export MONGO_URI=$(cat $HOME/mongoip)
 
 # 查看最新的mongourl
 
-mongosh mongodb://10.244.94.234:27017/mechinterp    
+mongosh mongodb://10.245.40.143:27017/mechinterp    
 # db.datasets.find()
 # db.saes.find()
 # db.models.find({"name":"searchless-chess-9M-behavioral-cloning"})
@@ -98,6 +107,7 @@ uv run lm-saes create sae searchless_chess-test-L8 searchless_chess-test /inspir
 
 
 uv run lm-saes create model lc0/T82-768x15x24h /inspire/hdd/global_user/hezhengfu-240208120186/models/chess/lc0/dummy_config_lc0_T82-768x15x24h.json
+                                              /inspire/hdd/global_user/hezhengfu-240208120186/models/chess/lc0/dummy_config_lc0_T82-768x15x24h copy.json
 uv run lm-saes create model lc0/BT4-1024x15x32h /inspire/hdd/global_user/hezhengfu-240208120186/models/chess/leela-BT4/dummy_config_lc0_BT4-1024x15x32h.json
 uv run lm-saes create dataset puzzle_demo /inspire/hdd/global_user/hezhengfu-240208120186/data/rlin_data/Chess/chess_compilation_data/dataset_info.json
 uv run lm-saes create dataset master /inspire/hdd/global_user/hezhengfu-240208120186/data/rlin_data/Chess/chess_master_data/dataset_info.json
@@ -110,7 +120,7 @@ uv run uvicorn server.app:app --host 0.0.0.0 --port 3000 --env-file server/.env
 CUDA_VISIBLE_DEVICES=3,2,1,0 torchrun --master_port=29910 --nproc_per_node=4 exp/card_occupy.py 
 CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --master_port=29910 --nproc_per_node=4 exp/card_occupy.py 
 CUDA_VISIBLE_DEVICES=1 torchrun --master_port=29910 --nproc_per_node=1 exp/card_occupy.py 
-
+CUDA_VISIBLE_DEVICES=0 torchrun --master_port=29910 --nproc_per_node=1 exp/card_occupy.py 
 
 while true; do
     echo "Sleeping 3 hours..."
@@ -412,11 +422,11 @@ db.features.deleteMany({
 })
 
 db.analyses.deleteMany({
-  sae_name: "lc0-lorsa-L7",
+  sae_name: "BT4_lorsa_L10A",
   sae_series: "BT4-exp128"
 })
 db.features.deleteMany({
-  sae_name: "lc0-lorsa-L7",
+  sae_name: "BT4_lorsa_L10A",
   sae_series: "BT4-exp128"
 })
 

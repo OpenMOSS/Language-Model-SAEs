@@ -2,6 +2,7 @@ import { AppNavbar } from "@/components/app/navbar";
 import { CircuitVisualization } from "@/components/circuits/circuit-visualization";
 
 export const CircuitsPage = () => {
+
   return (
     <div className="min-h-screen bg-background">
       <AppNavbar />

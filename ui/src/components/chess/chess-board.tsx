@@ -20,6 +20,7 @@ interface ChessBoardProps {
   autoFlipWhenBlack?: boolean; // 新增：到黑方行棋时自动翻转
   moveColor?: string; // 新增：箭头颜色（与节点颜色一致）
   showSelfPlay?: boolean; // 新增：是否显示自对弈功能
+  disableAutoAnalyze?: boolean; // 新增：禁用自动分析（避免重复加载模型）
 }
 
 // 棋子Unicode符号映射
@@ -189,6 +190,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   autoFlipWhenBlack = false,
   moveColor,
   showSelfPlay = false,
+  disableAutoAnalyze = false,
 }) => {
   // 一行精简日志：直接打印用于显示的数据结构
   console.log(`[CB#${sampleIndex ?? 'NA'}] activations:`, activations);
@@ -209,8 +211,16 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   const [currentSelfPlayStep, setCurrentSelfPlayStep] = useState(0);
   const [showSelfPlayPanel, setShowSelfPlayPanel] = useState(false);
 
+  // 前向推理相关状态
+  const [forwardInferenceData, setForwardInferenceData] = useState<any>(null);
+  const [forwardInferenceLoading, setForwardInferenceLoading] = useState(false);
+  const [forwardInferenceError, setForwardInferenceError] = useState<string | null>(null);
+
   // 修改handleAnalyze函数，移除JSON.stringify中对象的尾随逗号
-  const handleAnalyze = async () => {
+  const handleAnalyze = useCallback(async () => {
+    if (disableAutoAnalyze) {
+      return; // 如果禁用自动分析，直接返回
+    }
     try {
       console.log(`[CB#${sampleIndex ?? 'NA'}] 正在分析局面: ${fen.substring(0, 50)}...`);
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
@@ -224,18 +234,59 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     } catch (error) {
       console.error(`[CB#${sampleIndex ?? 'NA'}] 分析局面失败:`, error);
     }
-  };
+  }, [fen, disableAutoAnalyze, sampleIndex]);
 
   // 在状态声明区域之后添加 useEffect 来自动调用 handleAnalyze，当 fen 变化时触发
+  // 后端已经实现了加载锁机制，会等待正在加载的模型完成，不会重复加载
   useEffect(() => {
     handleAnalyze();
-  }, [fen]);
+  }, [handleAnalyze]);
+
+  // 前向推理函数
+  const handleForwardInference = useCallback(async () => {
+    setForwardInferenceLoading(true);
+    setForwardInferenceError(null);
+
+    try {
+      console.log(`[CB#${sampleIndex ?? 'NA'}] 开始前向推理: ${fen.substring(0, 50)}...`);
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/logit_lens/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fen: fen,
+          topk_vocab: 2000,
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+
+      const result = await response.json();
+      console.log(`[CB#${sampleIndex ?? 'NA'}] 前向推理完成:`, result);
+      const preds = Array.isArray(result?.final_layer_predictions) ? result.final_layer_predictions : [];
+      const moves = preds.slice(0, 5).map((p: any) => ({
+        move: p?.uci,
+        logit: typeof p?.score === 'number' ? p.score : p?.logit,
+        probability: typeof p?.prob === 'number' ? p.prob : p?.probability,
+      }));
+      setForwardInferenceData({ moves });
+
+    } catch (err) {
+      console.error(`[CB#${sampleIndex ?? 'NA'}] 前向推理失败:`, err);
+      setForwardInferenceError(err instanceof Error ? err.message : '前向推理失败');
+    } finally {
+      setForwardInferenceLoading(false);
+    }
+  }, [fen, sampleIndex]);
 
   // 自对弈函数
   const handleSelfPlay = useCallback(async () => {
     setSelfPlayLoading(true);
     setSelfPlayError(null);
-    
+
     try {
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/self_play`, {
         method: 'POST',
@@ -257,7 +308,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       setSelfPlayData(result);
       setCurrentSelfPlayStep(0);
       setShowSelfPlayPanel(true);
-      
+
     } catch (err) {
       console.error('自对弈失败:', err);
       setSelfPlayError(err instanceof Error ? err.message : '自对弈失败');
@@ -317,12 +368,15 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   const { board, isWhiteToMove } = parsedBoard;
 
-  // 黑方行棋时翻转棋盘显示（受开关控制）
+  // 保持原有 flip 语义：黑方行棋时整体上下翻转棋盘（受开关控制）
   const flip = autoFlipWhenBlack ? !isWhiteToMove : false;
 
-  // 根据 flip 决定是否翻转棋盘
+  // 显示棋盘：
+  // 1. 先按 flip 在垂直方向（上下）翻转整盘棋
+  // 2. 只在黑方视角时对每一行做左右镜像，白方视角保持原样
   const displayBoard = useMemo(() => {
-    return flip ? [...board].reverse() : board;
+    const baseBoard = flip ? [...board].reverse() : board;
+    return flip ? baseBoard.map((row) => [...row].reverse()) : baseBoard;
   }, [board, flip]);
 
   // 解析移动信息
@@ -330,55 +384,62 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     return move ? parseMove(move) : null;
   }, [move]);
 
-  // 根据显示位置计算实际的squareIndex（考虑翻转）
+  // 根据显示位置计算实际的squareIndex（考虑上下 flip + 左右镜像）
   const getActualSquareIndex = (displayRow: number, col: number): number => {
+    // 先还原垂直方向：displayRow → 实际行
     const actualRow = flip ? (7 - displayRow) : displayRow;
-    return getSquareIndex(actualRow, col);
+    // 只在黑方视角时做了左右镜像：显示列 0 对应实际列 7，显示列 7 对应实际列 0
+    const actualCol = flip ? (7 - col) : col;
+    return getSquareIndex(actualRow, actualCol);
   };
 
   // 激活值索引映射 - 激活值数组按照标准棋盘坐标：a1=0, b1=1, ..., h8=63
   const getActivationIndex = (displayRow: number, col: number): number => {
-    // 将显示行转换回原始棋盘行（根据棋盘是否翻转）
+    // 先还原到"原始棋盘行"（在是否 flip 之后）
     const originalRow = flip ? (7 - displayRow) : displayRow;
-    // 根据flip_activation参数决定是否翻转激活值索引
+    // 只在黑方视角时做了左右镜像：显示列 0 → 实际列 7
+    const actualCol = flip ? (7 - col) : col;
+
+    // 根据 flip_activation 参数决定是否在行方向上再做一次翻转
     if (flip_activation) {
       // 翻转激活值索引：FEN第0行对应第1行，FEN第7行对应第8行
-      return originalRow * 8 + col;
+      return originalRow * 8 + actualCol;
     } else {
       // 不翻转激活值索引：FEN第0行对应第8行，FEN第7行对应第1行
       const standardRow = 7 - originalRow;
-      return standardRow * 8 + col;
+      return standardRow * 8 + actualCol;
     }
   };
 
-  // 新增：根据棋盘朝向(flip)计算显示位置（用于棋盘元素/箭头对齐棋盘格子）
+  // 新增：根据实际索引计算显示位置（考虑上下 flip + 左右镜像）
   const getBoardDisplayPosition = (actualSquareIndex: number) => {
     const actualRow = Math.floor(actualSquareIndex / 8);
-    const col = actualSquareIndex % 8;
+    const actualCol = actualSquareIndex % 8;
+    // 垂直方向：实际行 → 显示行
     const displayRow = flip ? (7 - actualRow) : actualRow;
-    return { row: displayRow, col };
+    // 水平方向：只在黑方视角时做左右镜像
+    const displayCol = flip ? (7 - actualCol) : actualCol;
+    return { row: displayRow, col: displayCol };
   };
 
   // 根据显示行索引获取棋盘行号（1-8）
   const getDisplayRowNumber = (displayRowIndex: number) => {
     if (flip) {
-      // 翻转时：显示行0对应第1行，显示行7对应第8行
+      // 黑方视角：显示行0对应第1行，显示行7对应第8行
       return displayRowIndex + 1;
-    } else {
-      // 正常时：显示行0对应第8行，显示行7对应第1行
-      return 8 - displayRowIndex;
     }
+    // 白方视角：显示行0对应第8行，显示行7对应第1行
+    return 8 - displayRowIndex;
   };
 
   // 根据显示列索引获取棋盘列字母（a-h）
   const getDisplayColLetter = (colIndex: number) => {
     if (flip) {
-      // 翻转时：列0对应h，列7对应a
+      // 黑方视角：从左到右 h..a
       return String.fromCharCode(104 - colIndex); // 104 = 'h'
-    } else {
-      // 正常时：列0对应a，列7对应h
-      return String.fromCharCode(97 + colIndex); // 97 = 'a'
     }
+    // 白方视角：从左到右 a..h
+    return String.fromCharCode(97 + colIndex); // 97 = 'a'
   };
 
   // 统一的 从索引到标准坐标的命名（不依赖行棋方）
@@ -457,6 +518,22 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   // 获取当前hover格子的Z模式目标
   const zPatternTargets = hoveredSquare !== null ? getZPatternTargets(hoveredSquare, zPatternIndices, zPatternValues) : [];
 
+  // 处理前向推理结果
+  const forwardMoves = useMemo(() => {
+    if (!forwardInferenceData || !forwardInferenceData.moves) return [];
+
+    return forwardInferenceData.moves.map((moveData: any) => {
+      const parsedMove = parseMove(moveData.move);
+      if (!parsedMove) return null;
+
+      return {
+        ...parsedMove,
+        logit: moveData.logit,
+        probability: moveData.probability
+      };
+    }).filter(Boolean);
+  }, [forwardInferenceData]);
+
   return (
     <div className="flex flex-col items-center space-y-2">
       {/* 棋盘信息 */}
@@ -487,11 +564,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           {displayBoard.map((row, displayRowIndex) =>
             row.map((_, colIndex) => {
               const piece = row[colIndex];
-              // 计算格子颜色：当翻转时，需要反转格子颜色
+              // 计算格子颜色：
               // 在标准棋盘上，a1是黑格（dark），h1是白格（light）
-              // 翻转后，所有黑格应该变成白格，所有白格应该变成黑格
               const normalIsLight = (displayRowIndex + colIndex) % 2 === 0;
-              const isLight = flip ? !normalIsLight : normalIsLight;
+              const isLight = normalIsLight;
               const squareIndex = getActualSquareIndex(displayRowIndex, colIndex);
               const activationIndex = getActivationIndex(displayRowIndex, colIndex);
               const activation = activations?.[activationIndex] || 0;
@@ -616,13 +692,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   {/* 坐标标记 */}
                   {showCoordinates && (
                     <>
-                      {/* 行号：显示在左侧（colIndex === 0）或右侧（翻转时） */}
+                      {/* 行号：白方视角在左侧，黑方视角在右侧 */}
                       {(!flip && colIndex === 0) || (flip && colIndex === 7) ? (
                         <div className={`absolute ${flip ? 'right-1' : 'left-1'} top-1 text-xs font-bold opacity-60`}>
                           {getDisplayRowNumber(displayRowIndex)}
                         </div>
                       ) : null}
-                      {/* 列字母：显示在底部（displayRowIndex === 7）或顶部（翻转时） */}
+                      {/* 列字母：白方视角在底部一行，黑方视角在顶部一行 */}
                       {(!flip && displayRowIndex === 7) || (flip && displayRowIndex === 0) ? (
                         <div className={`absolute ${flip ? 'top-1' : 'bottom-1'} ${flip ? 'left-1' : 'right-1'} text-xs font-bold opacity-60`}>
                           {getDisplayColLetter(colIndex)}
@@ -644,11 +720,14 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             viewBox={`0 0 ${boardPx} ${boardPx}`}
             style={{ zIndex: 10 }}
           >
-            <defs>
-              <marker id="arrow-head" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L0,6 L6,3 z" fill={moveColor || '#4b5563'} />
-              </marker>
-            </defs>
+          <defs>
+            <marker id="arrow-head" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L6,3 z" fill={moveColor || '#4b5563'} />
+            </marker>
+            <marker id="forward-arrow-head" markerWidth="6" markerHeight="6" refX="5" refY="2.5" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,5 L5,2.5 z" fill="#10b981" />
+            </marker>
+          </defs>
             {(() => {
               // 使用棋盘朝向映射，保证箭头与格子渲染一致
               const fromPos = getBoardDisplayPosition(parsedMove.from.index);
@@ -671,7 +750,38 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 />
               );
             })()}
-          </svg>
+
+          {/* 前向推理移动箭头 */}
+          {forwardMoves.map((moveData: any, index: number) => {
+            const fromPos = getBoardDisplayPosition(moveData.from.index);
+            const toPos = getBoardDisplayPosition(moveData.to.index);
+            const sq = squareSizePxMap[size];
+            const fromX = fromPos.col * sq + sq / 2;
+            const fromY = fromPos.row * sq + sq / 2;
+            const toX = toPos.col * sq + sq / 2;
+            const toY = toPos.row * sq + sq / 2;
+
+            // 根据logit值计算箭头粗细 (logit越大，箭头越粗)
+            const minLogit = Math.min(...forwardMoves.map((m: any) => m.logit));
+            const maxLogit = Math.max(...forwardMoves.map((m: any) => m.logit));
+            const normalizedLogit = (moveData.logit - minLogit) / (maxLogit - minLogit);
+            const strokeWidth = 2 + normalizedLogit * 4; // 2-6px
+
+            return (
+              <line
+                key={`forward-${index}`}
+                x1={fromX}
+                y1={fromY}
+                x2={toX}
+                y2={toY}
+                stroke="#10b981"
+                strokeWidth={strokeWidth}
+                strokeOpacity={0.8}
+                markerEnd="url(#forward-arrow-head)"
+              />
+            );
+          })}
+        </svg>
         )}
       </div>
 
@@ -751,37 +861,77 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         );
       })()}
 
-      {/* 自对弈功能 */}
-      {showSelfPlay && (
-        <div className="mt-6 space-y-4">
-          {/* 自对弈控制按钮 */}
-          <div className="flex justify-center space-x-4">
-            <button
-              onClick={handleSelfPlay}
-              disabled={selfPlayLoading}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              {selfPlayLoading ? '进行中...' : '开始自对弈 (5步)'}
-            </button>
-            {selfPlayData && (
+      {/* 前向推理和自对弈功能 */}
+      <div className="mt-6 space-y-4">
+        {/* 推理控制按钮 */}
+        <div className="flex justify-center space-x-4">
+          <button
+            onClick={handleForwardInference}
+            disabled={forwardInferenceLoading}
+            className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {forwardInferenceLoading ? '推理中...' : 'Run forward'}
+          </button>
+          {showSelfPlay && (
+            <>
               <button
-                onClick={() => setShowSelfPlayPanel(!showSelfPlayPanel)}
-                className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
+                onClick={handleSelfPlay}
+                disabled={selfPlayLoading}
+                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
-                {showSelfPlayPanel ? '隐藏结果' : '显示结果'}
+                {selfPlayLoading ? '进行中...' : '开始自对弈 (5步)'}
               </button>
-            )}
-          </div>
+              {selfPlayData && (
+                <button
+                  onClick={() => setShowSelfPlayPanel(!showSelfPlayPanel)}
+                  className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
+                >
+                  {showSelfPlayPanel ? '隐藏结果' : '显示结果'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
 
-          {/* 错误显示 */}
-          {selfPlayError && (
+        {/* 前向推理错误显示 */}
+        {forwardInferenceError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-red-700 text-sm">{forwardInferenceError}</p>
+          </div>
+        )}
+
+        {/* 前向推理结果显示 */}
+        {forwardInferenceData && forwardInferenceData.moves && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <h4 className="text-sm font-semibold text-green-800 mb-2">前向推理结果 (Top 5 移动)</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-2">
+              {forwardInferenceData.moves.map((moveData: any, index: number) => (
+                <div key={index} className="bg-white rounded p-2 text-center border">
+                  <div className="font-mono text-sm font-medium">{moveData.move}</div>
+                  <div className="text-xs text-gray-600">
+                    {(moveData.probability * 100).toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    logit: {moveData.logit?.toFixed(3)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 自对弈功能 */}
+        {showSelfPlay && (
+          <>
+            {/* 错误显示 */}
+            {selfPlayError && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <p className="text-red-700 text-sm">{selfPlayError}</p>
             </div>
-          )}
+            )}
 
-          {/* 自对弈结果显示 */}
-          {selfPlayData && showSelfPlayPanel && (
+            {/* 自对弈结果显示 */}
+            {selfPlayData && showSelfPlayPanel && (
             <div className="space-y-4">
               {/* 步骤导航 */}
               <div className="bg-white rounded-lg border p-4">
@@ -1078,9 +1228,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 </div>
               )}
             </div>
-          )}
-        </div>
-      )}
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 };

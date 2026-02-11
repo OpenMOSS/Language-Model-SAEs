@@ -485,7 +485,7 @@ class ReplacementModel(HookedTransformer):
 
         for layer in range(self.cfg.n_layers):
             layer_act = tc_activation_matrix[layer]
-            print(f'{layer_act.shape = }')
+            # print(f'{layer_act.shape = }') [64, 16384]
 
             if isinstance(layer_act, torch.Tensor) and layer_act.layout == torch.sparse_coo:
                 layer_act = layer_act.to_dense()

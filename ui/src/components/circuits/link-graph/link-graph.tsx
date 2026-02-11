@@ -22,6 +22,7 @@ interface LinkGraphProps {
   visState: VisState;
   onNodeClick: (nodeId: string, metaKey: boolean) => void;
   onNodeHover: (nodeId: string | null) => void;
+  hideEmbLogit?: boolean; // 是否隐藏 Emb 和 Logit 层（用于 interaction circuit 模式）
 }
 
 const LinkGraphComponent: React.FC<LinkGraphProps> = ({
@@ -29,6 +30,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   visState,
   onNodeClick,
   onNodeHover,
+  hideEmbLogit = false,
 }) => {
   // onNodeHover is kept for interface compatibility but not used for performance
   const svgRef = useRef<SVGSVGElement>(null);
@@ -176,34 +178,34 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
     };
   }, []);
 
-  // Memoize token data calculation
+  // Memoize token data calculation - only show positions that have features
   const tokenData = useMemo(() => {
-    if (!data.metadata?.prompt_tokens || !positionedNodes.length) return [];
+    if (!positionedNodes.length) return [];
     
-    const maxCtxIdx = d3.max(positionedNodes, (d: any) => d.ctx_idx) || 0;
+    // Get unique ctx_idx values that have nodes
+    const ctxIndicesWithNodes = Array.from(new Set(positionedNodes.map((d: any) => d.ctx_idx))).sort((a, b) => a - b);
     
-    return data.metadata.prompt_tokens
-      .slice(0, maxCtxIdx + 1)
-      .map((token: string, index: number) => {
-        const contextNodes = positionedNodes.filter((d: any) => d.ctx_idx === index);
+    return ctxIndicesWithNodes
+      .map((ctx_idx: number) => {
+        const contextNodes = positionedNodes.filter((d: any) => d.ctx_idx === ctx_idx);
         
-        if (contextNodes.length === 0) {
-          return {
-            token,
-            ctx_idx: index,
-            x: x(index + 1) - (x(index + 1) - x(index)) / 2
-          };
-        }
+        if (contextNodes.length === 0) return null;
         
         const nodeXPositions = contextNodes.map((d: any) => d.pos[0]);
         const rightX = Math.max(...nodeXPositions);
         
+        // Get token if available, otherwise use empty string (position index is shown separately)
+        const token = data.metadata?.prompt_tokens && ctx_idx < data.metadata.prompt_tokens.length
+          ? data.metadata.prompt_tokens[ctx_idx]
+          : '';
+        
         return {
           token,
-          ctx_idx: index,
+          ctx_idx,
           x: rightX
         };
-      });
+      })
+      .filter(Boolean); // Remove null entries
   }, [data.metadata?.prompt_tokens, positionedNodes, x]);
 
   // Early return if no data or scales
@@ -249,6 +251,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         <YAxis 
           positionedNodes={positionedNodes}
           y={y}
+          hideEmbLogit={hideEmbLogit}
         />
         
         <Links 
@@ -283,4 +286,64 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
 };
 
 // Memoize the component to prevent unnecessary re-renders
-export const LinkGraph = React.memo(LinkGraphComponent); 
+export const LinkGraph = React.memo(LinkGraphComponent);
+
+// Export function to get SVG string
+export function exportLinkGraphAsSvg(svgElement: SVGSVGElement | null): string | null {
+  if (typeof window === 'undefined' || !svgElement) return null;
+  
+  try {
+    // Clone the SVG to avoid modifying the original
+    const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
+    
+    // Remove tooltips and hover indicators for export (they're interactive elements)
+    const tooltips = svgClone.querySelectorAll('.clerp-tooltip, .hover-indicator');
+    tooltips.forEach(el => el.remove());
+    
+    // Get all computed styles and inline them
+    const styleSheets = Array.from(document.styleSheets);
+    let cssText = '';
+    
+    // Collect relevant CSS rules
+    styleSheets.forEach(sheet => {
+      try {
+        const rules = Array.from(sheet.cssRules || sheet.rules || []);
+        rules.forEach(rule => {
+          if (rule instanceof CSSStyleRule) {
+            const selector = rule.selectorText;
+            // Include styles for nodes, links, and other graph elements
+            if (selector && (
+              selector.includes('.node') ||
+              selector.includes('.link') ||
+              selector.includes('.token-label') ||
+              selector.includes('.position-index') ||
+              selector.includes('.grid-line') ||
+              selector.includes('.y-axis')
+            )) {
+              cssText += `${selector} { ${rule.style.cssText} }\n`;
+            }
+          }
+        });
+      } catch (e) {
+        // Cross-origin stylesheets may throw errors, ignore them
+      }
+    });
+    
+    // Create a style element with the collected CSS
+    if (cssText) {
+      const styleElement = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+      styleElement.textContent = cssText;
+      svgClone.insertBefore(styleElement, svgClone.firstChild);
+    }
+    
+    // Convert to string
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(svgClone);
+    
+    // Add XML declaration
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + svgString;
+  } catch (error) {
+    console.error('Error exporting SVG:', error);
+    return null;
+  }
+} 

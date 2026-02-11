@@ -37,6 +37,10 @@ dependencies = [
     "onnx>=1.19.1",
     "onnx2torch>=1.5.15",
     "python-magic>=0.4.27",
+    "graphviz>=0.21",
+    "umap-learn>=0.5.9.post2",
+    "seaborn>=0.13.2",
+    "kaleido>=0.2.1",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"

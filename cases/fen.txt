@@ -1,0 +1,19 @@
+win or go home 2k5/4Q3/3P4/8/6p1/4p3/q1pbK3/1R6 b - - 0 32
+win or go home ablate e3p 2k5/4Q3/3P4/8/6p1/8/q1pbK3/1R6 b - - 0 32  ^23
+win or go home ablate o'q 2k5/8/3P4/8/6p1/4p3/q1pbK3/1R6 b - - 0 32     ^6
+win or go home ablate g4p 2k5/4Q3/3P4/8/8/4p3/q1pbK3/1R6 b - - 0 32     ^6
+win or go home ablate o'sp 2k5/4Q3/8/8/6p1/4p3/q1pbK3/1R6 b - - 0 32
+win or go home ablate b 2k5/4Q3/3P4/8/6p1/4p3/q1p1K3/1R6 b - - 0 32     ^7/16
+win or go home c2q 2k5/4Q3/3P4/8/6p1/4p3/q2bK3/1R6 b - - 0 32
+being mated in 2 1rb3k1/q4rP1/4p2p/3p3p/3P1P2/2P5/2QK3P/3R2R1 b - - 0 29
+sacrifice queen r5k1/5ppp/1n3q2/3Q4/8/8/8/4R1K1 w - - 0 1
+after sacrifice queen n5k1/5ppp/5q2/8/8/8/8/4R1K1 w - - 0 2
+fork 8/2R2ppp/4p3/p6k/6R1/4P2P/3q1PP1/6K1 b - - 2 33
+after fork 8/2R2ppp/4p3/p6k/6R1/4P2P/5PPK/3q4 b - - 4 34
+Sicilian Opening rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2
+BT4 Failure Case 8/5B2/2R5/1pP1p1k1/1P2Pb2/r5pK/8/8 b - - 2 50
+BT4 Failure Case Perturb1 8/5B2/2R5/2P1p1k1/1p2Pb2/r5pK/8/8 b - - 2 50
+BT4 Failure Case Perturb2 8/5B2/2R5/1pP1p1k1/rP2Pb2/6pK/8/8 b - - 2 50
+Search Failure Case 1r2rkbQ/p2n2p1/2pb1pP1/q2p4/3P3N/2pBB2P/PP3P2/1K4RR w - - 5 24
+Search Failure Case post 1r2r1b1/p2n2Pk/2pb1p2/q2p1N2/3P4/2pBB2P/PP3P2/1K4RR w - - 1 27
+mateIn6 failure 1r6/b1p2p1k/p2p1Prp/1pnP1Q2/5P1N/1P4PP/P3R2K/2q5 w - - 3 34

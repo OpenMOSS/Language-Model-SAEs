@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { ChessBoard } from '@/components/chess/chess-board';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,11 +16,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 
 interface LayerMoveData {
   idx: number;
   uci: string;
   score: number;
+  prob: number;
 }
 
 interface MoveRanking {
@@ -28,6 +30,7 @@ interface MoveRanking {
   layer_score: number;
   final_rank: number | null;
   final_score: number | null;
+  final_prob?: number | null;
   rank_change: number | null;
 }
 
@@ -35,6 +38,7 @@ interface TargetInfo {
   uci: string;
   rank: number | null;
   score: number | null;
+  prob?: number | null;
   error?: string;
 }
 
@@ -91,6 +95,18 @@ interface AblationData {
     l2_norm: number;
   };
   target: TargetInfo | null;
+  target_diff?: {
+    uci: string;
+    original_rank: number | null;
+    ablated_rank: number | null;
+    delta_rank: number | null;
+    original_score: number | null;
+    ablated_score: number | null;
+    delta_score: number | null;
+    original_prob: number | null;
+    ablated_prob: number | null;
+    delta_prob: number | null;
+  } | null;
   original_top_move: {
     uci: string;
     rank: number | null;
@@ -108,6 +124,7 @@ interface MeanAblationResult {
   original_top_move_uci: string | null;
   ablation_results: Record<string, AblationData>;
   target_move: string | null;
+  original_target?: TargetInfo | null;
   num_layers: number;
   hook_types: string[];
   model_used: string;
@@ -116,8 +133,6 @@ interface MeanAblationResult {
 export const LogitLensVisualization: React.FC = () => {
   const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
   const [targetMove, setTargetMove] = useState('');
-  // 固定使用BT4模型
-  const selectedModel = 'lc0/BT4-1024x15x32h';
   const [isLoading, setIsLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<LogitLensResult | null>(null);
   const [selectedLayer, setSelectedLayer] = useState<number>(0);
@@ -202,35 +217,15 @@ export const LogitLensVisualization: React.FC = () => {
   }, [analysisResult]);
 
   const currentLayerData = getLayerData(selectedLayer);
-
-  // 计算softmax概率
-  const softmax = (scores: number[]): number[] => {
-    const maxScore = Math.max(...scores);
-    const expScores = scores.map(s => Math.exp(s - maxScore));
-    const sumExp = expScores.reduce((a, b) => a + b, 0);
-    return expScores.map(s => s / sumExp);
-  };
-
-  // 为当前层的top移动计算概率
-  const getCurrentLayerProbs = useCallback(() => {
-    if (!currentLayerData) return [];
-    const scores = currentLayerData.top_legal_moves.map(m => m.score);
-    return softmax(scores);
-  }, [currentLayerData]);
-
-  // 为最终层分数计算概率（仅针对当前层显示的这些移动）
-  const getFinalLayerProbs = useCallback(() => {
-    if (!currentLayerData) return [];
-    const scores = currentLayerData.move_rankings
-      .map(r => r.final_score !== null ? r.final_score : -Infinity);
-    return softmax(scores);
-  }, [currentLayerData]);
-
-  const currentLayerProbs = getCurrentLayerProbs();
-  const finalLayerProbs = getFinalLayerProbs();
+  // 直接使用后端返回的“all-legal softmax 概率”，不要对 TopN 再做 softmax
+  const currentLayerProbs = currentLayerData?.top_legal_moves.map((m) => m.prob) ?? [];
+  const finalLayerProbs = currentLayerData?.move_rankings.map((r) => r.final_prob ?? null) ?? [];
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+      <SaeComboLoader />
+
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold flex items-center gap-2">
           <Layers className="w-8 h-8" />
@@ -444,7 +439,7 @@ export const LogitLensVisualization: React.FC = () => {
                                   : 'N/A'}
                               </TableCell>
                               <TableCell>
-                                {finalLayerProbs[idx] !== undefined ? (
+                                {typeof finalLayerProbs[idx] === "number" ? (
                                   <span className="text-green-600 font-medium">
                                     {(finalLayerProbs[idx] * 100).toFixed(2)}%
                                   </span>
@@ -481,8 +476,6 @@ export const LogitLensVisualization: React.FC = () => {
                         {Array.from({ length: analysisResult!.num_layers }, (_, i) => {
                           const layerData = getLayerData(i);
                           const top3 = layerData?.top_legal_moves.slice(0, 3) || [];
-                          const layerScores = layerData?.top_legal_moves.map(m => m.score) || [];
-                          const layerProbs = layerScores.length > 0 ? softmax(layerScores): [];
                           const entropy = layerData?.logit_entropy;
                           return (
                             <TableRow key={i} className={i === selectedLayer ? 'bg-blue-50' : ''}>
@@ -501,7 +494,7 @@ export const LogitLensVisualization: React.FC = () => {
                               </TableCell>
                               {[0, 1, 2].map((rank) => {
                                 const move = top3[rank];
-                                const prob = (layerData && move) ? layerProbs[rank] : undefined;
+                                const prob = move?.prob;
                                 const isTargetMove = move && analysisResult?.target_move === move.uci;
                                 return (
                                   <TableCell key={rank}>
@@ -509,7 +502,7 @@ export const LogitLensVisualization: React.FC = () => {
                                       <div className={`space-between ${isTargetMove ? 'bg-yellow-100 p-2 rounded' : ''}`}>
                                         <div className={`font-mono text-sm ${isTargetMove ? 'font-bold text-yellow-700' : ''}`}>{move.uci}</div>
                                         <div className="text-xs text-gray-600">分数: {move.score.toFixed(3)}</div>
-                                        {prob !== undefined ? (
+                                        {typeof prob === "number" ? (
                                           <div className="text-xs text-gray-600">概率: {(prob * 100).toFixed(1)}%</div>
                                         ) : null}
                                       </div>
@@ -754,6 +747,9 @@ export const LogitLensVisualization: React.FC = () => {
                               {ablationResult.target_move && (
                                 <TableHead>目标移动排名</TableHead>
                               )}
+                              {ablationResult.target_move && (
+                                <TableHead>目标移动Δlogit/Δprob</TableHead>
+                              )}
                               {ablationResult.original_top_move_uci && (
                                 <TableHead>原Top移动排名</TableHead>
                               )}
@@ -815,6 +811,37 @@ export const LogitLensVisualization: React.FC = () => {
                                           #{data.target.rank || 'N/A'}
                                         </Badge>
                                       ) : 'N/A'}
+                                    </TableCell>
+                                  )}
+                                  {ablationResult.target_move && (
+                                    <TableCell>
+                                      {data.target_diff ? (
+                                        <div className="text-xs space-y-1">
+                                          <div className="font-mono">{data.target_diff.uci}</div>
+                                          <div>
+                                            Δlogit:{" "}
+                                            {typeof data.target_diff.delta_score === "number"
+                                              ? data.target_diff.delta_score.toFixed(4)
+                                              : "N/A"}
+                                          </div>
+                                          <div>
+                                            Δprob:{" "}
+                                            {typeof data.target_diff.delta_prob === "number"
+                                              ? data.target_diff.delta_prob.toFixed(6)
+                                              : "N/A"}
+                                          </div>
+                                          <div className="text-gray-500">
+                                            orig {typeof data.target_diff.original_score === "number" ? data.target_diff.original_score.toFixed(3) : "N/A"} /{" "}
+                                            {typeof data.target_diff.original_prob === "number" ? (data.target_diff.original_prob * 100).toFixed(2) + "%" : "N/A"}
+                                          </div>
+                                          <div className="text-gray-500">
+                                            ablt {typeof data.target_diff.ablated_score === "number" ? data.target_diff.ablated_score.toFixed(3) : "N/A"} /{" "}
+                                            {typeof data.target_diff.ablated_prob === "number" ? (data.target_diff.ablated_prob * 100).toFixed(2) + "%" : "N/A"}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        "N/A"
+                                      )}
                                     </TableCell>
                                   )}
                                   {ablationResult.original_top_move_uci && (

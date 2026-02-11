@@ -142,9 +142,13 @@ class CrossLayerTranscoder(AbstractSparseAutoEncoder):
             "layertopk",
             "batchlayertopk",
             "layertopk",
+            "mish",
         ], f"Not implemented activation function {self.cfg.act_fn}"
         if self.cfg.act_fn.lower() == "relu":
             return lambda x: x.gt(0).to(x.dtype)
+        elif self.cfg.act_fn.lower() == "mish":
+            import torch.nn.functional as F
+            return lambda x: F.mish(x)
         elif self.cfg.act_fn.lower() == "jumprelu":
             return JumpReLU(
                 self.cfg.jumprelu_threshold_window,

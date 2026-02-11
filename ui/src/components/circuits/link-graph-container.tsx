@@ -1,5 +1,5 @@
-import { useCallback } from "react";
-import { LinkGraph } from "./link-graph/link-graph";
+import { useCallback, useRef } from "react";
+import { LinkGraph, exportLinkGraphAsSvg } from "./link-graph/link-graph";
 import { LinkGraphData, VisState, Node } from "./link-graph/types";
 import { extractLayerAndFeature } from "./link-graph/utils";
 import { fetchFeature, getDictionaryName } from "@/utils/api";
@@ -15,6 +15,7 @@ interface LinkGraphContainerProps {
   clickedId?: string | null;
   hoveredId?: string | null;
   pinnedIds?: string[];
+  hideEmbLogit?: boolean; // 是否隐藏 Emb 和 Logit 层（用于 interaction circuit 模式）
 }
 
 export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({ 
@@ -26,8 +27,10 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   onConnectedFeaturesLoading,
   clickedId,
   hoveredId,
-  pinnedIds = []
+  pinnedIds = [],
+  hideEmbLogit = false
 }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
   // Create visState from props
   const visState: VisState = {
     pinnedIds,
@@ -37,8 +40,12 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   };
 
   const handleNodeClick = useCallback(async (nodeId: string, metaKey: boolean) => {
-    const node = data.nodes.find(n => n.id === nodeId);
-    if (!node) return;
+    // Try both id and nodeId to handle different node formats
+    const node = data.nodes.find(n => n.nodeId === nodeId || n.id === nodeId);
+    if (!node) {
+      console.warn('⚠️ LinkGraphContainer: Node not found for nodeId:', nodeId);
+      return;
+    }
 
     // Always call parent handler first to update global state
     onNodeClick?.(node, metaKey);
@@ -101,10 +108,53 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
     }
   }, [onNodeHover]);
 
+  // Export SVG function
+  const handleExportSvg = useCallback(() => {
+    if (typeof window === 'undefined' || !containerRef.current) return;
+    
+    try {
+      // Find the SVG element within the container
+      const svgElement = containerRef.current.querySelector('svg') as SVGSVGElement | null;
+      if (!svgElement) {
+        console.error('SVG element not found');
+        return;
+      }
+      
+      // Export the SVG
+      const svgString = exportLinkGraphAsSvg(svgElement);
+      if (!svgString) {
+        console.error('Failed to export SVG');
+        return;
+      }
+      
+      // Create a blob and download
+      const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `link-graph-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.svg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting SVG:', error);
+    }
+  }, []);
+
   return (
-    <div className="link-graph-container-wrapper w-full h-full overflow-hidden">
+    <div ref={containerRef} className="link-graph-container-wrapper w-full h-full overflow-hidden">
       <div className="mb-4">
-        <h3 className="text-lg font-semibold mb-2">Link Graph Visualization</h3>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-lg font-semibold">Link Graph Visualization</h3>
+          <button
+            onClick={handleExportSvg}
+            className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors text-sm font-medium"
+            title="Export graph as SVG"
+          >
+            Export SVG
+          </button>
+        </div>
         {visState.pinnedIds.length > 0 && (
           <div className="mb-2">
             <span className="text-sm font-medium">Pinned Nodes: </span>
@@ -121,6 +171,7 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
               visState={visState}
               onNodeClick={handleNodeClick}
               onNodeHover={handleNodeHover}
+              hideEmbLogit={hideEmbLogit}
             />
           </div>
         </div>

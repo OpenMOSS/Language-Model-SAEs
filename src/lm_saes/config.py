@@ -54,9 +54,9 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"]
     d_model: int
-    expansion_factor: int
+    expansion_factor: int | float
     use_decoder_bias: bool = True
-    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk", "mish"] = "relu"
     norm_activation: str = "dataset-wise"
     sparsity_include_decoder_norm: bool = True
     top_k: int = 50
@@ -82,7 +82,9 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
     @property
     def d_sae(self) -> int:
-        return self.d_model * self.expansion_factor
+        result = self.d_model * self.expansion_factor
+        # Ensure result is integer (round if expansion_factor is float)
+        return int(round(result))
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
@@ -208,7 +210,7 @@ class CLTConfig(BaseSAEConfig):
     """
 
     sae_type: Literal["sae", "crosscoder", "clt", "lorsa", "molt"] = "clt"
-    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk"] = "relu"
+    act_fn: Literal["relu", "jumprelu", "topk", "batchtopk", "batchlayertopk", "layertopk", "mish"] = "relu"
     init_cross_layer_decoder_all_zero: bool = False
     hook_points_in: list[str]
     """List of hook points to capture input activations from, one for each layer."""
@@ -286,7 +288,7 @@ class MOLTConfig(BaseSAEConfig):
         assert self.rank_distribution, "rank_distribution cannot be empty"
 
         # Calculate base d_sae
-        base_d_sae = self.d_model * self.expansion_factor
+        base_d_sae = int(round(self.d_model * self.expansion_factor))
 
         # For distributed training, use special logic to ensure consistency
         if self.model_parallel_size_training > 1:

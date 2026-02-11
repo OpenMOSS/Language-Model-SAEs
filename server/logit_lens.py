@@ -6,6 +6,17 @@ import chess
 from lm_saes.circuit.leela_board import LeelaBoard
 from pathlib import Path
 from safetensors.torch import load_file
+import sys
+
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.append(str(project_root))
+
+try:
+    # 统一“合法走法概率”的口径：复用 src/chess/move.py 的实现
+    from src.chess_utils import get_move_from_policy_output_with_prob
+except Exception:
+    get_move_from_policy_output_with_prob = None
 
 
 class IntegratedPolicyLens:
@@ -91,9 +102,9 @@ class IntegratedPolicyLens:
         for l in range(layer_idx + 1, self.num_layers):
             ln1_copy, ln2_copy, alpha_in, alpha_out = self.ln_copies[l]
             # multiply by scalar alphas (ensure dtype/device broadcasting)
-            x = x * alpha_in  # attn branch zero + alpha_in * x
+            # x = x * alpha_in  # attn branch zero + alpha_in * x # no use for BT4
             x = ln1_copy(x)   # apply copy with b=0
-            x = x * alpha_out  # mlp branch zero + alpha_out * x
+            # x = x * alpha_out  # mlp branch zero + alpha_out * x # no use for BT4
             x = ln2_copy(x)
         return x   
     
@@ -127,40 +138,53 @@ class IntegratedPolicyLens:
         
         with torch.no_grad():
             output, cache = self.model.run_with_cache(fen, prepend_bos=False)
-        
-        # Final layer predictions
-        final_layer_input = cache[f'blocks.{self.num_layers-1}.resid_post_after_ln']
-        final_policy_output = self.policy_head(final_layer_input)
-        
-        lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
         chess_board = chess.Board(fen)
         legal_uci_set = set(move.uci() for move in chess_board.legal_moves)
-        
-        # Compute final layer top legal moves
-        if final_policy_output.dim() == 3:
-            final_logits_last = final_policy_output[0, -1, :]
-        elif final_policy_output.dim() == 2:
-            final_logits_last = final_policy_output[0, :]
+
+        def _ensure_policy_2d(t: torch.Tensor) -> torch.Tensor:
+            """确保传入 get_move_from_policy_output_with_prob 的 tensor 形状为 [1, vocab]。"""
+            if t.dim() == 3:
+                # [batch, seq, vocab] -> 取最后一个 token
+                return t[:, -1, :]
+            if t.dim() == 2:
+                return t
+            if t.dim() == 1:
+                return t.unsqueeze(0)
+            raise RuntimeError(f"Unexpected policy tensor shape: {tuple(t.shape)}")
+
+        # 用与 notebook 完全一致的方式取“最终层 policy logits”：直接用 run_with_cache 的 output[0]
+        final_top_legal_moves: list[dict[str, Any]] = []
+        final_all_legals: list[tuple[str, float, float]] = []
+        uci2idx_fn = None
+        try:
+            from leela_interp import LeelaBoard as _LeelaBoard  # type: ignore
+            _lb = _LeelaBoard.from_fen(fen, history_synthesis=True)
+            uci2idx_fn = _lb.uci2idx
+        except Exception:
+            uci2idx_fn = None
+
+        if get_move_from_policy_output_with_prob is not None:
+            final_policy_2d = _ensure_policy_2d(output[0])
+            final_all_legals = get_move_from_policy_output_with_prob(final_policy_2d, fen, return_list=True)  # type: ignore[assignment]
+            if not isinstance(final_all_legals, list):
+                final_all_legals = []
         else:
-            raise RuntimeError("Unexpected final_policy_output shape")
-        
-        # get sorted final logits
-        final_vals, final_idxs = torch.sort(final_logits_last, descending=True)
-        final_vals = final_vals.detach().cpu().numpy()
-        final_idxs = final_idxs.detach().cpu().numpy()
-        final_top_legal_moves = []
-        
-        # collect top 10 legal moves based on final logits
-        for idx_val, idx in zip(final_vals, final_idxs):
-            uci = lboard.idx2uci(int(idx))
-            if uci in legal_uci_set:
-                final_top_legal_moves.append({
-                    'idx': int(idx),
-                    'uci': uci,
-                    'score': float(idx_val)
-                })
-            if len(final_top_legal_moves) >= 10:
-                break
+            return {"error": "get_move_from_policy_output_with_prob not available"}
+
+        # 预先构建最终层的全量信息：用于给任意走法提供“最终层 rank/score/prob”
+        final_info_by_uci: dict[str, dict[str, float | int]] = {}
+        for i, (uci, logit, prob) in enumerate(final_all_legals):
+            final_info_by_uci[uci] = {
+                "rank": i + 1,
+                "score": float(logit),
+                "prob": float(prob),
+            }
+
+        for uci, logit, prob in final_all_legals[:10]:
+            idx_val = int(uci2idx_fn(uci)) if uci2idx_fn is not None else None
+            final_top_legal_moves.append(
+                {"idx": idx_val, "uci": uci, "score": float(logit), "prob": float(prob)}
+            )
         
         # Analyze each layer using Post-LN logit-lens
         layer_analysis = {}
@@ -183,52 +207,29 @@ class IntegratedPolicyLens:
                 logits_last = layer_policy_output[0, :]
             else:
                 raise RuntimeError("Unexpected layer_policy_output shape")
-            
-            # Top legal moves (fast): pick topk_vocab logits and filter legal ones
-            topk = min(topk_vocab, logits_last.numel())
-            vals, idxs = torch.topk(logits_last, k=topk)
-            vals_np = vals.detach().cpu().numpy()
-            idxs_np = idxs.detach().cpu().numpy()
-            
-            current_top_legal_moves = []
-            # collect first up to 10 legal moves from topk
-            for score_val, idx_val in zip(vals_np, idxs_np):
-                uci = lboard.idx2uci(int(idx_val))
-                if uci in legal_uci_set:
-                    current_top_legal_moves.append({
-                        'idx': int(idx_val),
-                        'uci': uci,
-                        'score': float(score_val)
-                    })
-                if len(current_top_legal_moves) >= 10:
-                    break
-            
-            # For target_move ranking, build full legal scores
-            logits_last_cpu = logits_last.detach().cpu()
-            legal_scores = []
-            V = logits_last_cpu.numel()
-            
-            # Build uci->idx mapping
-            idx_to_uci = [lboard.idx2uci(i) for i in range(V)]
-            
-            # collect legal moves with their scores
-            for idx_val, uci in enumerate(idx_to_uci):
-                if uci in legal_uci_set:
-                    score_val = float(logits_last_cpu[idx_val].item())
-                    legal_scores.append((uci, score_val, idx_val))
-            
-            # sort legal_scores by score desc
-            legal_scores.sort(key=lambda x: x[1], reverse=True)
-            
-            # 计算softmax概率（在所有合法移动上）
-            if len(legal_scores) > 0:
-                import math
-                max_logit = max(s for _, s, _ in legal_scores)
-                exp_vals = [math.exp(s - max_logit) for _, s, _ in legal_scores]
-                sum_exp = sum(exp_vals)
-                probs = [ev / sum_exp for ev in exp_vals]
-            else:
-                probs = []
+
+            # 与 notebook/模型输出保持一致：最终层直接使用 run_with_cache 的 output[0]
+            # （避免 policy_head 对 resid 的取 token 方式/实现细节导致的偏差）
+            if layer == self.num_layers - 1:
+                logits_last = _ensure_policy_2d(output[0])[0]
+
+            # 完全复用 move.py 的实现：直接得到“全部合法走法”的 (uci, logit, prob)，并据此构建所有后续统计
+            current_top_legal_moves: list[dict[str, Any]] = []
+            legal_scores: list[tuple[str, float, int]] = []
+            probs: list[float] = []
+            if get_move_from_policy_output_with_prob is not None:
+                layer_policy_2d = _ensure_policy_2d(logits_last)
+                all_legals_layer = get_move_from_policy_output_with_prob(layer_policy_2d, fen, return_list=True)
+                if isinstance(all_legals_layer, list):
+                    for uci, logit, prob in all_legals_layer:
+                        idx_int = int(uci2idx_fn(uci)) if uci2idx_fn is not None else -1
+                        legal_scores.append((uci, float(logit), idx_int))
+                        probs.append(float(prob))
+                    for uci, logit, prob in all_legals_layer[:10]:
+                        idx_val = int(uci2idx_fn(uci)) if uci2idx_fn is not None else None
+                        current_top_legal_moves.append(
+                            {"idx": idx_val, "uci": uci, "score": float(logit), "prob": float(prob)}
+                        )
 
             # 计算当前层在合法移动集合上的logit熵（概率越集中熵越小）
             def _entropy(p_list):
@@ -291,20 +292,18 @@ class IntegratedPolicyLens:
                 uci = move_data['uci']
                 layer_score = move_data['score']
                 
-                # find final layer rank
-                final_rank = None
-                final_score = None
-                for rank, f_move in enumerate(final_top_legal_moves):
-                    if f_move['uci'] == uci:
-                        final_rank = rank + 1
-                        final_score = f_move['score']
-                        break
+                # find final layer rank/score/prob（来自最终层 all-legal 分布）
+                finfo = final_info_by_uci.get(uci, {})
+                final_rank = finfo.get("rank") if isinstance(finfo, dict) else None
+                final_score = finfo.get("score") if isinstance(finfo, dict) else None
+                final_prob = finfo.get("prob") if isinstance(finfo, dict) else None
                 
                 move_rankings.append({
                     'move': uci,
                     'layer_score': float(layer_score),
                     'final_rank': final_rank,
                     'final_score': float(final_score) if final_score is not None else None,
+                    'final_prob': float(final_prob) if final_prob is not None else None,
                     'rank_change': (final_rank - (len([m for m in current_top_legal_moves if m['score'] > layer_score]) + 1)) if final_rank is not None else None
                 })
             
@@ -606,6 +605,35 @@ class IntegratedPolicyLens:
         lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
         chess_board = chess.Board(fen)
         legal_uci_set = set(move.uci() for move in chess_board.legal_moves)
+
+        def _compute_legal_scores_and_probs(logits_last: torch.Tensor) -> Tuple[List[Tuple[str, float, int]], List[float]]:
+            logits_cpu = logits_last.detach().cpu()
+            V = logits_cpu.numel()
+            idx_to_uci = [lboard.idx2uci(i) for i in range(V)]
+            legal_scores_local: List[Tuple[str, float, int]] = []
+            for idx_val, uci in enumerate(idx_to_uci):
+                if uci in legal_uci_set:
+                    legal_scores_local.append((uci, float(logits_cpu[idx_val].item()), idx_val))
+            legal_scores_local.sort(key=lambda x: x[1], reverse=True)
+            if len(legal_scores_local) == 0:
+                return legal_scores_local, []
+
+            if get_move_from_policy_output_with_prob is not None:
+                policy_out = logits_cpu.unsqueeze(0)  # [1, vocab]
+                all_legals = get_move_from_policy_output_with_prob(policy_out, fen, return_list=True)
+                probs_by_uci = {uci: prob for (uci, _logit, prob) in all_legals} if isinstance(all_legals, list) else {}
+                probs_local = [float(probs_by_uci.get(uci, 0.0)) for (uci, _, _) in legal_scores_local]
+                return legal_scores_local, probs_local
+
+            return legal_scores_local, []
+
+        def _find_move_info(move_uci: str, legal_scores_local: List[Tuple[str, float, int]], probs_local: List[float]) -> Dict[str, Any]:
+            if move_uci not in legal_uci_set:
+                return {"uci": move_uci, "rank": None, "score": None, "prob": None, "error": "Target move is not legal"}
+            for i, (uci, score_val, _) in enumerate(legal_scores_local):
+                if uci == move_uci:
+                    return {"uci": move_uci, "rank": i + 1, "score": float(score_val), "prob": float(probs_local[i]) if i < len(probs_local) else None}
+            return {"uci": move_uci, "rank": None, "score": None, "prob": None, "error": "Target move not found in legal_scores"}
         
         # 计算原始输出的top移动
         # original_output是一个list，output[0]是logits tensor，shape为[batch, vocab_size]
@@ -634,6 +662,9 @@ class IntegratedPolicyLens:
                 break
         
         original_top_move_uci = original_top_legal_moves[0]['uci'] if len(original_top_legal_moves) > 0 else None
+
+        original_legal_scores, original_probs = _compute_legal_scores_and_probs(original_logits_last)
+        original_target_info = _find_move_info(target_move, original_legal_scores, original_probs) if target_move else None
         
         # 对每一层每个hook类型进行ablation
         ablation_results = {}
@@ -698,28 +729,7 @@ class IntegratedPolicyLens:
                         if len(ablated_top_legal_moves) >= 10:
                             break
                     
-                    # 构建完整的合法移动分数列表
-                    ablated_logits_cpu = ablated_logits_last.detach().cpu()
-                    V = ablated_logits_cpu.numel()
-                    idx_to_uci = [lboard.idx2uci(i) for i in range(V)]
-                    
-                    legal_scores = []
-                    for idx_val, uci in enumerate(idx_to_uci):
-                        if uci in legal_uci_set:
-                            score_val = float(ablated_logits_cpu[idx_val].item())
-                            legal_scores.append((uci, score_val, idx_val))
-                    
-                    legal_scores.sort(key=lambda x: x[1], reverse=True)
-                    
-                    # 计算softmax概率
-                    if len(legal_scores) > 0:
-                        import math
-                        max_logit = max(s for _, s, _ in legal_scores)
-                        exp_vals = [math.exp(s - max_logit) for _, s, _ in legal_scores]
-                        sum_exp = sum(exp_vals)
-                        probs = [ev / sum_exp for ev in exp_vals]
-                    else:
-                        probs = []
+                    legal_scores, probs = _compute_legal_scores_and_probs(ablated_logits_last)
                     
                     # 计算熵
                     def _entropy(p_list):
@@ -732,22 +742,29 @@ class IntegratedPolicyLens:
                     logit_entropy = _entropy(probs)
                     
                     # 目标移动信息
-                    target_info = None
-                    if target_move is not None and target_move in legal_uci_set:
-                        rank = None
-                        t_score = None
-                        t_prob = None
-                        for i, (uci, score_val, idx_val) in enumerate(legal_scores):
-                            if uci == target_move:
-                                rank = i + 1
-                                t_score = score_val
-                                t_prob = probs[i] if i < len(probs) else None
-                                break
-                        target_info = {
-                            'uci': target_move,
-                            'rank': rank,
-                            'score': t_score,
-                            'prob': t_prob
+                    target_info = _find_move_info(target_move, legal_scores, probs) if target_move else None
+
+                    target_diff = None
+                    if target_move:
+                        o = original_target_info or {}
+                        a = target_info or {}
+                        o_rank = o.get("rank")
+                        a_rank = a.get("rank")
+                        o_score = o.get("score")
+                        a_score = a.get("score")
+                        o_prob = o.get("prob")
+                        a_prob = a.get("prob")
+                        target_diff = {
+                            "uci": target_move,
+                            "original_rank": o_rank,
+                            "ablated_rank": a_rank,
+                            "delta_rank": (a_rank - o_rank) if (isinstance(a_rank, int) and isinstance(o_rank, int)) else None,
+                            "original_score": o_score,
+                            "ablated_score": a_score,
+                            "delta_score": (a_score - o_score) if (isinstance(a_score, (int, float)) and isinstance(o_score, (int, float))) else None,
+                            "original_prob": o_prob,
+                            "ablated_prob": a_prob,
+                            "delta_prob": (a_prob - o_prob) if (isinstance(a_prob, (int, float)) and isinstance(o_prob, (int, float))) else None,
                         }
                     
                     # 原始top移动在ablated后的排名
@@ -785,6 +802,7 @@ class IntegratedPolicyLens:
                         'top_legal_moves': ablated_top_legal_moves,
                         'logit_diff_stats': logit_diff_stats,
                         'target': target_info,
+                        'target_diff': target_diff,
                         'original_top_move': original_top_info,
                         'logit_entropy': logit_entropy,
                         'n_tokens_in_mean': n_tokens
@@ -807,6 +825,7 @@ class IntegratedPolicyLens:
             'original_top_move_uci': original_top_move_uci,
             'ablation_results': ablation_results,
             'target_move': target_move,
+            'original_target': original_target_info,
             'num_layers': self.num_layers,
             'hook_types': hook_types
         }

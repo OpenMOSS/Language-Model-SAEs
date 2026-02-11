@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Loader2, RotateCcw, Play, Square, Move, Undo2, Download } from 'lucide-react';
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 
 interface GameState {
   fen: string;
@@ -67,6 +68,19 @@ interface StockfishAnalysis {
     drawProb: number;
     lossProb: number;
   };
+}
+
+interface ModelMoveResponse {
+  move: string;
+  model_used?: string;
+  search_used?: boolean;
+  search_info?: {
+    total_playouts: number;
+    max_depth_reached: number;
+    max_depth_limit: number;
+  };
+  trace_file_path?: string;
+  trace_filename?: string;
 }
 
 interface GameVisualizationProps {
@@ -144,9 +158,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     Variant: 'Standard',
   });
 
-  // 认输/和棋对话框状态
-  const [showEndGameDialog, setShowEndGameDialog] = useState(false);
-  const [endGameType, setEndGameType] = useState<'resign' | 'draw' | null>(null);
+  // 认输/和棋对话框状态（已移除，现在直接调用 endGame）
   const [selectedOpening, setSelectedOpening] = useState(OPENING_POSITIONS[0]);
   const [customFen, setCustomFen] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -168,19 +180,33 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   const [manualMove, setManualMove] = useState('');
   const [moveError, setMoveError] = useState('');
   
-  // 固定使用BT4模型
-  const selectedModel = 'lc0/BT4-1024x15x32h';
-  
-  // 加载日志窗口状态
-  const [showLoadingLogs, setShowLoadingLogs] = useState(false);
-  const [loadingLogs, setLoadingLogs] = useState<Array<{timestamp: number; message: string}>>([]);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  // 已移除：加载日志现在由 SaeComboLoader 组件统一管理
 
   // 新增：用于强制更新组件（由于 Chess 实例是可变的）
   const [, setDummy] = useState(0);
 
   // 新增：Circuit Trace状态
-  const [isTracing, setIsTracing] = useState(false);
+  const [isTracing] = useState(false);
+
+  // 新增：MCTS 搜索设置
+  const [useSearch, setUseSearch] = useState(false);
+  const [searchParams, setSearchParams] = useState({
+    max_playouts: 100,
+    target_minibatch_size: 8,
+    cpuct: 3.0,
+    max_depth: 10,
+    // 低Q值探索增强参数（用于发现弃后连杀等隐藏走法）
+    low_q_exploration_enabled: false,
+    low_q_threshold: 0.3,
+    low_q_exploration_bonus: 0.1,
+    low_q_visit_threshold: 5,
+  });
+  const [lastSearchInfo, setLastSearchInfo] = useState<{
+    total_playouts: number;
+    max_depth_reached: number;
+    max_depth_limit: number;
+  } | null>(null);
+  const [saveMctsTrace, setSaveMctsTrace] = useState(false);
 
   // 移除：不在初始化或任何自动时机触发模型走棋，改为仅按按钮触发
 
@@ -381,7 +407,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     setAnalysis(null);
     setIsAutoPlay(false);
     setShowPgnDialog(false);
-    setShowEndGameDialog(false);
     
     if (autoPlayInterval) {
       clearInterval(autoPlayInterval);
@@ -417,7 +442,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       setAnalysis(null); // 清空旧分析
       setIsAutoPlay(false);
       setShowPgnDialog(false);
-      setShowEndGameDialog(false);
       if (autoPlayInterval) { clearInterval(autoPlayInterval); setAutoPlayInterval(null); }
       // 刷新分析（如有需要，可注释掉）
       // getStockfishAnalysis(newGame.fen()); // 如果你希望用“分析模式”自动刷新分析结果，请取消注释
@@ -462,20 +486,49 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     return null;
   }, []);
 
-  // 获取模型建议的移动（固定使用BT4模型）
-  const getModelMove = useCallback(async (fen: string) => {
+  // 获取模型建议的移动（固定使用BT4模型，支持可选搜索）
+  const getModelMove = useCallback(async (fen: string): Promise<ModelMoveResponse | null> => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/play_game`, {
+      // 根据是否启用搜索选择不同的 API 端点
+      const endpoint = useSearch 
+        ? `${import.meta.env.VITE_BACKEND_URL}/play_game_with_search`
+        : `${import.meta.env.VITE_BACKEND_URL}/play_game`;
+      
+      const requestBody = useSearch 
+        ? { 
+            fen, 
+            ...searchParams, 
+            save_trace: saveMctsTrace,
+            trace_max_edges: saveMctsTrace ? 0 : 1000  // 0 表示保存完整搜索树，不限制边数
+          }
+        : { fen };
+      
+      console.log(`🎯 请求模型移动: ${useSearch ? 'MCTS搜索' : '直接推理'}, playouts=${searchParams.max_playouts}`);
+      
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ fen }),
+        body: JSON.stringify(requestBody),
       });
 
       if (response.ok) {
         const data = await response.json();
-        return data.move;
+        
+        // 如果使用了搜索，保存搜索信息
+        if (useSearch && data.search_info) {
+          setLastSearchInfo({
+            total_playouts: data.search_info.total_playouts,
+            max_depth_reached: data.search_info.max_depth_reached,
+            max_depth_limit: data.search_info.max_depth_limit,
+          });
+          console.log(`✅ MCTS搜索完成: playouts=${data.search_info.total_playouts}, depth=${data.search_info.max_depth_reached}`);
+        } else {
+          setLastSearchInfo(null);
+        }
+        
+        return data as ModelMoveResponse;
       } else {
         console.error('API调用失败:', response.status, response.statusText);
         const errorText = await response.text();
@@ -485,6 +538,29 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       console.error('获取模型移动失败:', error);
     }
     return null;
+  }, [useSearch, searchParams, saveMctsTrace]);
+
+  const downloadTraceFile = useCallback(async (filename: string) => {
+    try {
+      const url = `${import.meta.env.VITE_BACKEND_URL}/search_trace/files/${encodeURIComponent(filename)}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('下载MCTS搜索文件失败:', errorText);
+        return;
+      }
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error('下载MCTS搜索文件失败:', error);
+    }
   }, []);
 
   // 将UCI字符串转换为chess.js可接受的move对象
@@ -527,17 +603,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       // 在替换实例前，先从当前game提取完整历史与状态
       const historyVerbose = game.history({ verbose: true }) as any[];
       const movesUci = historyVerbose.map(m => m.from + m.to + (m.promotion ? m.promotion : ''));
-      const nextFen = game.fen();
-      const isGameOver = game.isGameOver();
-      let winner: string | null = null;
-      if (isGameOver) {
-        if (game.isCheckmate()) {
-          winner = game.turn() === 'w' ? 'Black' : 'White';
-        } else if (game.isDraw()) {
-          winner = 'Draw';
-        }
-      }
-      const isPlayerTurn = game.turn() === 'w';
 
       // 用PGN重建以保留历史，避免FEN丢失undo栈
       const pgn = game.pgn();
@@ -590,13 +655,17 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     if (isModelTurn && !isLoading && !isTracing) {
       setIsLoading(true);
       try {
-        const modelMove = await getModelMove(game.fen());
+        const moveResponse = await getModelMove(game.fen());
+        const modelMove = moveResponse?.move;
         if (!modelMove) {
           console.warn('模型未返回走法或返回为空');
           alert('模型未返回走法，请检查后端或当前局面');
           return;
         }
         if (modelMove && makeMove(modelMove)) {
+          if (useSearch && saveMctsTrace && moveResponse?.trace_filename) {
+            await downloadTraceFile(moveResponse.trace_filename);
+          }
           // 获取新局面的分析
           if (gameMode === 'analysis') {
             setTimeout(() => {
@@ -610,7 +679,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         setIsLoading(false);
       }
     }
-  }, [isModelTurn, isLoading, isTracing, getModelMove, game, makeMove, gameMode, getStockfishAnalysis]);
+  }, [isModelTurn, isLoading, isTracing, getModelMove, game, makeMove, gameMode, getStockfishAnalysis, useSearch, saveMctsTrace, downloadTraceFile]);
 
   // 自动对局：
   // - human-human: 自动无意义，保持现状（只控制随机玩家步原逻辑保留）
@@ -833,13 +902,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
 
   // 处理认输
   const handleResign = useCallback((player: 'White' | 'Black') => {
-    setEndGameType('resign');
     endGame('resignation', player === 'White' ? 'Black' : 'White');
   }, [endGame]);
 
   // 处理和棋
   const handleDraw = useCallback(() => {
-    setEndGameType('draw');
     endGame('draw');
   }, [endGame]);
 
@@ -849,111 +916,17 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   }, []);
 
 
-  // 获取加载日志
-  const fetchLoadingLogs = useCallback(async () => {
-    try {
-      // 固定使用BT4模型
-      const model_name = 'lc0/BT4-1024x15x32h';
-      const url = `${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?model_name=${encodeURIComponent(model_name)}`;
-      console.log('📥 获取加载日志:', url);
-      
-      const response = await fetch(url);
-      if (response.ok) {
-        const data = await response.json();
-        console.log('📥 收到日志数据:', { count: data.total_count, logs: data.logs });
-        setLoadingLogs(data.logs || []);
-        // 自动滚动到底部
-        setTimeout(() => {
-          const logContainer = document.getElementById('loading-logs-container');
-          if (logContainer) {
-            logContainer.scrollTop = logContainer.scrollHeight;
-          }
-        }, 100);
-        return data.logs || [];
-      } else {
-        const errorText = await response.text();
-        console.error('获取加载日志失败:', response.status, errorText);
-      }
-    } catch (error) {
-      console.error('获取加载日志出错:', error);
-    }
-    return [];
-  }, []);
+  // 已移除：加载日志和预加载逻辑现在由 SaeComboLoader 组件统一管理
 
-  // 预加载transcoders和lorsas，以便后续circuit trace能够快速使用
-  const preloadCircuitModels = useCallback(async () => {
-    try {
-      // 固定使用BT4模型
-      const model_name = 'lc0/BT4-1024x15x32h';
-      console.log('🔍 开始预加载transcoders和lorsas:', model_name);
-      
-      // 重置日志并显示日志窗口
-      setLoadingLogs([]);
-      setShowLoadingLogs(true);
-      setIsLoadingModels(true);
-      
-      // 先获取一次日志，确保日志列表已初始化
-      await fetchLoadingLogs();
-      
-      // 开始轮询日志（在API调用之前开始，因为加载是同步的）
-      const logPollInterval = setInterval(async () => {
-        await fetchLoadingLogs();
-      }, 500); // 每500ms轮询一次
-      
-      // 发送预加载请求（加载是同步进行的，所以API会阻塞直到加载完成）
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ model_name }),
-      });
-
-      // API响应后，继续轮询一段时间，确保获取所有日志
-      // 因为加载可能在API响应之前或之后完成
-      setTimeout(async () => {
-        await fetchLoadingLogs();
-      }, 1000);
-      
-      // 再等待一段时间后停止轮询
-      setTimeout(() => {
-        clearInterval(logPollInterval);
-        fetchLoadingLogs(); // 最后获取一次日志
-        setIsLoadingModels(false);
-      }, 2000);
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.status === 'already_loaded') {
-          console.log('✅ Transcoders和LoRSAs已经预加载:', data);
-          clearInterval(logPollInterval);
-          setIsLoadingModels(false);
-        } else {
-          console.log('✅ 预加载完成:', data);
-        }
-      } else {
-        const errorText = await response.text();
-        console.warn('⚠️ 预加载transcoders和lorsas失败:', errorText);
-        clearInterval(logPollInterval);
-        setIsLoadingModels(false);
-        // 预加载失败不影响正常使用，只打印警告
-      }
-    } catch (error) {
-      setIsLoadingModels(false);
-      console.warn('⚠️ 预加载transcoders和lorsas出错:', error);
-      // 预加载失败不影响正常使用，只打印警告
-    }
-  }, [fetchLoadingLogs]);
-
-  // 组件加载时预加载transcoders和lorsas
-  useEffect(() => {
-    preloadCircuitModels();
-  }, [preloadCircuitModels]);
+  // 已移除自动加载逻辑：现在通过页面顶部的 SaeComboLoader 组件手动加载
 
   // 不自动触发模型走棋，用户需点击"让模型走棋"按钮
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+      <SaeComboLoader />
+
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">与模型对局</h1>
         <div className="flex items-center gap-4">
@@ -961,19 +934,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             <span>黑方回合自动翻转</span>
             <Switch checked={autoFlipWhenBlack} onCheckedChange={setAutoFlipWhenBlack} />
           </div>
-          {/* 加载日志按钮 */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setShowLoadingLogs(!showLoadingLogs);
-              if (!showLoadingLogs) {
-                fetchLoadingLogs();
-              }
-            }}
-          >
-            加载日志 {showLoadingLogs ? '（隐藏）' : '（显示）'}
-          </Button>
         <div className="flex gap-2">
           <Button
             onClick={() => startNewGame()}
@@ -1085,51 +1045,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                 </div>
               </div>
               
-              {/* 加载日志框 - 固定在移动历史下方 */}
-              {showLoadingLogs && (
-                <div className="mt-4 border rounded-lg overflow-hidden">
-                  <div className="bg-gray-800 text-white px-4 py-2 flex items-center justify-between">
-                    <h3 className="font-semibold">模型加载日志</h3>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={fetchLoadingLogs}
-                        className="text-white hover:bg-gray-700"
-                      >
-                        刷新
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowLoadingLogs(false)}
-                        className="text-white hover:bg-gray-700"
-                      >
-                        隐藏
-                      </Button>
-                    </div>
-                  </div>
-                  <div 
-                    id="loading-logs-container"
-                    className="bg-gray-900 text-green-400 p-4 font-mono text-sm max-h-64 overflow-y-auto"
-                  >
-                    <div className="space-y-1">
-                      {loadingLogs.length === 0 ? (
-                        <div className="text-gray-500">暂无日志...</div>
-                      ) : (
-                        loadingLogs.map((log, index) => (
-                          <div key={index} className="whitespace-pre-wrap">
-                            {log.message}
-                          </div>
-                        ))
-                      )}
-                      {isLoadingModels && (
-                        <div className="text-yellow-400 animate-pulse">加载中...</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* 加载日志已迁移到页面顶部的 SaeComboLoader 组件 */}
             </CardContent>
           </Card>
         </div>
@@ -1173,6 +1089,182 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   </div>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          {/* MCTS 搜索设置 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>搜索设置</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">启用 MCTS 搜索</label>
+                <Switch checked={useSearch} onCheckedChange={setUseSearch} />
+              </div>
+              
+              {useSearch && (
+                <div className="space-y-3 pt-2 border-t">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">保存MCTS搜索JSON</label>
+                    <Switch checked={saveMctsTrace} onCheckedChange={setSaveMctsTrace} />
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    启用后，每次搜索完成并落子时会自动下载对应FEN的搜索trace（默认文件名包含当前FEN）。
+                  </p>
+                  <div>
+                    <label className="text-sm font-medium">最大模拟次数</label>
+                    <Input
+                      type="number"
+                      value={searchParams.max_playouts}
+                      onChange={(e) => setSearchParams(prev => ({
+                        ...prev,
+                        max_playouts: parseInt(e.target.value) || 100,
+                      }))}
+                      min={10}
+                      max={10000}
+                      className="mt-1"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium">最大搜索深度</label>
+                    <Input
+                      type="number"
+                      value={searchParams.max_depth}
+                      onChange={(e) => setSearchParams(prev => ({
+                        ...prev,
+                        max_depth: parseInt(e.target.value) || 10,
+                      }))}
+                      min={1}
+                      max={50}
+                      className="mt-1"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium">UCT 探索系数 (cpuct)</label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      value={searchParams.cpuct}
+                      onChange={(e) => setSearchParams(prev => ({
+                        ...prev,
+                        cpuct: parseFloat(e.target.value) || 3.0,
+                      }))}
+                      min={0.1}
+                      max={10}
+                      className="mt-1"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium">批处理大小</label>
+                    <Input
+                      type="number"
+                      value={searchParams.target_minibatch_size}
+                      onChange={(e) => setSearchParams(prev => ({
+                        ...prev,
+                        target_minibatch_size: parseInt(e.target.value) || 8,
+                      }))}
+                      min={1}
+                      max={64}
+                      className="mt-1"
+                    />
+                  </div>
+                  
+                  {/* 低Q值探索增强参数 */}
+                  <div className="border-t pt-3 mt-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <input
+                        type="checkbox"
+                        id="low_q_exploration_enabled"
+                        checked={searchParams.low_q_exploration_enabled}
+                        onChange={(e) => setSearchParams(prev => ({
+                          ...prev,
+                          low_q_exploration_enabled: e.target.checked,
+                        }))}
+                        className="w-4 h-4"
+                      />
+                      <label htmlFor="low_q_exploration_enabled" className="text-sm font-medium">
+                        启用低Q值探索增强（用于发现弃后连杀等隐藏走法）
+                      </label>
+                    </div>
+                    
+                    {searchParams.low_q_exploration_enabled && (
+                      <div className="space-y-3 ml-6 mt-3 bg-blue-50 p-3 rounded">
+                        <p className="text-xs text-gray-600 mb-2">
+                          对Q值低于阈值且访问次数较少的走法给予额外探索奖励，有助于发现模型先验评估不高但实际可能是好走法的情况（如弃后连杀）。
+                        </p>
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-xs font-medium text-gray-700">Q值阈值</label>
+                            <Input
+                              type="number"
+                              step="0.1"
+                              value={searchParams.low_q_threshold}
+                              onChange={(e) => setSearchParams(prev => ({
+                                ...prev,
+                                low_q_threshold: parseFloat(e.target.value) || 0.3,
+                              }))}
+                              min={-1}
+                              max={1}
+                              className="mt-1 text-xs"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              低于此Q值的走法会被增强探索（默认0.3，可为负数）
+                            </p>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-gray-700">探索奖励</label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={searchParams.low_q_exploration_bonus}
+                              onChange={(e) => setSearchParams(prev => ({
+                                ...prev,
+                                low_q_exploration_bonus: parseFloat(e.target.value) || 0.1,
+                              }))}
+                              min={0}
+                              max={1}
+                              className="mt-1 text-xs"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              奖励的基础值，越大则对低Q值走法的探索越积极（默认0.1）
+                            </p>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-gray-700">访问次数阈值</label>
+                            <Input
+                              type="number"
+                              value={searchParams.low_q_visit_threshold}
+                              onChange={(e) => setSearchParams(prev => ({
+                                ...prev,
+                                low_q_visit_threshold: parseInt(e.target.value) || 5,
+                              }))}
+                              min={1}
+                              max={50}
+                              className="mt-1 text-xs"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              访问次数低于此值的走法才会获得奖励（默认5）
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* 显示上次搜索信息 */}
+                  {lastSearchInfo && (
+                    <div className="bg-gray-50 p-2 rounded text-xs space-y-1">
+                      <div><strong>上次搜索:</strong></div>
+                      <div>总模拟次数: {lastSearchInfo.total_playouts}</div>
+                      <div>达到深度: {lastSearchInfo.max_depth_reached}</div>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 

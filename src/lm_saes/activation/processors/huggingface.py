@@ -92,6 +92,7 @@ class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[st
                         "context_idx": x[0],
                         **({"dataset_name": dataset_name} if dataset_name else {}),
                         **(metadata if metadata else {}),
+                        **({"themes": x[1].get("themes")} if "themes" in x[1] else {}),
                     }
                 },
                 enumerate(flattened),

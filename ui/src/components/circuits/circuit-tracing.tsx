@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Settings } from 'lucide-react';
+import { Loader2, Settings, ExternalLink } from 'lucide-react';
 import { LinkGraphContainer } from './link-graph-container';
 import { NodeConnections } from './node-connections';
 import { FeatureCard } from '@/components/feature/feature-card';
@@ -36,6 +36,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   onCircuitTraceEnd,
   isTracing = false,
 }) => {
+  const navigate = useNavigate();
   const [circuitTraceResult, setCircuitTraceResult] = useState<any>(null);
   const [circuitVisualizationData, setCircuitVisualizationData] = useState<any>(null);
   const [clickedNodeId, setClickedNodeId] = useState<string | null>(null);
@@ -70,8 +71,28 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
   const [topActivations, setTopActivations] = useState<any[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
 
+  // Circuit Trace 日志相关状态
+  const [traceLogs, setTraceLogs] = useState<Array<{timestamp: number; message: string}>>([]);
+  const MAX_VISIBLE_LOGS = 100;
+  const LAST_TRACE_REQUEST_KEY = 'circuit_trace_last_request_v1';
+  const TRACE_RESULT_CACHE_KEY = 'circuit_trace_result_cache_v1'; // localStorage key for trace result backup
+
+  // 恢复结果相关状态
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [lastTraceInfo, setLastTraceInfo] = useState<any>(null);
+  const [showRecoveryButton, setShowRecoveryButton] = useState(false);
+
   // 直接使用父组件传入的上一步FEN，不再使用本地缓存覆盖
   const effectiveGameFen = gameFen;
+
+  // 确保FEN在构造trace key和请求时是解码后的原始形式，避免重复编码导致404
+  const safeDecodeFen = useCallback((fen: string): string => {
+    try {
+      return decodeURIComponent(fen);
+    } catch {
+      return fen;
+    }
+  }, []);
 
   // 本地缓存：按FEN缓存最近一次输入的UCI移动
   const MOVE_CACHE_KEY = 'circuit_move_by_fen_v1';
@@ -86,6 +107,23 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       return obj[fen] || '';
     } catch {
       return '';
+    }
+  }, []);
+
+  const loadLastTraceRequest = useCallback((): any | null => {
+    try {
+      const raw = localStorage.getItem(LAST_TRACE_REQUEST_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const saveLastTraceRequest = useCallback((payload: any) => {
+    try {
+      localStorage.setItem(LAST_TRACE_REQUEST_KEY, JSON.stringify(payload));
+    } catch {
+      /* no-op */
     }
   }, []);
   
@@ -153,19 +191,125 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     clerp?: string;
   }
 
+  // 轮询circuit trace日志
+  useEffect(() => {
+    // 如果不在tracing且没有日志，不轮询
+    if (!isTracing && traceLogs.length === 0) return;
+
+    let cancelled = false;
+    let pollCount = 0;
+    const MAX_POLL_AFTER_COMPLETE = 5; // tracing完成后继续轮询5次以确保获取所有日志
+
+    const poll = async () => {
+      try {
+        const params = new URLSearchParams({
+          model_name: "lc0/BT4-1024x15x32h",
+          fen: effectiveGameFen,
+        });
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/logs?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) {
+          const allLogs = data.logs ?? [];
+          // 只保留最近 MAX_VISIBLE_LOGS 条
+          const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
+          setTraceLogs(sliced);
+          
+          // 如果tracing已完成且已轮询足够次数，停止轮询
+          if (!isTracing && !data.is_tracing) {
+            pollCount++;
+            if (pollCount >= MAX_POLL_AFTER_COMPLETE) {
+              cancelled = true;
+            }
+          } else {
+            pollCount = 0; // 重置计数
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch circuit trace logs:", err);
+      }
+    };
+
+    // 立即执行一次，然后开始轮询
+    poll();
+    const timer = window.setInterval(() => {
+      if (!cancelled) {
+        poll();
+      } else {
+        window.clearInterval(timer);
+      }
+    }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isTracing, effectiveGameFen, traceLogs.length]);
+
+  // 保存trace结果到localStorage作为备份
+  const saveTraceResultToLocalStorage = useCallback((traceKey: string, result: any) => {
+    try {
+      const cacheData = {
+        trace_key: traceKey,
+        result: result,
+        saved_at: Date.now(),
+      };
+      localStorage.setItem(TRACE_RESULT_CACHE_KEY, JSON.stringify(cacheData));
+      console.log('✅ Trace结果已备份到localStorage');
+    } catch (error) {
+      console.error('⚠️ 保存trace结果到localStorage失败:', error);
+      // localStorage可能已满，尝试清理旧数据
+      try {
+        localStorage.removeItem(TRACE_RESULT_CACHE_KEY);
+        localStorage.setItem(TRACE_RESULT_CACHE_KEY, JSON.stringify({
+          trace_key: traceKey,
+          result: result,
+          saved_at: Date.now(),
+        }));
+      } catch (e) {
+        console.error('⚠️ 清理后仍无法保存到localStorage:', e);
+      }
+    }
+  }, []);
+
+  // 从localStorage加载trace结果
+  const loadTraceResultFromLocalStorage = useCallback((traceKey: string): any | null => {
+    try {
+      const cached = localStorage.getItem(TRACE_RESULT_CACHE_KEY);
+      if (!cached) return null;
+      
+      const cacheData = JSON.parse(cached);
+      // 检查是否匹配当前的trace_key，且不超过7天
+      if (cacheData.trace_key === traceKey && 
+          Date.now() - cacheData.saved_at < 7 * 24 * 3600 * 1000) {
+        return cacheData.result;
+      }
+      return null;
+    } catch (error) {
+      console.error('⚠️ 从localStorage加载trace结果失败:', error);
+      return null;
+    }
+  }, []);
+
   // 新增：handleCircuitTrace函数
-  const handleCircuitTraceResult = useCallback((result: any) => {
+  const handleCircuitTraceResult = useCallback((result: any, traceKey?: string) => {
     if (result && result.nodes) {
       try {
         const transformedData = transformCircuitData(result);
         setCircuitVisualizationData(transformedData);
         setCircuitTraceResult(result);
+        // 成功加载结果后隐藏恢复按钮
+        setShowRecoveryButton(false);
+        
+        // 保存到localStorage作为备份
+        if (traceKey) {
+          saveTraceResultToLocalStorage(traceKey, result);
+        }
       } catch (error) {
         console.error('Circuit数据转换失败:', error);
         alert('Circuit数据转换失败: ' + (error instanceof Error ? error.message : '未知错误'));
       }
     }
-  }, []);
+  }, [saveTraceResultToLocalStorage]);
 
   // 新增：处理节点点击 - 修复参数传递
   const handleNodeClick = useCallback((node: any, isMetaKey: boolean) => {
@@ -235,15 +379,183 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
   }, []);
 
+  // 生成trace_key（与后端保持一致）
+  // 后端使用 get_bt4_sae_combo(sae_combo_id)["id"] 来获取normalized_combo_id
+  // 如果sae_combo_id为None或不存在，会回退到默认组合 "k_30_e_16"
+  const generateTraceKey = useCallback((fen: string, moveUci: string, saeComboId: string | null | undefined): string => {
+    const modelName = 'lc0/BT4-1024x15x32h';
+    // 与后端保持一致：如果saeComboId为空，使用默认组合 "k_30_e_16"
+    // 注意：后端会通过get_bt4_sae_combo规范化ID，但前端无法直接调用
+    // 所以这里假设前端传递的saeComboId已经是正确的（在BT4_SAE_COMBOS中存在）
+    // 如果不存在，后端会回退到默认值，所以前端也应该使用默认值
+    const comboId = saeComboId || 'k_30_e_16'; // 与后端BT4_DEFAULT_SAE_COMBO保持一致
+    const decodedFen = safeDecodeFen(fen);
+    const decodedMove = safeDecodeFen(moveUci);
+    return `${modelName}::${comboId}::${decodedFen}::${decodedMove}`;
+  }, [safeDecodeFen]);
+
+  // 获取已存在的trace结果（优先从localStorage，再尝试后端）
+  const fetchExistingTraceResult = useCallback(
+    async (fen: string, moveUci: string, saeComboId: string | null | undefined, showSuccess: boolean = false) => {
+      const decodedFen = safeDecodeFen(fen);
+      const decodedMove = safeDecodeFen(moveUci);
+      const traceKey = generateTraceKey(decodedFen, decodedMove, saeComboId);
+      
+      // 1. 先尝试从localStorage加载
+      const cachedResult = loadTraceResultFromLocalStorage(traceKey);
+      if (cachedResult && cachedResult.nodes) {
+        console.log('✅ 从localStorage恢复trace结果');
+        handleCircuitTraceResult(cachedResult, traceKey);
+        if (showSuccess) {
+          alert(`✅ 成功从本地缓存恢复Circuit trace结果！\n\n节点数: ${cachedResult.nodes.length}\n连接数: ${cachedResult.links?.length || 0}`);
+        }
+        return true;
+      }
+      
+      // 2. 尝试从后端加载
+      try {
+        const params = new URLSearchParams({
+          fen: decodedFen,
+          move_uci: decodedMove,
+        });
+        if (saeComboId) {
+          params.set('sae_combo_id', saeComboId);
+        }
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/result?${params.toString()}`);
+        if (!res.ok) {
+          if (showSuccess) {
+            throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+          }
+          return false;
+        }
+        const data = await res.json();
+        if (data?.graph_data?.nodes) {
+          handleCircuitTraceResult(data.graph_data, traceKey);
+          if (data.logs) {
+            const sliced = (data.logs as Array<{ timestamp: number; message: string }>)?.slice(-MAX_VISIBLE_LOGS) || [];
+            setTraceLogs(sliced);
+          }
+          if (showSuccess) {
+            alert(`✅ 成功从后端恢复Circuit trace结果！\n\n节点数: ${data.graph_data.nodes.length}\n连接数: ${data.graph_data.links?.length || 0}`);
+          }
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.error('恢复trace结果失败:', err);
+        if (showSuccess) {
+          alert(`❌ 恢复失败: ${err instanceof Error ? err.message : '未知错误'}`);
+        }
+        return false;
+      }
+    },
+    [handleCircuitTraceResult, generateTraceKey, loadTraceResultFromLocalStorage, safeDecodeFen],
+  );
+
+  // 手动恢复上一次trace结果
+  const handleManualRecovery = useCallback(async () => {
+    const lastRequest = loadLastTraceRequest();
+    if (!lastRequest || !lastRequest.fen || !lastRequest.move_uci) {
+      alert('❌ 没有找到可恢复的trace请求信息');
+      return;
+    }
+
+    setIsRecovering(true);
+    try {
+      console.log('🔄 手动恢复trace结果:', lastRequest);
+      const success = await fetchExistingTraceResult(
+        safeDecodeFen(lastRequest.fen), 
+        safeDecodeFen(lastRequest.move_uci), 
+        lastRequest.sae_combo_id,
+        true // 显示成功/失败消息
+      );
+      
+      if (!success) {
+        // 如果没有现成的结果，检查是否还在tracing中
+        try {
+          const params = new URLSearchParams({
+            model_name: 'lc0/BT4-1024x15x32h',
+            fen: safeDecodeFen(lastRequest.fen),
+            move_uci: safeDecodeFen(lastRequest.move_uci),
+          });
+          if (lastRequest.sae_combo_id) params.set('sae_combo_id', lastRequest.sae_combo_id);
+          
+          const statusRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/logs?${params.toString()}`);
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.is_tracing) {
+              alert('⏳ 后端正在执行该trace请求，请稍等完成后再试');
+              // 开始轮询日志
+              const sliced = (statusData.logs as Array<{ timestamp: number; message: string }>)?.slice(-MAX_VISIBLE_LOGS) || [];
+              setTraceLogs(sliced);
+            } else {
+              alert('❌ 没有找到对应的trace结果，可能已过期或被清理');
+            }
+          } else {
+            alert('❌ 无法检查trace状态，请重新执行trace');
+          }
+        } catch (statusErr) {
+          console.error('检查trace状态失败:', statusErr);
+          alert('❌ 检查trace状态失败，请重新执行trace');
+        }
+      }
+    } catch (error) {
+      console.error('手动恢复失败:', error);
+      alert(`❌ 恢复失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setIsRecovering(false);
+    }
+  }, [loadLastTraceRequest, fetchExistingTraceResult, safeDecodeFen]);
+
+  // 检查是否有可恢复的trace信息
+  const checkRecoverableTrace = useCallback(() => {
+    const lastRequest = loadLastTraceRequest();
+    if (lastRequest && lastRequest.fen && lastRequest.move_uci) {
+      setLastTraceInfo(lastRequest);
+      setShowRecoveryButton(true);
+    } else {
+      setLastTraceInfo(null);
+      setShowRecoveryButton(false);
+    }
+  }, [loadLastTraceRequest]);
+
   // 修改handleCircuitTrace函数来支持不同的order_mode和both trace
   const handleCircuitTrace = useCallback(async (orderMode: 'positive' | 'negative' | 'both' = 'positive') => {
+    // 先检查后端是否有正在进行的circuit tracing进程
+    try {
+      const statusResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
+      if (statusResponse.ok) {
+        const status = await statusResponse.json();
+        if (status.is_tracing) {
+          alert('后端正在执行另一个circuit tracing进程，请等待完成后再试');
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('检查circuit tracing状态失败:', error);
+      // 如果检查失败，仍然继续执行（避免因为网络问题阻止用户操作）
+    }
+    
     let moveUci: string | null = null;
+    const decodedFen = safeDecodeFen(effectiveGameFen);
     const lastMoveStr: string | null = lastMove ? lastMove : null;
+    
+    // 调试日志：记录所有状态值
+    console.log('🔍 [DEBUG] handleCircuitTrace 调用:', {
+      orderMode,
+      positiveMove: positiveMove,
+      negativeMove: negativeMove,
+      lastMove: lastMove,
+      gameFen: gameFen,
+      cachedPositive: loadCachedPositiveMove(gameFen),
+      cachedNegative: loadCachedNegativeMove(gameFen),
+      cachedMove: loadCachedMove(gameFen),
+    });
     
     if (orderMode === 'both') {
       // Both Trace: 需要positive move和negative move
-      const posMove = positiveMove.trim() || loadCachedPositiveMove(gameFen);
-      const negMove = negativeMove.trim() || loadCachedNegativeMove(gameFen);
+      const posMove = positiveMove.trim() || loadCachedPositiveMove(decodedFen);
+      const negMove = negativeMove.trim() || loadCachedNegativeMove(decodedFen);
       
       if (!posMove) {
         alert('Both Trace需要输入Positive Move');
@@ -278,9 +590,36 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     } else {
       // Positive/Negative Trace: 使用对应的move
       if (orderMode === 'positive') {
-        moveUci = positiveMove.trim() || loadCachedPositiveMove(gameFen) || loadCachedMove(gameFen) || lastMoveStr;
+        const trimmedPositive = positiveMove.trim();
+        const cachedPos = loadCachedPositiveMove(decodedFen);
+        const cached = loadCachedMove(decodedFen);
+        
+        // 优先使用用户输入的移动，只有在用户没有输入时才使用缓存或lastMove
+        moveUci = trimmedPositive || cachedPos || cached || lastMoveStr;
+        
+        // 调试日志：记录选择过程
+        console.log('🔍 [DEBUG] Positive Trace 移动选择:', {
+          '用户输入 (positiveMove.trim())': trimmedPositive || '(空)',
+          '缓存 Positive Move': cachedPos || '(无)',
+          '缓存 Move': cached || '(无)',
+          '最后移动 (lastMove)': lastMoveStr || '(无)',
+          '最终选择': moveUci,
+        });
       } else {
-        moveUci = negativeMove.trim() || loadCachedNegativeMove(gameFen) || loadCachedMove(gameFen) || lastMoveStr;
+        const trimmedNegative = negativeMove.trim();
+        const cachedNeg = loadCachedNegativeMove(decodedFen);
+        const cached = loadCachedMove(decodedFen);
+        
+        moveUci = trimmedNegative || cachedNeg || cached || lastMoveStr;
+        
+        // 调试日志：记录选择过程
+        console.log('🔍 [DEBUG] Negative Trace 移动选择:', {
+          '用户输入 (negativeMove.trim())': trimmedNegative || '(空)',
+          '缓存 Negative Move': cachedNeg || '(无)',
+          '缓存 Move': cached || '(无)',
+          '最后移动 (lastMove)': lastMoveStr || '(无)',
+          '最终选择': moveUci,
+        });
       }
       
       if (!moveUci) {
@@ -294,7 +633,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       }
       
       console.log('🔍 Circuit Trace 参数:', {
-        fen: gameFen,
+        fen: decodedFen,
         move_uci: moveUci,
         order_mode: orderMode,
         side: traceSide,
@@ -304,13 +643,19 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     
     onCircuitTraceStart?.();
     
+    // 清空之前的日志
+    setTraceLogs([]);
+    
     try {
-      // 固定使用BT4模型
-      const modelName = 'lc0/BT4-1024x15x32h';
+      // 固定使用BT4模型（modelName在generateTraceKey中使用）
+      
+      // 获取当前选中的 SAE 组合 ID（从 localStorage 读取，与 SaeComboLoader 保持一致）
+      const LOCAL_STORAGE_KEY = "bt4_sae_combo_id";
+      const currentSaeComboId = window.localStorage.getItem(LOCAL_STORAGE_KEY) || null;
       
       // 构建请求体
       const requestBody: any = { 
-        fen: effectiveGameFen,
+        fen: decodedFen,
         move_uci: moveUci,
         side: orderMode === 'both' ? 'both' : traceSide,
         order_mode: orderMode,
@@ -321,13 +666,36 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         save_activation_info: true
       };
       
+      // 如果前端有选中的 SAE 组合 ID，传递给后端
+      if (currentSaeComboId) {
+        requestBody.sae_combo_id = currentSaeComboId;
+      }
+      
       // Both trace需要传递negative move
       if (orderMode === 'both') {
-        const negMove = negativeMove.trim() || loadCachedNegativeMove(gameFen);
+        const negMove = negativeMove.trim() || loadCachedNegativeMove(decodedFen);
         if (negMove) {
           requestBody.negative_move_uci = negMove;
         }
       }
+      
+      // 调试日志：记录实际发送的请求体
+      console.log('🔍 [DEBUG] 发送 Circuit Trace 请求:', {
+        requestBody,
+        '实际使用的 move_uci': requestBody.move_uci,
+        '用户输入的 positiveMove': positiveMove,
+        '用户输入的 negativeMove': negativeMove,
+        '当前 SAE 组合 ID': currentSaeComboId,
+      });
+
+      saveLastTraceRequest({
+        fen: decodedFen,
+        move_uci: requestBody.move_uci,
+        order_mode: orderMode,
+        side: requestBody.side,
+        sae_combo_id: currentSaeComboId,
+        timestamp: Date.now(), // 添加时间戳
+      });
       
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace`, {
         method: 'POST',
@@ -341,26 +709,31 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         const data = await response.json();
         // 成功后缓存移动
         if (orderMode === 'both' || orderMode === 'positive') {
-          const posMove = positiveMove.trim() || loadCachedPositiveMove(gameFen);
+          const posMove = positiveMove.trim() || loadCachedPositiveMove(decodedFen);
           if (posMove) {
-            saveCachedPositiveMove(gameFen, posMove);
+            saveCachedPositiveMove(decodedFen, posMove);
           }
         }
         if (orderMode === 'both' || orderMode === 'negative') {
-          const negMove = negativeMove.trim() || loadCachedNegativeMove(gameFen);
+          const negMove = negativeMove.trim() || loadCachedNegativeMove(decodedFen);
           if (negMove) {
-            saveCachedNegativeMove(gameFen, negMove);
+            saveCachedNegativeMove(decodedFen, negMove);
           }
         }
         
-        // 确保 metadata 中包含正确的模型信息（固定使用BT4模型）
+        // 后端已经根据 sae_combo_id 从 constants.py 设置了正确的 metadata，
+        // 直接使用后端返回的值，不再覆盖
         if (data.metadata) {
-          data.metadata.lorsa_analysis_name = 'BT4_lorsa_L{}A';
-          data.metadata.tc_analysis_name = 'BT4_tc_L{}M';
-          console.log('🔍 设置 BT4 模型 metadata:', data.metadata);
+          console.log('🔍 后端返回的 metadata:', {
+            lorsa_analysis_name: data.metadata.lorsa_analysis_name,
+            tc_analysis_name: data.metadata.tc_analysis_name,
+            sae_combo_id: currentSaeComboId,
+          });
         }
         
-        handleCircuitTraceResult(data);
+        // 生成trace_key并保存结果
+        const traceKey = generateTraceKey(effectiveGameFen, requestBody.move_uci, currentSaeComboId);
+        handleCircuitTraceResult(data, traceKey);
       } else {
         const errorText = await response.text();
         console.error('Circuit trace API调用失败:', response.status, response.statusText, errorText);
@@ -368,11 +741,35 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       }
     } catch (error) {
       console.error('Circuit trace出错:', error);
-      alert('Circuit trace出错: ' + (error instanceof Error ? error.message : '未知错误'));
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      
+      // 检查是否是网络错误
+      const isNetworkError = errorMessage.toLowerCase().includes('fetch') || 
+                            errorMessage.toLowerCase().includes('network') ||
+                            errorMessage.toLowerCase().includes('connection');
+      
+      if (isNetworkError) {
+        const shouldRecover = confirm(
+          `❌ Circuit trace遇到网络错误: ${errorMessage}\n\n` +
+          `💡 可能的解决方案:\n` +
+          `1. 点击"确定"尝试恢复上一次的trace结果\n` +
+          `2. 点击"取消"重新执行trace\n\n` +
+          `是否尝试恢复上一次的结果？`
+        );
+        
+        if (shouldRecover) {
+          // 延迟一下再尝试恢复，给后端时间完成处理
+          setTimeout(() => {
+            handleManualRecovery();
+          }, 2000);
+        }
+      } else {
+        alert('Circuit trace出错: ' + errorMessage);
+      }
     } finally {
       onCircuitTraceEnd?.();
     }
-  }, [gameFen, currentFen, lastMove, gameHistory, positiveMove, negativeMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, loadCachedMove, saveCachedMove, loadCachedPositiveMove, loadCachedNegativeMove, saveCachedPositiveMove, saveCachedNegativeMove]);
+  }, [gameFen, currentFen, lastMove, gameHistory, positiveMove, negativeMove, validateMove, onCircuitTraceStart, onCircuitTraceEnd, handleCircuitTraceResult, circuitParams, traceSide, loadCachedMove, saveCachedMove, loadCachedPositiveMove, loadCachedNegativeMove, saveCachedPositiveMove, saveCachedNegativeMove, handleManualRecovery, generateTraceKey, safeDecodeFen]);
 
   // 新增：保存原始graph JSON（与后端create_graph_files一致的数据结构）
   const handleSaveGraphJson = useCallback(() => {
@@ -406,6 +803,68 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
       alert('保存JSON失败');
     }
   }, [circuitTraceResult, circuitVisualizationData, gameFen, gameHistory]);
+
+  useEffect(() => {
+    const last = loadLastTraceRequest();
+    if (!last || !last.fen || !last.move_uci) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30;
+
+    const pollExisting = async () => {
+      if (cancelled) return;
+      try {
+        const params = new URLSearchParams({
+          model_name: 'lc0/BT4-1024x15x32h',
+          fen: safeDecodeFen(last.fen),
+          move_uci: safeDecodeFen(last.move_uci),
+        });
+        if (last.sae_combo_id) params.set('sae_combo_id', last.sae_combo_id);
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/logs?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const sliced = (data.logs as Array<{ timestamp: number; message: string }>)?.slice(-MAX_VISIBLE_LOGS) || [];
+        setTraceLogs(sliced);
+
+        if (!data.is_tracing) {
+          await fetchExistingTraceResult(last.fen, last.move_uci, last.sae_combo_id);
+          cancelled = true;
+          return;
+        }
+      } catch (err) {
+        console.error('恢复trace日志失败:', err);
+      }
+      attempts += 1;
+      if (attempts >= MAX_ATTEMPTS) cancelled = true;
+    };
+
+    pollExisting();
+    const timer = window.setInterval(() => {
+      if (!cancelled) {
+        pollExisting();
+      } else {
+        window.clearInterval(timer);
+      }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loadLastTraceRequest, fetchExistingTraceResult, safeDecodeFen]);
+
+  // 组件挂载时检查可恢复的trace
+  useEffect(() => {
+    checkRecoverableTrace();
+  }, [checkRecoverableTrace]);
+
+  // FEN变化时重新检查可恢复的trace
+  useEffect(() => {
+    if (effectiveGameFen) {
+      checkRecoverableTrace();
+    }
+  }, [effectiveGameFen, checkRecoverableTrace]);
 
   // 处理参数设置
   const handleParamsChange = useCallback((key: keyof typeof circuitParams, value: string) => {
@@ -907,12 +1366,21 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
     }
   }, [lastMove, positiveMove]);
 
-  // 当有效分析FEN变化时：清空待分析移动，避免自动带入旧移动/缓存
+  // 当有效分析FEN变化时：只在用户没有输入时才清空待分析移动，避免覆盖用户输入
+  const prevEffectiveGameFenRef = useRef<string>(effectiveGameFen);
   useEffect(() => {
-    setPositiveMove('');
-    setNegativeMove('');
-    setMoveError('');
-  }, [effectiveGameFen]);
+    // 只在 FEN 真正变化时才处理
+    if (prevEffectiveGameFenRef.current !== effectiveGameFen) {
+      // 如果用户已经输入了移动，不清空（保留用户输入）
+      // 只有在用户没有输入时才清空，避免自动带入旧移动/缓存
+      if (!positiveMove.trim() && !negativeMove.trim()) {
+        setPositiveMove('');
+        setNegativeMove('');
+        setMoveError('');
+      }
+      prevEffectiveGameFenRef.current = effectiveGameFen;
+    }
+  }, [effectiveGameFen, positiveMove, negativeMove]);
 
   return (
     <div className="space-y-6">
@@ -922,6 +1390,27 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           <CardTitle className="flex items-center justify-between">
             <span>Circuit Trace 分析</span>
             <div className="flex gap-2">
+              {showRecoveryButton && (
+                <Button
+                  onClick={handleManualRecovery}
+                  disabled={isRecovering}
+                  variant="outline"
+                  size="sm"
+                  className="bg-yellow-50 border-yellow-300 text-yellow-800 hover:bg-yellow-100"
+                  title={lastTraceInfo ? `恢复上次trace: ${lastTraceInfo.move_uci} (${new Date(lastTraceInfo.timestamp || 0).toLocaleTimeString()})` : '恢复上次trace结果'}
+                >
+                  {isRecovering ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      恢复中...
+                    </>
+                  ) : (
+                    <>
+                      🔄 恢复结果
+                    </>
+                  )}
+                </Button>
+              )}
               <Button
                 onClick={() => setShowParamsDialog(true)}
                 variant="outline"
@@ -980,6 +1469,34 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {/* Circuit Trace 日志显示 */}
+          {(isTracing || traceLogs.length > 0) && (
+            <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+              <div className="mb-2 font-semibold flex items-center justify-between">
+                <span>
+                  {isTracing ? '🔍 Circuit Tracing 日志' : '📋 Circuit Tracing 日志（已完成）'}
+                </span>
+                {!isTracing && traceLogs.length > 0 && !circuitVisualizationData && (
+                  <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded">
+                    💡 如果结果未显示，请点击上方"🔄 恢复结果"按钮
+                  </span>
+                )}
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded bg-blue-100 p-2 text-xs font-mono leading-relaxed">
+                {traceLogs.length === 0 ? (
+                  <div className="text-blue-700 opacity-80">
+                    {isTracing ? '等待日志...' : '暂无日志'}
+                  </div>
+                ) : (
+                  traceLogs.map((log, idx) => (
+                    <div key={`${log.timestamp}-${idx}`} className="mb-1">
+                      {new Date(log.timestamp * 1000).toLocaleTimeString()} - {log.message}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
           <div className="space-y-4">
             {/* Side选择框 */}
             <div className="space-y-2">
@@ -1015,7 +1532,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   onChange={(e) => {
                     setPositiveMove(e.target.value);
                     setMoveError('');
-                    saveCachedPositiveMove(effectiveGameFen, e.target.value);
+                    saveCachedPositiveMove(safeDecodeFen(effectiveGameFen), e.target.value);
                   }}
                   className={`font-mono ${moveError && moveError.includes('Positive') ? 'border-red-500' : ''}`}
                 />
@@ -1024,7 +1541,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                     const move = lastMove || '';
                     setPositiveMove(move);
                     if (move) {
-                      saveCachedPositiveMove(effectiveGameFen, move);
+                      saveCachedPositiveMove(safeDecodeFen(effectiveGameFen), move);
                     }
                   }}
                   variant="outline"
@@ -1053,7 +1570,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   onChange={(e) => {
                     setNegativeMove(e.target.value);
                     setMoveError('');
-                    saveCachedNegativeMove(effectiveGameFen, e.target.value);
+                    saveCachedNegativeMove(safeDecodeFen(effectiveGameFen), e.target.value);
                   }}
                   className={`font-mono ${moveError && moveError.includes('Negative') ? 'border-red-500' : ''}`}
                 />
@@ -1149,6 +1666,35 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 <p className="text-sm mt-1 text-purple-600">Both Trace需要同时输入Positive Move和Negative Move</p>
               </div>
             )}
+
+            {/* 显示上次trace信息（仅在有恢复按钮且没有当前可视化时显示） */}
+            {showRecoveryButton && lastTraceInfo && !circuitVisualizationData && (
+              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-yellow-800">💾 发现上次trace记录</span>
+                  <span className="text-xs text-yellow-600">
+                    {lastTraceInfo.timestamp ? new Date(lastTraceInfo.timestamp).toLocaleString() : '时间未知'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs text-yellow-700">
+                  <div>
+                    <span className="font-medium">FEN:</span>
+                    <div className="font-mono bg-yellow-100 p-1 rounded mt-1 break-all">
+                      {lastTraceInfo.fen}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="font-medium">移动:</span>
+                    <div className="font-mono bg-yellow-100 p-1 rounded mt-1">
+                      {lastTraceInfo.move_uci} ({lastTraceInfo.order_mode}模式, {lastTraceInfo.side}侧)
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-yellow-600 mt-2 text-center">
+                  点击上方"🔄 恢复结果"按钮尝试恢复该trace的可视化结果
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1177,6 +1723,8 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                     setHiddenNodeIds([]);
                     setSelectedFeature(null);
                     setConnectedFeatures([]);
+                    // 清除可视化后重新检查恢复按钮
+                    checkRecoverableTrace();
                   }}
                   variant="outline"
                   size="sm"
@@ -1314,11 +1862,35 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                 
                 const nodeTypeDisplay = isLorsa ? 'LORSA' : 'SAE';
                 
+                // 跳转到 global-weight 页面的函数
+                const handleViewGlobalWeight = () => {
+                  const featureType = isLorsa ? 'lorsa' : 'tc';
+                  const saeComboId = circuitVisualizationData?.metadata?.sae_combo_id;
+                  const params = new URLSearchParams({
+                    feature_type: featureType,
+                    layer_idx: layerIdx.toString(),
+                    feature_idx: featureIndex.toString(),
+                  });
+                  if (saeComboId) {
+                    params.append('sae_combo_id', saeComboId);
+                  }
+                  navigate(`/global-weight?${params.toString()}`);
+                };
+                
                 return (
                   <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-lg font-semibold">Selected Feature Details</h3>
                       <div className="flex items-center space-x-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleViewGlobalWeight}
+                          className="flex items-center gap-2"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          查看全局权重
+                        </Button>
                         {connectedFeatures.length > 0 && (
                           <div className="flex items-center space-x-2">
                             <span className="text-sm text-gray-600">Connected features:</span>

@@ -311,7 +311,15 @@ def prune_graph(
     )
     # print(f'{logit_weights = }')
     # print(f'{n_logits = }')
-    logit_weights[-n_logits:] = graph.logit_probabilities
+    if n_logits > 0:
+        # 常规情况：从真实 logits 出发计算影响力
+        logit_weights[-n_logits:] = graph.logit_probabilities
+    else:
+        # 特征终点模式：没有 logits（例如只做 feature-seeded trace）
+        # 为避免全零导致归一化/阈值计算出错，这里给所有节点一个均匀的非零权重。
+        # 注意：此时 adjacency_matrix 一般已经是「从指定 feature 出发」计算得到，
+        # 因此影响力排序仍然是围绕该 feature 的传播结构。
+        logit_weights.fill_(1.0 / graph.adjacency_matrix.shape[0])
 
     # Calculate node influence and apply threshold
     node_influence = compute_node_influence(graph.adjacency_matrix, logit_weights)

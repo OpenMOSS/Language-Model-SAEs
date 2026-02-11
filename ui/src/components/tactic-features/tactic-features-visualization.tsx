@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 
 interface FeatureResult {
   layer: number;
@@ -38,8 +39,6 @@ interface AnalysisResult {
 }
 
 export const TacticFeaturesVisualization: React.FC = () => {
-  // 固定使用BT4模型
-  const selectedModel = 'lc0/BT4-1024x15x32h';
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -137,6 +136,9 @@ export const TacticFeaturesVisualization: React.FC = () => {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+      <SaeComboLoader />
+
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold flex items-center gap-2">
           <FileText className="w-8 h-8" />
@@ -542,4 +544,3 @@ export const TacticFeaturesVisualization: React.FC = () => {
     </div>
   );
 };
-

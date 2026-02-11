@@ -1,9 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useState, useEffect, useCallback } from "react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import camelcaseKeys from "camelcase-keys";
+import { useAsyncFn, useMount } from "react-use";
+import { z } from "zod";
 
 interface Bookmark {
   saeName: string;
@@ -26,6 +30,28 @@ const BookmarksPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<number>(0);
   const [limit] = useState<number>(20);
+  const [selectedDictionary, setSelectedDictionary] = useState<string | null>(null);
+  const [selectedAnalysis, setSelectedAnalysis] = useState<string | null>(null);
+
+  const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
+    return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries`)
+      .then(async (res) => await res.json())
+      .then((res) => z.array(z.string()).parse(res));
+  });
+
+  const [analysesState, fetchAnalyses] = useAsyncFn(async (dictionary: string) => {
+    if (!dictionary) return [];
+
+    return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/analyses`)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        return res;
+      })
+      .then(async (res) => await res.json())
+      .then((res) => z.array(z.string()).parse(res));
+  });
 
   const fetchBookmarks = useCallback(async (pageNumber: number = 0) => {
     try {
@@ -70,9 +96,49 @@ const BookmarksPage = () => {
     }
   };
 
+  useMount(async () => {
+    await fetchDictionaries();
+  });
+
+  useEffect(() => {
+    if (dictionariesState.value && dictionariesState.value.length > 0 && selectedDictionary === null) {
+      setSelectedDictionary(dictionariesState.value[0]);
+      fetchAnalyses(dictionariesState.value[0]).then((analyses) => {
+        if (analyses.length > 0) {
+          setSelectedAnalysis(analyses[0]);
+        }
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dictionariesState.value]);
+
+  useEffect(() => {
+    if (selectedDictionary) {
+      fetchAnalyses(selectedDictionary);
+      setSelectedAnalysis(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDictionary]);
+
+  useEffect(() => {
+    if (analysesState.value && analysesState.value.length > 0 && selectedAnalysis === null) {
+      setSelectedAnalysis(analysesState.value[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysesState.value]);
+
   useEffect(() => {
     fetchBookmarks(page);
   }, [page, fetchBookmarks]);
+
+  // Memoize dictionary options for Combobox
+  const dictionaryOptions = useMemo(() => {
+    if (!dictionariesState.value) return [];
+    return dictionariesState.value.map((dict) => ({
+      value: dict,
+      label: dict,
+    }));
+  }, [dictionariesState.value]);
 
   const totalPages = Math.ceil(totalCount / limit);
 
@@ -104,6 +170,38 @@ const BookmarksPage = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="mb-6 grid grid-cols-[auto_300px_auto_300px] justify-center items-center gap-4">
+            <span className="font-bold justify-self-end">Select dictionary:</span>
+            <Combobox
+              disabled={dictionariesState.loading || loading}
+              value={selectedDictionary || null}
+              onChange={(value) => {
+                setSelectedDictionary(value);
+              }}
+              options={dictionaryOptions}
+              placeholder="选择字典..."
+              commandPlaceholder="搜索字典..."
+              emptyIndicator="未找到匹配的字典"
+              className="w-full"
+            />
+            <span className="font-bold justify-self-end">Select analysis:</span>
+            <Select
+              disabled={analysesState.loading || !selectedDictionary || loading}
+              value={selectedAnalysis || undefined}
+              onValueChange={setSelectedAnalysis}
+            >
+              <SelectTrigger className="bg-white">
+                <SelectValue placeholder="Select an analysis" />
+              </SelectTrigger>
+              <SelectContent>
+                {analysesState.value?.map((analysis, i) => (
+                  <SelectItem key={i} value={analysis}>
+                    {analysis}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           {bookmarks.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground">No bookmarks found.</p>
@@ -129,7 +227,7 @@ const BookmarksPage = () => {
                     <TableRow key={`${bookmark.saeName}-${bookmark.featureIndex}`}>
                       <TableCell>
                         <Link
-                          to={`/features?dictionary=${bookmark.saeName}&featureIndex=${bookmark.featureIndex}`}
+                          to={`/features?dictionary=${bookmark.saeName}&featureIndex=${bookmark.featureIndex}${selectedAnalysis ? `&analysis=${selectedAnalysis}` : ""}`}
                           className="text-blue-600 hover:underline font-medium"
                         >
                           #{bookmark.featureIndex}

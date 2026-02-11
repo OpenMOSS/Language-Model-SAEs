@@ -21,15 +21,27 @@ export const TokenLabels: React.FC<TokenLabelsProps> = React.memo(({
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    // Draw prompt tokens at the bottom
-    svg.selectAll(".token-label").data(tokenData, (d: any) => d.ctx_idx)
-      .enter().append("text")
-      .attr("class", "token-label")
+    // Draw position index only (no token text)
+    // Use ctx_idx as key to prevent duplicates
+    const labels = svg.selectAll(".position-index")
+      .data(tokenData, (d: any) => d.ctx_idx);
+    
+    // Remove old labels that are no longer in data
+    labels.exit().remove();
+    
+    // Add new labels
+    const labelEnter = labels.enter()
+      .append("text")
+      .attr("class", "position-index");
+    
+    // Update all labels (both new and existing)
+    labelEnter.merge(labels as any)
       .attr("x", (d: any) => d.x)
-      .attr("y", dimensions.height - BOTTOM_PADDING + 10)
-      .attr("transform", (d: any) => `rotate(-45, ${d.x}, ${dimensions.height - BOTTOM_PADDING + 10})`)
-      .attr("text-anchor", "end")
-      .text((d: any) => d.token);
+      .attr("y", dimensions.height - BOTTOM_PADDING + 15)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "12px")
+      .attr("fill", "#666")
+      .text((d: any) => d.ctx_idx);
   }, [tokenData, dimensions]);
 
   return (

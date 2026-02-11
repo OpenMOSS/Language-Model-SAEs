@@ -1444,6 +1444,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         # (n_active_features, q_pos, k_pos)
         pattern = self._compute_attention_pattern(q, k)[qk_idx, 0]
+        print(f'{v.shape = }')
         return pattern.mul_(v[0, :, head_idx, None].permute(1, 2, 0))
 
     def encode_z_patterns(

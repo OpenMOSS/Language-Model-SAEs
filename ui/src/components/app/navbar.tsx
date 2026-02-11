@@ -58,6 +58,15 @@ export const AppNavbar = () => {
           <Link
             className={cn(
               "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/search-circuits" && "text-foreground"
+            )}
+            to="/search-circuits"
+          >
+            Search Circuits
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
               location.pathname === "/3D-visualization" && "text-foreground"
             )}
             to="/3D-visualization"
@@ -90,6 +99,51 @@ export const AppNavbar = () => {
             to="/tactic-features"
           >
             Tactic Features
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/global-weight" && "text-foreground"
+            )}
+            to="/global-weight"
+          >
+            Global Weight
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/functional-microcircuit" && "text-foreground"
+            )}
+            to="/functional-microcircuit"
+          >
+            Functional Microcircuit
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/position-feature" && "text-foreground"
+            )}
+            to="/position-feature"
+          >
+            Position Feature
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/feature-interaction" && "text-foreground"
+            )}
+            to="/feature-interaction"
+          >
+            Feature Interaction
+          </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/interaction-circuit" && "text-foreground"
+            )}
+            to="/interaction-circuit"
+          >
+            Interaction Circuit
           </Link>
         </div>
       </div>
