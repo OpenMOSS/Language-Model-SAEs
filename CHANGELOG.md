@@ -1,3 +1,9 @@
+## v2.0.0b10 (2026-02-11)
+
+### Perf
+
+- **ui/server**: enhance sampling caching
+
 ## v2.0.0b9 (2026-02-09)
 
 ### Feat
