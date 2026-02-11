@@ -1,3 +1,9 @@
+## v2.0.0b12 (2026-02-11)
+
+### Feat
+
+- **ui/server**: add configurable LRU cache sizes for models, datasets, saes, and circuits
+
 ## v2.0.0b11 (2026-02-11)
 
 ### Fix
