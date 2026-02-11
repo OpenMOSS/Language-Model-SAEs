@@ -162,6 +162,10 @@ export const FeatureCardCompactForEmbed = memo(
     plain?: boolean
     defaultVisibleRange?: number
   }) => {
+    const isLorsa = feature.samples.some(
+      (s) => s.zPatternIndices && s.zPatternIndices.length > 0,
+    )
+
     return (
       <div
         className={cn(
@@ -181,6 +185,11 @@ export const FeatureCardCompactForEmbed = memo(
               ) : (
                 <p className="text-sm text-slate-400 italic">
                   No interpretation available
+                </p>
+              )}
+              {isLorsa && (
+                <p className="text-xs text-slate-400 mt-1">
+                  Hover on top activations to see z-pattern
                 </p>
               )}
             </div>
