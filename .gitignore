@@ -206,6 +206,12 @@ uv.lock
 # Training and analysis scripts
 train_lorsa_*.sh
 analyze_lorsa_*.sh
+train_tc_*.sh
+analyze_tc_*.sh
+train_sae_*.sh
+analyze_sae_*.sh
+train_mlp_*.sh
+analyze_mlp_*.sh
 
 # Log files and utility scripts
 mongodb_error_log.txt
