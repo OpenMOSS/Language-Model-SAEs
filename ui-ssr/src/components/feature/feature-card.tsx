@@ -197,7 +197,12 @@ export const FeatureCardCompactForEmbed = memo(
               <span className="text-xs text-slate-500 font-medium tracking-wide">
                 {feature.dictionaryName}
               </span>
-              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-700 text-white text-xs font-mono font-medium">
+              <span
+                className={cn(
+                  'inline-flex items-center px-2 py-0.5 rounded-md text-white text-xs font-mono font-medium',
+                  isLorsa ? 'bg-[#339af0]' : 'bg-[#f59f00]',
+                )}
+              >
                 #{feature.featureIndex}
               </span>
             </div>
