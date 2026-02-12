@@ -1,3 +1,9 @@
+## v2.0.0b14 (2026-02-12)
+
+### Feat
+
+- **ui/feature**: color based on sae type
+
 ## v2.0.0b13 (2026-02-11)
 
 ### Feat
