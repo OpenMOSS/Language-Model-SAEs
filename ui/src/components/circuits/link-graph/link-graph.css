@@ -1,8 +1,8 @@
 .link-graph-container {
   position: relative;
   width: 100%;
-  min-height: 420px;
-  height: 420px;
+  min-height: 600px;
+  height: 600px;
   overflow-x: auto;
   overflow-y: hidden;
 }

@@ -38,86 +38,103 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
     onNodeClick(nodeId, metaKey);
   }, [onNodeClick]);
 
+  const isErrorNode = (d: any) =>
+    typeof d.feature_type === "string" && d.feature_type.toLowerCase().includes("error");
+
   useEffect(() => {
     if (!svgRef.current || !positionedNodes.length) return;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    // Draw nodes
-    const nodeSel = svg.selectAll(".node").data(positionedNodes, (d: any) => d.nodeId);
-    
-    // Enter: create new nodes
-    const nodeEnter = nodeSel.enter().append("circle")
-      .attr("class", "node")
-      .attr("cx", (d: any) => d.pos[0])
-      .attr("cy", (d: any) => d.pos[1])
-      .attr("r", 4)
-      .attr("fill", (d: any) => d.nodeColor)
-      .attr("stroke", "#000")
-      .attr("stroke-width", "0.5")
-      .classed("clicked", (d: any) => d.nodeId === visState.clickedId)
-      .classed("connected", (d: any) => {
-        if (!visState.clickedId) return false;
-        // Check if this node is connected to the clicked node
-        return positionedLinks.some(link => 
-          (link.source === visState.clickedId && link.target === d.nodeId) ||
-          (link.target === visState.clickedId && link.source === d.nodeId)
-        );
-      })
-      .style("cursor", "pointer")
-      .on("mouseenter", function(event: any, d: any) {
-        handleMouseEnter(d.nodeId);
-      })
-      .on("mouseleave", function(event: any, d: any) {
-        handleMouseLeave();
-      })
-      .on("click", function(event: any, d: any) {
-        event.stopPropagation(); // Prevent event bubbling
-        const metaKey = event.metaKey || event.ctrlKey;
-        handleClick(d.nodeId, metaKey);
-      });
-    
-    // Merge enter and update selections to apply attributes to both new and existing elements
-    nodeSel.merge(nodeEnter)
-      .attr("cx", (d: any) => d.pos[0])
-      .attr("cy", (d: any) => d.pos[1])
-      .attr("fill", (d: any) => d.nodeColor)
-      .classed("clicked", (d: any) => d.nodeId === visState.clickedId)
-      .classed("connected", (d: any) => {
-        if (!visState.clickedId) return false;
-        // Check if this node is connected to the clicked node
-        return positionedLinks.some(link => 
-          (link.source === visState.clickedId && link.target === d.nodeId) ||
-          (link.target === visState.clickedId && link.source === d.nodeId)
-        );
-      })
-      .style("cursor", "pointer")
-      .on("mouseenter", function(event: any, d: any) {
-        console.log('🖱️ D3 merged node mouseenter triggered for node:', d.nodeId);
-        handleMouseEnter(d.nodeId);
-      })
-      .on("mouseleave", function(event: any, d: any) {
-        console.log('🖱️ D3 merged node mouseleave triggered for node:', d.nodeId);
-        handleMouseLeave();
-      })
-      .on("click", function(event: any, d: any) {
-        event.stopPropagation(); // Prevent event bubbling
-        const metaKey = event.metaKey || event.ctrlKey;
-        handleClick(d.nodeId, metaKey);
-      });
+    const regularNodes = positionedNodes.filter((d: any) => !isErrorNode(d));
+    const errorNodes = positionedNodes.filter((d: any) => isErrorNode(d));
 
-    // Draw hover indicators (only when hovering over nodes)
-    svg.selectAll(".hover-indicator").data(positionedNodes, (d: any) => d.nodeId)
-      .enter().append("circle")
-      .attr("class", "hover-indicator")
+    const isConnected = (d: any) =>
+      visState.clickedId &&
+      positionedLinks.some(
+        (link: any) =>
+          (link.source === visState.clickedId && link.target === d.nodeId) ||
+          (link.target === visState.clickedId && link.source === d.nodeId)
+      );
+    const getStroke = (d: any) => {
+      if (d.nodeId === visState.clickedId) return "#ef4444";
+      if (isConnected(d)) return "#22c55e";
+      return "#000";
+    };
+    const getStrokeWidth = (d: any) =>
+      d.nodeId === visState.clickedId || isConnected(d) ? "1.5" : "0.5";
+    const nodeEvents = (sel: any) =>
+      sel
+        .style("cursor", "pointer")
+        .on("mouseenter", function (_event: any, d: any) {
+          handleMouseEnter(d.nodeId);
+        })
+        .on("mouseleave", function () {
+          handleMouseLeave();
+        })
+        .on("click", function (event: any, d: any) {
+          event.stopPropagation();
+          handleClick(d.nodeId, event.metaKey || event.ctrlKey);
+        });
+
+    // Regular nodes: circles
+    const regularSel = svg.selectAll(".node.node-regular").data(regularNodes, (d: any) => d.nodeId);
+    const regularEnter = regularSel
+      .enter()
+      .append("circle")
+      .attr("class", "node node-regular")
+      .attr("r", 4);
+    regularSel
+      .merge(regularEnter)
       .attr("cx", (d: any) => d.pos[0])
       .attr("cy", (d: any) => d.pos[1])
-      .attr("r", 6)
+      .attr("fill", (d: any) => d.nodeColor)
+      .attr("stroke", getStroke)
+      .attr("stroke-width", getStrokeWidth);
+    nodeEvents(regularSel.merge(regularEnter));
+
+    // Error nodes: squares (rect)
+    const size = 6;
+    const errorSel = svg.selectAll(".node.node-error").data(errorNodes, (d: any) => d.nodeId);
+    const errorEnter = errorSel
+      .enter()
+      .append("rect")
+      .attr("class", "node node-error")
+      .attr("width", size)
+      .attr("height", size);
+    errorSel
+      .merge(errorEnter)
+      .attr("x", (d: any) => d.pos[0] - size / 2)
+      .attr("y", (d: any) => d.pos[1] - size / 2)
+      .attr("fill", (d: any) => d.nodeColor)
+      .attr("stroke", getStroke)
+      .attr("stroke-width", getStrokeWidth);
+    nodeEvents(errorSel.merge(errorEnter));
+
+    // Hover indicators: circles for regular, rects for error
+    const hoverReg = svg.selectAll(".hover-indicator.hover-regular").data(regularNodes, (d: any) => d.nodeId);
+    hoverReg.enter().append("circle").attr("class", "hover-indicator hover-regular").attr("r", 6);
+    hoverReg
+      .merge(hoverReg.enter())
+      .attr("cx", (d: any) => d.pos[0])
+      .attr("cy", (d: any) => d.pos[1])
       .attr("stroke", "#f0f")
       .attr("stroke-width", 2)
       .attr("fill", "none")
-      .style("opacity", (d: any) => d.nodeId === visState.hoveredId ? 1 : 0);
+      .style("opacity", (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0));
+
+    const hoverErr = svg.selectAll(".hover-indicator.hover-error").data(errorNodes, (d: any) => d.nodeId);
+    const hSize = 12;
+    hoverErr.enter().append("rect").attr("class", "hover-indicator hover-error").attr("width", hSize).attr("height", hSize);
+    hoverErr
+      .merge(hoverErr.enter())
+      .attr("x", (d: any) => d.pos[0] - hSize / 2)
+      .attr("y", (d: any) => d.pos[1] - hSize / 2)
+      .attr("stroke", "#f0f")
+      .attr("stroke-width", 2)
+      .attr("fill", "none")
+      .style("opacity", (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0));
 
     // Cleanup function to clear hover state when component unmounts or nodes change
     return () => {
