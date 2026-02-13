@@ -36,28 +36,28 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
   const [syncingAllInterpretations, setSyncingAllInterpretations] = useState(false);
   const loadedNodesRef = useRef<Set<string>>(new Set());
 
-  // 找到被点击的节点
+  // Find clicked node
   const clickedNode = useMemo(() => 
     data.nodes.find(node => node.nodeId === clickedId),
     [data.nodes, clickedId]
   );
 
-  // 计算 Input Features 和 Output Features
+  // Calculate Input Features and Output Features
   const { inputNodes, outputNodes } = useMemo(() => {
     if (!clickedNode) {
       return { inputNodes: [], outputNodes: [] };
     }
 
-    // Input Features: 所有指向当前节点的节点（即targetLinks的source）
-    // 先找到所有指向当前节点的链接的source节点ID
+    // Input Features: all nodes pointing to current node (i.e., source of targetLinks)
+    // First find source node IDs of all links pointing to current node
     const inputNodeIds = clickedNode.targetLinks?.map(link => link.source) || [];
     const inputNodes = data.nodes.filter(node => 
       node.nodeId !== clickedNode.nodeId &&
       inputNodeIds.includes(node.nodeId)
     );
 
-    // Output Features: 当前节点指向的所有节点（即sourceLinks的target）
-    // 先找到当前节点指向的所有链接的target节点ID
+    // Output Features: all nodes that current node points to (i.e., target of sourceLinks)
+    // First find target node IDs of all links that current node points to
     const outputNodeIds = clickedNode.sourceLinks?.map(link => link.target) || [];
     const outputNodes = data.nodes.filter(node =>
       node.nodeId !== clickedNode.nodeId &&
@@ -67,7 +67,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     return { inputNodes, outputNodes };
   }, [data.nodes, clickedNode]);
 
-  // 格式化节点ID显示
+  // Format node ID display
   const formatNodeId = useCallback((node: Node): string => {
     const parts = node.nodeId.split('_');
     if (parts.length < 3) return node.nodeId;
@@ -79,19 +79,19 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     return `${isLorsa ? 'A' : 'M'}${layer}#${feature}@${parts[1]}`;
   }, []);
 
-  // 获取节点的解释
+  // Get node interpretation
   const fetchNodeInterpretation = useCallback(async (node: Node) => {
     const nodeId = node.nodeId;
     
-    // 如果已经加载过，跳过
+    // Skip if already loaded
     if (loadedNodesRef.current.has(nodeId)) {
       return;
     }
 
-    // 标记为正在加载
+    // Mark as loading
     loadedNodesRef.current.add(nodeId);
 
-    // 设置加载状态
+    // Set loading state
     setFeatureInterpretations(prev => {
       const newMap = new Map(prev);
       newMap.set(nodeId, {
@@ -106,7 +106,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     });
 
     try {
-      // 从nodeId中提取layer和feature
+      // Extract layer and feature from nodeId
       const parts = nodeId.split('_');
       const layer = parseInt(parts[0]) || 0;
       const featureIndex = node.featureIndex !== undefined ? node.featureIndex : (parseInt(parts[2]) || 0);
@@ -114,8 +114,8 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
       
       const dictionary = getDictionaryNameForNode(layer, isLorsa);
       
-      // fetchFeature需要analysisName（dictionary name），layer，和featureId
-      // 注意：fetchFeature内部会处理{}替换，但我们传入的dictionary已经是完整名称
+      // fetchFeature requires analysisName (dictionary name), layer, and featureId
+      // Note: fetchFeature internally handles {} replacement, but the dictionary we pass is already a complete name
       const feature = await fetchFeature(dictionary, layer, featureIndex);
       
       const interpretation = feature?.interpretation?.text || null;
@@ -134,7 +134,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
       });
     } catch (error) {
       console.error('Failed to fetch feature:', error);
-      loadedNodesRef.current.delete(nodeId); // 加载失败，允许重试
+      loadedNodesRef.current.delete(nodeId); // Loading failed, allow retry
       setFeatureInterpretations(prev => {
         const newMap = new Map(prev);
         newMap.set(nodeId, {
@@ -150,7 +150,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     }
   }, [getDictionaryNameForNode]);
 
-  // 当clickedId、inputNodes或outputNodes改变时，获取解释
+  // Get interpretation when clickedId, inputNodes, or outputNodes change
   useEffect(() => {
     if (!clickedId) {
       loadedNodesRef.current.clear();
@@ -158,19 +158,19 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
       return;
     }
     
-    // 获取被点击节点自身的解释
+    // Get interpretation for clicked node itself
     if (clickedNode) {
       fetchNodeInterpretation(clickedNode);
     }
     
-    // 获取输入和输出节点的解释
+    // Get interpretations for input and output nodes
     const allNodes = [...inputNodes, ...outputNodes];
     allNodes.forEach(node => {
       fetchNodeInterpretation(node);
     });
   }, [inputNodes, outputNodes, clickedId, clickedNode, fetchNodeInterpretation]);
 
-  // 保存解释
+  // Save interpretation
   const saveInterpretation = useCallback(async (nodeId: string) => {
     const item = featureInterpretations.get(nodeId);
     if (!item || !item.feature) return;
@@ -188,7 +188,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
         throw new Error(await response.text());
       }
 
-      // 更新本地状态
+      // Update local state
       setFeatureInterpretations(prev => {
         const newMap = new Map(prev);
         const existing = newMap.get(nodeId);
@@ -203,13 +203,13 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
       });
     } catch (error) {
       console.error('Failed to save interpretation:', error);
-      alert(`保存失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      alert(`Save failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setSavingNodeId(null);
     }
   }, [featureInterpretations]);
 
-  // 开始编辑
+  // Start editing
   const startEditing = useCallback((nodeId: string) => {
     setFeatureInterpretations(prev => {
       const newMap = new Map(prev);
@@ -225,7 +225,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     });
   }, []);
 
-  // 取消编辑
+  // Cancel editing
   const cancelEditing = useCallback((nodeId: string) => {
     setFeatureInterpretations(prev => {
       const newMap = new Map(prev);
@@ -241,7 +241,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     });
   }, []);
 
-  // 更新编辑文本
+  // Update edit text
   const updateEditText = useCallback((nodeId: string, text: string) => {
     setFeatureInterpretations(prev => {
       const newMap = new Map(prev);
@@ -265,21 +265,21 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
 
     setSyncingAllInterpretations(true);
     try {
-      // 清除所有已加载节点的缓存
+      // Clear cache for all loaded nodes
       loadedNodesRef.current.clear();
       setFeatureInterpretations(new Map());
 
-      // 批量获取所有节点的解释（使用 Promise.all 并行请求，但限制并发数）
+      // Batch fetch interpretations for all nodes (use Promise.all for parallel requests, but limit concurrency)
       const allNodes = data.nodes;
-      const batchSize = 10; // 每批处理10个节点
+      const batchSize = 10; // Process 10 nodes per batch
       let foundCount = 0;
       let notFoundCount = 0;
 
-      console.log('🔄 开始批量同步所有节点的解释:', {
+      console.log('🔄 Starting batch sync of all node interpretations:', {
         totalNodes: allNodes.length,
       });
 
-      // 分批处理，避免过多并发请求
+      // Process in batches to avoid too many concurrent requests
       for (let i = 0; i < allNodes.length; i += batchSize) {
         const batch = allNodes.slice(i, i + batchSize);
         await Promise.all(
@@ -323,32 +323,32 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
                 });
               }
             } catch (error) {
-              console.error(`❌ 获取节点 ${node.nodeId} 的解释失败:`, error);
+              console.error(`❌ Failed to get interpretation for node ${node.nodeId}:`, error);
               notFoundCount++;
             }
           })
         );
 
-        // 显示进度
-        console.log(`✅ 已处理 ${Math.min(i + batchSize, allNodes.length)}/${allNodes.length} 个节点`);
+        // Show progress
+        console.log(`✅ Processed ${Math.min(i + batchSize, allNodes.length)}/${allNodes.length} nodes`);
       }
 
-      console.log('✅ 批量同步完成:', {
+      console.log('✅ Batch sync completed:', {
         total: allNodes.length,
         found: foundCount,
         notFound: notFoundCount
       });
 
-      alert(`✅ 同步完成！找到 ${foundCount} 个解释，${notFoundCount} 个未找到。\n\n提示：解释已从后端MongoDB同步，请点击节点查看。`);
+      alert(`✅ Sync completed! Found ${foundCount} interpretations, ${notFoundCount} not found.\n\nNote: Interpretations have been synced from backend MongoDB, please click nodes to view.`);
     } catch (error) {
-      console.error('❌ 批量同步解释失败:', error);
-      alert(`❌ 同步失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      console.error('❌ Batch sync failed:', error);
+      alert(`❌ Sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setSyncingAllInterpretations(false);
     }
   }, [data, getDictionaryNameForNode]);
 
-  // 渲染feature行
+  // Render feature row
   const renderFeatureRow = useCallback((node: Node) => {
     const item = featureInterpretations.get(node.nodeId);
     const isHovered = node.nodeId === hoveredId;
@@ -373,7 +373,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
               {formatNodeId(node)}
             </div>
             {loading ? (
-              <div className="text-xs text-gray-500">加载中...</div>
+              <div className="text-xs text-gray-500">Loading...</div>
             ) : isEditing ? (
               <div className="mt-2">
                 <textarea
@@ -392,7 +392,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
                     disabled={savingNodeId === node.nodeId}
                     className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {savingNodeId === node.nodeId ? '保存中...' : '保存'}
+                    {savingNodeId === node.nodeId ? 'Saving...' : 'Save'}
                   </button>
                   <button
                     onClick={(e) => {
@@ -401,13 +401,13 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
                     }}
                     className="px-2 py-1 bg-gray-300 text-gray-700 rounded text-xs hover:bg-gray-400"
                   >
-                    取消
+                    Cancel
                   </button>
                 </div>
               </div>
             ) : (
               <div className="text-xs text-gray-600 mt-1">
-                {interpretation || '无解释'}
+                {interpretation || 'No interpretation'}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -415,7 +415,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
                   }}
                   className="ml-2 text-blue-600 hover:text-blue-800 underline"
                 >
-                  编辑
+                  Edit
                 </button>
               </div>
             )}
@@ -429,17 +429,17 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     );
   }, [featureInterpretations, hoveredId, formatNodeId, onFeatureClick, onFeatureHover, saveInterpretation, cancelEditing, startEditing, updateEditText, savingNodeId]);
 
-  // 获取被点击节点的解释信息（必须在早期返回之前）
+  // Get interpretation info for clicked node (must be before early return)
   const clickedNodeInterpretation = useMemo(() => {
     if (!clickedNode) return null;
     return featureInterpretations.get(clickedNode.nodeId);
   }, [clickedNode, featureInterpretations]);
 
-  // 渲染被点击节点的解释编辑区域（必须在早期返回之前）
+  // Render interpretation editing area for clicked node (must be before early return)
   const renderClickedNodeInterpretation = useCallback(() => {
     if (!clickedNode || !clickedNodeInterpretation) {
       return (
-        <div className="text-xs text-gray-500 mt-2">加载中...</div>
+        <div className="text-xs text-gray-500 mt-2">Loading...</div>
       );
     }
 
@@ -450,7 +450,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
 
     if (loading) {
       return (
-        <div className="text-xs text-gray-500 mt-2">加载中...</div>
+        <div className="text-xs text-gray-500 mt-2">Loading...</div>
       );
     }
 
@@ -462,7 +462,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
             onChange={(e) => updateEditText(clickedNode.nodeId, e.target.value)}
             className="w-full p-2 border border-gray-300 rounded text-sm"
             rows={3}
-            placeholder="输入feature解释..."
+            placeholder="Enter feature interpretation..."
           />
           <div className="flex gap-2 mt-1">
             <button
@@ -470,7 +470,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
               disabled={isSaving}
               className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50"
             >
-              {isSaving ? '保存中...' : '保存'}
+              {isSaving ? 'Saving...' : 'Save'}
             </button>
             <button
               onClick={() => cancelEditing(clickedNode.nodeId)}
@@ -486,24 +486,24 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     return (
       <div className="mt-2">
         <div className="text-xs text-gray-600">
-          {interpretation || '无解释'}
+          {interpretation || 'No interpretation'}
         </div>
         <button
           onClick={() => startEditing(clickedNode.nodeId)}
           className="mt-1 text-xs text-blue-600 hover:text-blue-800 underline"
         >
-          编辑
+          Edit
         </button>
       </div>
     );
   }, [clickedNode, clickedNodeInterpretation, savingNodeId, saveInterpretation, cancelEditing, startEditing, updateEditText]);
 
-  // 早期返回必须在所有hooks之后
+  // Early return must be after all hooks
   if (!clickedNode) {
     return (
       <div className="flex flex-col h-full overflow-y-auto">
         <div className="text-gray-500 text-center py-8">
-          点击左侧节点查看连接的features
+          Click a node on the left to view connected features
         </div>
       </div>
     );
@@ -519,24 +519,24 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
             onClick={syncAllInterpretations}
             disabled={syncingAllInterpretations}
             className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-            title="从后端MongoDB批量同步所有feature的解释"
+            title="Batch sync all feature interpretations from backend MongoDB"
           >
             {syncingAllInterpretations ? (
               <>
                 <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                同步中...
+                Syncing...
               </>
             ) : (
               <>
                 <span>🔄</span>
-                同步所有解释
+                Sync All Interpretations
               </>
             )}
           </button>
         </div>
         <div className="text-sm text-gray-600 mb-2">{clickedNode.localClerp || ''}</div>
         <div className="border-t pt-2 mt-2">
-          <div className="text-xs font-semibold text-gray-700 mb-1">解释:</div>
+          <div className="text-xs font-semibold text-gray-700 mb-1">Interpretation:</div>
           {renderClickedNodeInterpretation()}
         </div>
       </div>
@@ -548,7 +548,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
           <div className="text-lg font-semibold mb-2">Input Features</div>
           <div className="space-y-2">
             {inputNodes.length === 0 ? (
-              <div className="text-sm text-gray-500 text-center py-4">无输入features</div>
+              <div className="text-sm text-gray-500 text-center py-4">No input features</div>
             ) : (
               inputNodes.map(node => renderFeatureRow(node))
             )}
@@ -560,7 +560,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
           <div className="text-lg font-semibold mb-2">Output Features</div>
           <div className="space-y-2">
             {outputNodes.length === 0 ? (
-              <div className="text-sm text-gray-500 text-center py-4">无输出features</div>
+              <div className="text-sm text-gray-500 text-center py-4">No output features</div>
             ) : (
               outputNodes.map(node => renderFeatureRow(node))
             )}

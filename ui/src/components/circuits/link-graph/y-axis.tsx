@@ -5,7 +5,7 @@ import d3 from "../static_js/d3";
 interface YAxisProps {
   positionedNodes: any[];
   y: d3.ScaleBand<number>;
-  hideEmbLogit?: boolean; // 是否隐藏 Emb 和 Logit 层
+  hideEmbLogit?: boolean; // Whether to hide Emb and Logit layers
 }
 
 export const YAxis: React.FC<YAxisProps> = React.memo(({
@@ -29,18 +29,18 @@ export const YAxis: React.FC<YAxisProps> = React.memo(({
       
       let label: string;
       if (hideEmbLogit) {
-        // Interaction circuit 模式：去掉 Emb 和 Logit，直接根据 layerIdx 计算：A0/M0 从 layerIdx 0/1 开始
-        // layerIdx % 2 === 0 表示 A 层，否则是 M 层
+        // Interaction circuit mode: remove Emb and Logit, calculate directly from layerIdx: A0/M0 start from layerIdx 0/1
+        // layerIdx % 2 === 0 means A layer, otherwise M layer
         // A0=0, M0=1, A1=2, M1=3, A2=4, M2=5, ...
         if (layerIdx % 2 === 0) {
-          // A 层：A0, A1, A2, ...
+          // A layer: A0, A1, A2, ...
           label = `A${Math.floor(layerIdx / 2)}`;
         } else {
-          // M 层：M0, M1, M2, ...
+          // M layer: M0, M1, M2, ...
           label = `M${Math.floor(layerIdx / 2)}`;
         }
       } else {
-        // Circuit tracing 模式：保留 Emb 和 Logit
+        // Circuit tracing mode: keep Emb and Logit
       if (layerIdx === 0) {
         label = "Emb";
       } else if (layerIdx === yNumTicks - 1) {

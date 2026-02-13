@@ -32,17 +32,17 @@ interface TopActivationSample {
   sampleIndex?: number;
 }
 
-// 为"各自独有"的节点/边分配的颜色表（最多4个图）
-const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 蓝、橙、绿、红
+// Color table for "unique" nodes/edges (up to 4 graphs)
+const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // Blue, Orange, Green, Red
 
-// 为不同文件组合生成颜色映射
+// Generate color mapping for different file combinations
 const generateFileCombinationColors = (fileCount: number): Map<string, string> => {
   const colorMap = new Map<string, string>();
   
-  // 生成所有可能的文件组合（2^fileCount - 1 种组合，排除空集）
+  // Generate all possible file combinations (2^fileCount - 1 combinations, excluding empty set)
   const combinations: number[][] = [];
   
-  // 使用位掩码生成所有组合
+  // Use bitmask to generate all combinations
   for (let mask = 1; mask < (1 << fileCount); mask++) {
     const combo: number[] = [];
     for (let i = 0; i < fileCount; i++) {
@@ -53,18 +53,18 @@ const generateFileCombinationColors = (fileCount: number): Map<string, string> =
     combinations.push(combo);
   }
   
-  // 为每个组合分配颜色
+  // Assign color to each combination
   combinations.forEach((combo) => {
     const key = combo.sort((a, b) => a - b).join("-");
     
     if (combo.length === 1) {
-      // 单文件：使用基础颜色
+      // Single file: use base color
       colorMap.set(key, UNIQUE_GRAPH_COLORS[combo[0] % UNIQUE_GRAPH_COLORS.length]);
     } else if (combo.length === fileCount) {
-      // 所有文件共有：使用灰色
+      // All files shared: use gray
       colorMap.set(key, "#95a5a6");
     } else {
-      // 多个文件组合：使用混色
+      // Multiple file combination: use mixed color
       const baseColors = combo.map(i => UNIQUE_GRAPH_COLORS[i % UNIQUE_GRAPH_COLORS.length]);
       const mixedColor = mixHexColorsVivid(baseColors);
       colorMap.set(key, mixedColor || "#95a5a6");
@@ -207,48 +207,48 @@ export const InteractionCircuitPage = () => {
         const char = line[i];
         if (char === '"') {
           if (inQuotes && line[i + 1] === '"') {
-            // 转义的引号
+            // Escaped quote
             current += '"';
             i++;
           } else {
-            // 切换引号状态
+            // Toggle quote state
             inQuotes = !inQuotes;
           }
         } else if (char === ',' && !inQuotes) {
-          // 字段分隔符
+          // Field separator
           result.push(current.trim());
           current = '';
         } else {
           current += char;
         }
       }
-      result.push(current.trim()); // 最后一个字段
+      result.push(current.trim()); // Last field
       return result;
     };
 
-    // 解析表头
+    // Parse header
     const headers = parseCsvLine(lines[0]).map(h => h.trim());
     const requiredHeaders = ['source_layer', 'source_pos', 'source_feature', 'source_type', 
                             'target_layer', 'target_pos', 'target_feature', 'target_type', 'reduction_ratio'];
     
     const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
     if (missingHeaders.length > 0) {
-      throw new Error(`CSV 文件缺少必需的列: ${missingHeaders.join(', ')}`);
+      throw new Error(`CSV file missing required columns: ${missingHeaders.join(', ')}`);
     }
 
-    console.log('📋 CSV 表头:', headers);
+    console.log('📋 CSV headers:', headers);
 
-    // 解析数据行
+    // Parse data rows
     const rows: CsvRow[] = [];
     for (let i = 1; i < lines.length; i++) {
       const values = parseCsvLine(lines[i]);
       if (values.length < requiredHeaders.length) {
-        console.warn(`⚠️ 跳过行 ${i + 1}：字段数量不足 (${values.length} < ${requiredHeaders.length})`);
+        console.warn(`⚠️ Skipping row ${i + 1}: insufficient fields (${values.length} < ${requiredHeaders.length})`);
         continue;
       }
 
       try {
-        // 确保正确解析每个字段，避免从错误的位置读取
+        // Ensure correct parsing of each field to avoid reading from wrong position
         const sourceLayerIdx = headers.indexOf('source_layer');
         const sourcePosIdx = headers.indexOf('source_pos');
         const sourceFeatureIdx = headers.indexOf('source_feature');
@@ -262,7 +262,7 @@ export const InteractionCircuitPage = () => {
         if (sourceLayerIdx === -1 || sourcePosIdx === -1 || sourceFeatureIdx === -1 || 
             sourceTypeIdx === -1 || targetLayerIdx === -1 || targetPosIdx === -1 || 
             targetFeatureIdx === -1 || targetTypeIdx === -1 || reductionRatioIdx === -1) {
-          console.warn(`⚠️ 跳过行 ${i + 1}：缺少必需的列索引`);
+          console.warn(`⚠️ Skipping row ${i + 1}: missing required column indices`);
           continue;
         }
 
@@ -290,18 +290,18 @@ export const InteractionCircuitPage = () => {
 
         rows.push(row);
       } catch (err) {
-        console.warn(`⚠️ 解析行 ${i + 1} 时出错:`, err);
+        console.warn(`⚠️ Error parsing row ${i + 1}:`, err);
         continue;
       }
     }
 
-    console.log(`✅ 成功解析 ${rows.length} 行数据`);
+    console.log(`✅ Successfully parsed ${rows.length} rows`);
 
-    // 构建节点和边
+    // Build nodes and edges
     const nodeMap = new Map<string, Node>();
     const links: Link[] = [];
 
-    // 节点颜色映射
+    // Node color mapping
     const getNodeColor = (featureType: string): string => {
       switch (featureType.toLowerCase()) {
         case 'lorsa':
@@ -313,70 +313,70 @@ export const InteractionCircuitPage = () => {
       }
     };
 
-    // 构建节点
+    // Build nodes
     for (const row of rows) {
-      // Source 节点
+      // Source node
       const sourceNodeId = `${row.source_layer}_${row.source_pos}_${row.source_feature}`;
       if (!nodeMap.has(sourceNodeId)) {
         const isLorsa = row.source_type.toLowerCase() === 'lorsa';
-        // 对于显示：Lorsa layer 0 = A0, Transcoder layer 0 = M0
-        // 但在构建字典名称时，我们直接使用 layer 值
+        // For display: Lorsa layer 0 = A0, Transcoder layer 0 = M0
+        // But when building dictionary name, we use layer value directly
         const displayLayer = row.source_layer;
         
         const sourceFeatureType = row.source_type.trim().toLowerCase();
-        // 计算 Y 轴位置：lorsa 显示在 Ai 行，transcoder 显示在 Mi 行
-        // 公式：layerIdx = layer * 2 + (isLorsa ? 0 : 1)
-        // 这样：A0=0, M0=1, A1=2, M1=3, A2=4, M2=5, ...
+        // Calculate Y-axis position: lorsa displayed in Ai row, transcoder in Mi row
+        // Formula: layerIdx = layer * 2 + (isLorsa ? 0 : 1)
+        // So: A0=0, M0=1, A1=2, M1=3, A2=4, M2=5, ...
         const yAxisLayer = displayLayer * 2 + (isLorsa ? 0 : 1);
         
         nodeMap.set(sourceNodeId, {
           id: sourceNodeId,
           nodeId: sourceNodeId,
           featureId: row.source_feature.toString(),
-          feature_type: sourceFeatureType, // 确保 feature_type 是小写的
+          feature_type: sourceFeatureType, // Ensure feature_type is lowercase
           ctx_idx: row.source_pos,
-          layerIdx: yAxisLayer, // 使用计算后的 Y 轴位置
+          layerIdx: yAxisLayer, // Use calculated Y-axis position
           pos: [0, 0],
           xOffset: 0,
           yOffset: 0,
           nodeColor: getNodeColor(sourceFeatureType),
           featureIndex: row.source_feature,
-          // 格式：Mi#feature_id@position 或 Ai#feature_id@position
+          // Format: Mi#feature_id@position or Ai#feature_id@position
           localClerp: `${isLorsa ? 'A' : 'M'}${displayLayer}#${row.source_feature}@${row.source_pos}`,
         });
       }
 
-      // Target 节点
+      // Target node
       const targetNodeId = `${row.target_layer}_${row.target_pos}_${row.target_feature}`;
       if (!nodeMap.has(targetNodeId)) {
         const isLorsa = row.target_type.toLowerCase() === 'lorsa';
         const displayLayer = row.target_layer;
         
         const targetFeatureType = row.target_type.trim().toLowerCase();
-        // 计算 Y 轴位置（与 source 节点相同的方式）
-        // 公式：layerIdx = layer * 2 + (isLorsa ? 0 : 1)
-        // 这样：A0=0, M0=1, A1=2, M1=3, A2=4, M2=5, ...
+        // Calculate Y-axis position (same way as source node)
+        // Formula: layerIdx = layer * 2 + (isLorsa ? 0 : 1)
+        // So: A0=0, M0=1, A1=2, M1=3, A2=4, M2=5, ...
         const targetYAxisLayer = displayLayer * 2 + (isLorsa ? 0 : 1);
         nodeMap.set(targetNodeId, {
           id: targetNodeId,
           nodeId: targetNodeId,
           featureId: row.target_feature.toString(),
-          feature_type: targetFeatureType, // 确保 feature_type 是小写的
+          feature_type: targetFeatureType, // Ensure feature_type is lowercase
           ctx_idx: row.target_pos,
-          layerIdx: targetYAxisLayer, // 使用计算后的 Y 轴位置
+          layerIdx: targetYAxisLayer, // Use calculated Y-axis position
           pos: [0, 0],
           xOffset: 0,
           yOffset: 0,
           nodeColor: getNodeColor(targetFeatureType),
           featureIndex: row.target_feature,
-          // 格式：Mi#feature_id@position 或 Ai#feature_id@position
+          // Format: Mi#feature_id@position or Ai#feature_id@position
           localClerp: `${isLorsa ? 'A' : 'M'}${displayLayer}#${row.target_feature}@${row.target_pos}`,
         });
       }
 
-      // 构建边（边权统一设为1）
-      const strokeWidth = 2; // 固定线宽
-      const color = '#4CAF50'; // 统一颜色
+      // Build edges (edge weight uniformly set to 1)
+      const strokeWidth = 2; // Fixed line width
+      const color = '#4CAF50'; // Uniform color
 
       links.push({
         source: sourceNodeId,
@@ -384,27 +384,27 @@ export const InteractionCircuitPage = () => {
         pathStr: '',
         color,
         strokeWidth,
-        weight: 1, // 边权统一设为1
-        pctInput: 100, // 百分比设为100%
+        weight: 1, // Edge weight uniformly set to 1
+        pctInput: 100, // Percentage set to 100%
       });
     }
 
-    // 为节点设置 sourceLinks 和 targetLinks
-    // sourceLinks: 从该节点出发的边（link.source === node.nodeId）
-    // targetLinks: 指向该节点的边（link.target === node.nodeId）
+    // Set sourceLinks and targetLinks for nodes
+    // sourceLinks: edges starting from this node (link.source === node.nodeId)
+    // targetLinks: edges pointing to this node (link.target === node.nodeId)
     const nodes = Array.from(nodeMap.values());
     for (const node of nodes) {
       node.sourceLinks = links.filter(l => l.source === node.nodeId);
       node.targetLinks = links.filter(l => l.target === node.nodeId);
     }
 
-    // 统计信息：计算孤立节点和连通分量
+    // Statistics: calculate isolated nodes and connected components
     const isolatedNodes = nodes.filter(n => 
       (!n.sourceLinks || n.sourceLinks.length === 0) && 
       (!n.targetLinks || n.targetLinks.length === 0)
     );
     
-    // 计算连通分量（使用简单的DFS）
+    // Calculate connected components (using simple DFS)
     const visited = new Set<string>();
     const components: string[][] = [];
     
@@ -415,7 +415,7 @@ export const InteractionCircuitPage = () => {
       
       const node = nodes.find(n => n.nodeId === nodeId);
       if (node) {
-        // 遍历所有连接的节点
+        // Traverse all connected nodes
         if (node.sourceLinks) {
           for (const link of node.sourceLinks) {
             if (!visited.has(link.target)) {
@@ -441,13 +441,13 @@ export const InteractionCircuitPage = () => {
       }
     }
     
-    console.log('📊 图统计信息:', {
-      总节点数: nodes.length,
-      总边数: links.length,
-      孤立节点数: isolatedNodes.length,
-      连通分量数: components.length,
-      连通分量大小: components.map(c => c.length).sort((a, b) => b - a),
-      孤立节点列表: isolatedNodes.map(n => n.nodeId).slice(0, 10), // 只显示前10个
+    console.log('📊 Graph statistics:', {
+      totalNodes: nodes.length,
+      totalEdges: links.length,
+      isolatedNodes: isolatedNodes.length,
+      connectedComponents: components.length,
+      componentSizes: components.map(c => c.length).sort((a, b) => b - a),
+      isolatedNodeList: isolatedNodes.map(n => n.nodeId).slice(0, 10), // Show only first 10
     });
 
     return {
@@ -461,11 +461,11 @@ export const InteractionCircuitPage = () => {
     };
   }, []);
 
-  // 合并多个CSV文件的数据
+  // Merge data from multiple CSV files
   const mergeCsvGraphs = useCallback((graphs: LinkGraphData[], fileNames: string[]): LinkGraphData => {
     const totalSources = graphs.length;
 
-    // 生成所有文件组合的颜色映射
+    // Generate color mapping for all file combinations
     const combinationColors = generateFileCombinationColors(totalSources);
     
     const getSubsetColor = (sourceIndices: number[]): string => {
@@ -474,7 +474,7 @@ export const InteractionCircuitPage = () => {
       return combinationColors.get(key) || "#95a5a6";
     };
 
-    // 合并节点
+    // Merge nodes
     type NodeAccum = {
       base: Node;
       presentIn: number[];
@@ -494,10 +494,10 @@ export const InteractionCircuitPage = () => {
       });
     });
 
-    // 为节点设置颜色
+    // Set colors for nodes
     const mergedNodes: Node[] = [];
     nodeMap.forEach(({ base, presentIn }) => {
-      // 使用统一的颜色分配函数
+      // Use unified color assignment function
       const nodeColor = getSubsetColor(presentIn);
 
       const sourceIndices = presentIn.slice();
@@ -512,7 +512,7 @@ export const InteractionCircuitPage = () => {
       } as any);
     });
 
-    // 合并边
+    // Merge edges
     type LinkAccum = {
       sources: number[];
       weightSum: number;
@@ -546,7 +546,7 @@ export const InteractionCircuitPage = () => {
     linkMap.forEach((acc, k) => {
       const [source, target] = k.split("__");
       const avgWeight = acc.weightSum / acc.sources.length;
-      // 为边也使用文件组合颜色
+      // Use file combination color for edges too
       const linkColor = getSubsetColor(acc.sources);
       mergedLinks.push({
         source,
@@ -560,7 +560,7 @@ export const InteractionCircuitPage = () => {
       } as any);
     });
 
-    // 重新为节点填充 sourceLinks/targetLinks
+    // Re-populate sourceLinks/targetLinks for nodes
     const nodeById: Record<string, Node> = {};
     mergedNodes.forEach(n => { 
       nodeById[n.nodeId] = { ...n, sourceLinks: [], targetLinks: [] }; 
@@ -584,7 +584,7 @@ export const InteractionCircuitPage = () => {
     };
   }, []);
 
-  // 单文件上传
+  // Single file upload
   const handleSingleFileUpload = useCallback(async (file: File) => {
     setIsLoading(true);
     setError(null);
@@ -595,7 +595,7 @@ export const InteractionCircuitPage = () => {
 
     try {
       const data = await parseCsvFile(file);
-      // 为单文件添加sourceIndex信息
+      // Add sourceIndex information for single file
       const annotatedData = {
         ...data,
         nodes: data.nodes.map(n => ({
@@ -611,21 +611,21 @@ export const InteractionCircuitPage = () => {
       };
       setLinkGraphData(annotatedData);
       setCsvFiles([file]);
-      console.log(`✅ 成功解析 CSV 文件: ${data.nodes.length} 个节点, ${data.links.length} 条边`);
+      console.log(`✅ Successfully parsed CSV file: ${data.nodes.length} nodes, ${data.links.length} edges`);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '解析 CSV 文件时发生错误';
+      const errorMessage = err instanceof Error ? err.message : 'Error occurred while parsing CSV file';
       setError(errorMessage);
-      console.error('❌ 解析 CSV 文件失败:', err);
+      console.error('❌ Failed to parse CSV file:', err);
     } finally {
       setIsLoading(false);
     }
   }, [parseCsvFile]);
 
-  // 多文件上传
+  // Multiple file upload
   const handleMultiFilesUpload = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files).filter(f => f.name.endsWith('.csv')).slice(0, 4);
     if (list.length === 0) {
-      setError('请上传 1-4 个 CSV 文件');
+      setError('Please upload 1-4 CSV files');
       return;
     }
 
@@ -637,11 +637,11 @@ export const InteractionCircuitPage = () => {
     setTopActivations([]);
 
     try {
-      // 解析所有CSV文件
+      // Parse all CSV files
       const graphs = await Promise.all(list.map(f => parseCsvFile(f)));
       const fileNames = list.map(f => f.name);
 
-      // 合并图
+      // Merge graphs
       const merged = list.length === 1
         ? (() => {
             const data = graphs[0];
@@ -663,17 +663,17 @@ export const InteractionCircuitPage = () => {
 
       setLinkGraphData(merged);
       setCsvFiles(list);
-      console.log(`✅ 成功合并 ${list.length} 个 CSV 文件: ${merged.nodes.length} 个节点, ${merged.links.length} 条边`);
+      console.log(`✅ Successfully merged ${list.length} CSV files: ${merged.nodes.length} nodes, ${merged.links.length} edges`);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '解析 CSV 文件时发生错误';
+      const errorMessage = err instanceof Error ? err.message : 'Error occurred while parsing CSV file';
       setError(errorMessage);
-      console.error('❌ 解析 CSV 文件失败:', err);
+      console.error('❌ Failed to parse CSV file:', err);
     } finally {
       setIsLoading(false);
     }
   }, [parseCsvFile, mergeCsvGraphs]);
 
-  // 处理文件拖拽
+  // Handle file drag and drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -693,11 +693,11 @@ export const InteractionCircuitPage = () => {
         handleMultiFilesUpload(csvFiles);
       }
     } else {
-      setError('请上传 CSV 文件');
+      setError('Please upload CSV files');
     }
   }, [handleSingleFileUpload, handleMultiFilesUpload]);
 
-  // 处理文件选择
+  // Handle file selection
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
@@ -709,16 +709,16 @@ export const InteractionCircuitPage = () => {
           handleMultiFilesUpload(csvFiles);
         }
       } else {
-        setError('请选择 CSV 文件');
+        setError('Please select CSV files');
       }
     }
   }, [handleSingleFileUpload, handleMultiFilesUpload]);
 
-  // 获取字典名称
+  // Get dictionary name
   // Lorsa layer 0 = A0, Transcoder layer 0 = M0
-  // 所以 CSV 中的 layer 值直接用于构建字典名称
+  // So layer value in CSV is directly used to build dictionary name
   const getDictionaryName = useCallback((layer: number, isLorsa: boolean): string => {
-    // 使用默认的 BT4 格式，layer 值直接使用（0就是0，对应A0或M0）
+    // Use default BT4 format, layer value used directly (0 is 0, corresponds to A0 or M0)
     if (isLorsa) {
       return `BT4_lorsa_L${layer}A_k30_e16`;
     } else {
@@ -726,7 +726,7 @@ export const InteractionCircuitPage = () => {
     }
   }, []);
 
-  // 辅助函数：标准化 Z Pattern 数据
+  // Helper function: normalize Z Pattern data
   const normalizeZPattern = useCallback(
     (
       zPatternIndicesRaw: unknown,
@@ -747,7 +747,7 @@ export const InteractionCircuitPage = () => {
     []
   );
 
-  // 解析 Top Activation 数据（与 circuit-visualization.tsx 保持一致）
+  // Parse Top Activation data (consistent with circuit-visualization.tsx)
   const parseTopActivationData = useCallback((camelData: any): TopActivationSample[] => {
     const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
     const allSamples: any[] = [];
@@ -758,7 +758,7 @@ export const InteractionCircuitPage = () => {
       }
     }
 
-    // 查找包含 FEN 的样本并提取激活值
+    // Find samples containing FEN and extract activation values
     const chessSamples: TopActivationSample[] = [];
 
     for (const sample of allSamples) {
@@ -768,7 +768,7 @@ export const InteractionCircuitPage = () => {
         for (const line of lines) {
           const trimmed = line.trim();
 
-          // 检查是否包含 FEN 格式
+          // Check if contains FEN format
           if (trimmed.includes('/')) {
             const parts = trimmed.split(/\s+/);
 
@@ -777,7 +777,7 @@ export const InteractionCircuitPage = () => {
               const boardRows = boardPart.split('/');
 
               if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
-                // 验证 FEN 格式
+                // Validate FEN format
                 let isValidBoard = true;
                 let totalSquares = 0;
 
@@ -799,32 +799,32 @@ export const InteractionCircuitPage = () => {
                 }
 
                 if (isValidBoard && totalSquares === 64) {
-                  // 处理稀疏激活数据 - 正确映射到64格棋盘
+                  // Process sparse activation data - correctly map to 64-square board
                   let activationsArray: number[] | undefined = undefined;
                   let maxActivation = 0;
 
                   if (sample.featureActsIndices && sample.featureActsValues &&
                       Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
 
-                    // 创建64格的激活数组
+                    // Create 64-square activation array
                     activationsArray = new Array(64).fill(0);
 
-                    // 将稀疏激活值映射到正确的棋盘位置，并找到最大激活值
+                    // Map sparse activation values to correct board positions and find max activation
                     for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
                       const index = sample.featureActsIndices[i];
                       const value = sample.featureActsValues[i];
 
-                      // 确保索引在有效范围内
+                      // Ensure index is within valid range
                       if (index >= 0 && index < 64) {
                         activationsArray[index] = value;
-                        // 使用最大激活值
+                        // Use maximum activation value
                         if (Math.abs(value) > Math.abs(maxActivation)) {
                           maxActivation = value;
                         }
                       }
                     }
 
-                    console.log('🔍 处理激活数据:', {
+                    console.log('🔍 Processing activation data:', {
                       indicesLength: sample.featureActsIndices.length,
                       valuesLength: sample.featureActsValues.length,
                       nonZeroCount: activationsArray.filter(v => v !== 0).length,
@@ -841,7 +841,7 @@ export const InteractionCircuitPage = () => {
                     sampleIndex: sample.sampleIndex || 0,
                   });
 
-                  break; // 找到一个有效 FEN 就跳出
+                  break; // Break after finding one valid FEN
                 }
               }
             }

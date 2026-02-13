@@ -22,7 +22,7 @@ interface LinkGraphProps {
   visState: VisState;
   onNodeClick: (nodeId: string, metaKey: boolean) => void;
   onNodeHover: (nodeId: string | null) => void;
-  hideEmbLogit?: boolean; // 是否隐藏 Emb 和 Logit 层（用于 interaction circuit 模式）
+  hideEmbLogit?: boolean; // Whether to hide Emb and Logit layers (for interaction circuit mode)
 }
 
 const LinkGraphComponent: React.FC<LinkGraphProps> = ({
@@ -85,20 +85,20 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
       const ctxWidth = x(ctxData.ctx_idx + 1) - x(ctxData.ctx_idx) - padR;
       
       ctxData.layerGroups.forEach((layerNodes: any, layerIdx: number) => {
-        // 自定义排序：共有 -> 按文件顺序的单文件 -> error
+        // Custom sorting: shared -> single files by upload order -> error
         const getIsError = (n: any) => typeof n.feature_type === 'string' && n.feature_type.toLowerCase().includes('error');
         const getIsShared = (n: any) => Array.isArray(n.sourceIndices) && n.sourceIndices.length > 1;
         const getFileIndex = (n: any) => (n.sourceIndex !== undefined ? n.sourceIndex : (Array.isArray(n.sourceIndices) && n.sourceIndices.length ? n.sourceIndices[0] : 0));
         const groupIndex = (n: any) => {
-          if (getIsError(n)) return 1000; // error 放最后
-          if (getIsShared(n)) return 0;   // 共有优先
-          return 1 + getFileIndex(n);     // 各文件按上传顺序
+          if (getIsError(n)) return 1000; // error nodes go last
+          if (getIsShared(n)) return 0;   // shared nodes first
+          return 1 + getFileIndex(n);     // single files by upload order
         };
         layerNodes.sort((a: any, b: any) => {
           const ga = groupIndex(a);
           const gb = groupIndex(b);
           if (ga !== gb) return ga - gb;
-          // 同组内保持稳定：可按 logitPct 次序作为次要键（降序）
+          // Keep stable within same group: use logitPct as secondary key (descending)
           const la = a.logitPct || 0;
           const lb = b.logitPct || 0;
           return (lb - la);

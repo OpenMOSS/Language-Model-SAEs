@@ -15,7 +15,7 @@ interface LinkGraphContainerProps {
   clickedId?: string | null;
   hoveredId?: string | null;
   pinnedIds?: string[];
-  hideEmbLogit?: boolean; // 是否隐藏 Emb 和 Logit 层（用于 interaction circuit 模式）
+  hideEmbLogit?: boolean; // Whether to hide Emb and Logit layers (for interaction circuit mode)
 }
 
 export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({ 

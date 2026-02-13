@@ -11,19 +11,19 @@ interface ChessBoardProps {
   contextId?: number;
   size?: 'small' | 'medium' | 'large';
   showCoordinates?: boolean;
-  move?: string; // 移动字符串，如 "a2a4"
-  orientation?: 'white' | 'black' | 'auto'; // 方向覆盖
-  flip_activation?: boolean; // 控制激活值是否翻转
-  onMove?: (move: string) => void; // 新增：移动回调
-  onSquareClick?: (square: string) => void; // 新增：格子点击回调
-  isInteractive?: boolean; // 新增：是否允许交互
-  autoFlipWhenBlack?: boolean; // 新增：到黑方行棋时自动翻转
-  moveColor?: string; // 新增：箭头颜色（与节点颜色一致）
-  showSelfPlay?: boolean; // 新增：是否显示自对弈功能
-  disableAutoAnalyze?: boolean; // 新增：禁用自动分析（避免重复加载模型）
+  move?: string; // UCI move string, e.g. "a2a4"
+  orientation?: 'white' | 'black' | 'auto';
+  flip_activation?: boolean; // whether to flip activation index by row
+  onMove?: (move: string) => void;
+  onSquareClick?: (square: string) => void;
+  isInteractive?: boolean;
+  autoFlipWhenBlack?: boolean; // auto flip board when black to move
+  moveColor?: string; // arrow color (match node color)
+  showSelfPlay?: boolean;
+  disableAutoAnalyze?: boolean; // disable auto board analysis to avoid repeated model load
 }
 
-// 棋子 SVG 文件名映射（与 exp/chess-board-visualizer 一致，从 pieces 目录加载）
+// Piece SVG filename map (aligned with exp/chess-board-visualizer, load from pieces dir)
 const PIECE_SVG_NAMES: { [key: string]: string } = {
   K: 'wK',
   Q: 'wQ',
@@ -39,13 +39,13 @@ const PIECE_SVG_NAMES: { [key: string]: string } = {
   p: 'bP',
 };
 
-/** 根据 FEN 棋子字符返回对应 SVG 的 URL（用于 img src） */
+/** Return SVG URL for a FEN piece character (for img src) */
 const getPieceSrc = (piece: string): string => {
   const name = PIECE_SVG_NAMES[piece] || piece;
   return new URL(`./pieces/${name}.svg`, import.meta.url).href;
 };
 
-// FEN字符串解析函数
+// FEN string parser
 const parseFEN = (fen: string) => {
   const parts = fen.trim().split(' ');
   if (parts.length < 4) {
@@ -59,7 +59,7 @@ const parseFEN = (fen: string) => {
     throw new Error('Invalid board configuration in FEN');
   }
 
-  // 将FEN转换为8x8数组
+  // Convert FEN to 8x8 board array
   const board: (string | null)[][] = [];
   
   for (let i = 0; i < 8; i++) {
@@ -68,13 +68,13 @@ const parseFEN = (fen: string) => {
     
     for (const char of rowStr) {
       if (/\d/.test(char)) {
-        // 数字表示空格数量
+        // Digit = number of empty squares
         const emptySquares = parseInt(char);
         for (let j = 0; j < emptySquares; j++) {
           row.push(null);
         }
       } else {
-        // 棋子字符
+        // Piece character
         row.push(char);
       }
     }
@@ -91,33 +91,33 @@ const parseFEN = (fen: string) => {
   };
 };
 
-// 将行列坐标转换为线性索引 (0-63)
+// Row/col to linear index (0-63)
 const getSquareIndex = (row: number, col: number): number => {
   return row * 8 + col;
 };
 
-// 获取激活强度的颜色
+// Color for activation strength
 const getActivationColor = (activation: number): string => {
   if (activation === 0) return 'transparent';
   
-  // 激活值统一用红色表示，根据强度调整透明度
+  // Use red for activation, opacity by strength
   const intensity = Math.min(Math.abs(activation), 1);
   const opacity = Math.max(0.4, intensity);
   
-  return `rgba(239, 68, 68, ${opacity})`; // 红色表示激活
+  return `rgba(239, 68, 68, ${opacity})`; // Red for activation
 };
 
-// 获取Z模式的目标格子 - 只显示最强的几个连接
+// Z-pattern target squares - show only strongest connections
 const getZPatternTargets = (sourceSquare: number, zPatternIndices?: number[][], zPatternValues?: number[]) => {
   if (!zPatternIndices || !zPatternValues) return [];
   
   const targets: { square: number; strength: number }[] = [];
   
-  // 检查数据格式 - 参考feature page逻辑
+  // Check data format (aligned with feature page)
   const looksLikePairList = Array.isArray(zPatternIndices[0]) && (zPatternIndices[0] as number[]).length === 2;
   
   if (looksLikePairList) {
-    // 格式：[[source, target], ...] 对应 [value, ...]
+    // Format: [[source, target], ...] with [value, ...]
     for (let i = 0; i < zPatternIndices.length; i++) {
       const pair = zPatternIndices[i] as number[];
       const value = zPatternValues[i] || 0;
@@ -128,12 +128,11 @@ const getZPatternTargets = (sourceSquare: number, zPatternIndices?: number[][], 
       }
     }
   } else {
-    // 格式：zPatternIndices[0]为源位置数组，zPatternIndices[1]为目标位置数组
+    // Format: zPatternIndices[0]=sources, zPatternIndices[1]=targets
     if (zPatternIndices.length >= 2) {
       const sources = zPatternIndices[0] as number[];
       const targets_array = zPatternIndices[1] as number[];
       
-      // 遍历所有连接
       for (let i = 0; i < Math.min(sources.length, targets_array.length, zPatternValues.length); i++) {
         const source = sources[i];
         const target = targets_array[i];
@@ -146,13 +145,13 @@ const getZPatternTargets = (sourceSquare: number, zPatternIndices?: number[][], 
     }
   }
   
-  // 只返回绝对值最大的前8个连接（参考feature页面逻辑）
+  // Return top 8 by absolute strength (aligned with feature page)
   return targets
     .sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))
     .slice(0, 8);
 };
 
-// 解析象棋移动字符串
+// Parse chess move string
 const parseMove = (move: string) => {
   if (!move || move.length < 4) return null;
   
@@ -198,37 +197,36 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   showSelfPlay = false,
   disableAutoAnalyze = false,
 }) => {
-  // 一行精简日志：直接打印用于显示的数据结构
+  // Debug: log display data
   console.log(`[CB#${sampleIndex ?? 'NA'}] activations:`, activations);
   console.log(`[CB#${sampleIndex ?? 'NA'}] zPatternIndices:`, zPatternIndices);
   console.log(`[CB#${sampleIndex ?? 'NA'}] zPatternValues:`, zPatternValues);
 
-  // Hover状态管理
+  // Hover state
   const [hoveredSquare, setHoveredSquare] = useState<number | null>(null);
   
-  // 新增：点击选择状态管理
+  // Click selection state
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
   const [boardEvaluation, setBoardEvaluation] = useState<number[] | null>(null);
 
-  // 自对弈相关状态
+  // Self-play state
   const [selfPlayData, setSelfPlayData] = useState<any>(null);
   const [selfPlayLoading, setSelfPlayLoading] = useState(false);
   const [selfPlayError, setSelfPlayError] = useState<string | null>(null);
   const [currentSelfPlayStep, setCurrentSelfPlayStep] = useState(0);
   const [showSelfPlayPanel, setShowSelfPlayPanel] = useState(false);
 
-  // 前向推理相关状态
+  // Forward inference state
   const [forwardInferenceData, setForwardInferenceData] = useState<any>(null);
   const [forwardInferenceLoading, setForwardInferenceLoading] = useState(false);
   const [forwardInferenceError, setForwardInferenceError] = useState<string | null>(null);
 
-  // 修改handleAnalyze函数，移除JSON.stringify中对象的尾随逗号
   const handleAnalyze = useCallback(async () => {
     if (disableAutoAnalyze) {
-      return; // 如果禁用自动分析，直接返回
+      return; // Skip when auto-analyze is disabled
     }
     try {
-      console.log(`[CB#${sampleIndex ?? 'NA'}] 正在分析局面: ${fen.substring(0, 50)}...`);
+      console.log(`[CB#${sampleIndex ?? 'NA'}] Analyzing position: ${fen.substring(0, 50)}...`);
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -236,25 +234,24 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       });
       const data = await res.json();
       setBoardEvaluation(data.evaluation);
-      console.log(`[CB#${sampleIndex ?? 'NA'}] 局面分析完成:`, data.evaluation);
+      console.log(`[CB#${sampleIndex ?? 'NA'}] Position analysis done:`, data.evaluation);
     } catch (error) {
-      console.error(`[CB#${sampleIndex ?? 'NA'}] 分析局面失败:`, error);
+      console.error(`[CB#${sampleIndex ?? 'NA'}] Position analysis failed:`, error);
     }
   }, [fen, disableAutoAnalyze, sampleIndex]);
 
-  // 在状态声明区域之后添加 useEffect 来自动调用 handleAnalyze，当 fen 变化时触发
-  // 后端已经实现了加载锁机制，会等待正在加载的模型完成，不会重复加载
+  // Auto-run handleAnalyze when fen changes (backend has load lock, no duplicate load)
   useEffect(() => {
     handleAnalyze();
   }, [handleAnalyze]);
 
-  // 前向推理函数
+  // Forward inference
   const handleForwardInference = useCallback(async () => {
     setForwardInferenceLoading(true);
     setForwardInferenceError(null);
 
     try {
-      console.log(`[CB#${sampleIndex ?? 'NA'}] 开始前向推理: ${fen.substring(0, 50)}...`);
+      console.log(`[CB#${sampleIndex ?? 'NA'}] Starting forward inference: ${fen.substring(0, 50)}...`);
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/logit_lens/analyze`, {
         method: 'POST',
         headers: {
@@ -271,7 +268,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       }
 
       const result = await response.json();
-      console.log(`[CB#${sampleIndex ?? 'NA'}] 前向推理完成:`, result);
+      console.log(`[CB#${sampleIndex ?? 'NA'}] Forward inference done:`, result);
       const preds = Array.isArray(result?.final_layer_predictions) ? result.final_layer_predictions : [];
       const moves = preds.slice(0, 5).map((p: any) => ({
         move: p?.uci,
@@ -281,14 +278,14 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       setForwardInferenceData({ moves });
 
     } catch (err) {
-      console.error(`[CB#${sampleIndex ?? 'NA'}] 前向推理失败:`, err);
-      setForwardInferenceError(err instanceof Error ? err.message : '前向推理失败');
+      console.error(`[CB#${sampleIndex ?? 'NA'}] Forward inference failed:`, err);
+      setForwardInferenceError(err instanceof Error ? err.message : 'Forward inference failed');
     } finally {
       setForwardInferenceLoading(false);
     }
   }, [fen, sampleIndex]);
 
-  // 自对弈函数
+  // Self-play handler
   const handleSelfPlay = useCallback(async () => {
     setSelfPlayLoading(true);
     setSelfPlayError(null);
@@ -301,7 +298,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         },
         body: JSON.stringify({
           initial_fen: fen,
-          max_moves: 5, // 固定5步
+          max_moves: 5, // fixed 5 moves
           temperature: 1.0
         })
       });
@@ -316,29 +313,29 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       setShowSelfPlayPanel(true);
 
     } catch (err) {
-      console.error('自对弈失败:', err);
-      setSelfPlayError(err instanceof Error ? err.message : '自对弈失败');
+      console.error('Self-play failed:', err);
+      setSelfPlayError(err instanceof Error ? err.message : 'Self-play failed');
     } finally {
       setSelfPlayLoading(false);
     }
   }, [fen]);
 
-  // 准备图表数据
+  // Chart data for WDL
   const chartData = useMemo(() => {
     if (!selfPlayData || !selfPlayData.wdl_history.length) return [];
     
     return selfPlayData.wdl_history.map((wdl: any, index: number) => {
-      // 根据当前局面判断行棋方，转换为固定的白方/黑方胜率
+      // Determine side to move and convert to fixed white/black win rates
       const currentFen = selfPlayData.positions[index];
       const isWhiteToMove = currentFen.includes(' w ');
       
       let whiteWinRate, blackWinRate;
       if (isWhiteToMove) {
-        // 白方行棋时：win=白方胜率，loss=黑方胜率
+        // White to move: win=white win rate, loss=black win rate
         whiteWinRate = wdl.win;
         blackWinRate = wdl.loss;
       } else {
-        // 黑方行棋时：win=黑方胜率，loss=白方胜率
+        // Black to move: win=black win rate, loss=white win rate
         whiteWinRate = wdl.loss;
         blackWinRate = wdl.win;
       }
@@ -367,135 +364,106 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   if (!parsedBoard) {
     return (
       <div className="p-4 border border-red-200 rounded-lg bg-red-50">
-        <p className="text-red-700 text-sm">无效的FEN格式: {fen}</p>
+        <p className="text-red-700 text-sm">Invalid FEN format: {fen}</p>
       </div>
     );
   }
 
   const { board, isWhiteToMove } = parsedBoard;
 
-  // 保持原有 flip 语义：黑方行棋时整体上下翻转棋盘（受开关控制）
+  // Flip board vertically when Black to move (if autoFlipWhenBlack enabled)
   const flip = autoFlipWhenBlack ? !isWhiteToMove : false;
 
-  // 显示棋盘：
-  // 1. 先按 flip 在垂直方向（上下）翻转整盘棋
-  // 2. 只在黑方视角时对每一行做左右镜像，白方视角保持原样
+  // Display board: 1) flip vertically if flip; 2) mirror rows only in black view
   const displayBoard = useMemo(() => {
     const baseBoard = flip ? [...board].reverse() : board;
     return flip ? baseBoard.map((row) => [...row].reverse()) : baseBoard;
   }, [board, flip]);
 
-  // 解析移动信息
+  // Parse move
   const parsedMove = useMemo(() => {
     return move ? parseMove(move) : null;
   }, [move]);
 
-  // 根据显示位置计算实际的squareIndex（考虑上下 flip + 左右镜像）
+  // Display position -> actual square index (flip + mirror)
   const getActualSquareIndex = (displayRow: number, col: number): number => {
-    // 先还原垂直方向：displayRow → 实际行
     const actualRow = flip ? (7 - displayRow) : displayRow;
-    // 只在黑方视角时做了左右镜像：显示列 0 对应实际列 7，显示列 7 对应实际列 0
     const actualCol = flip ? (7 - col) : col;
     return getSquareIndex(actualRow, actualCol);
   };
 
-  // 激活值索引映射 - 激活值数组按照标准棋盘坐标：a1=0, b1=1, ..., h8=63
+  // Activation index: array in standard board order a1=0..h8=63
   const getActivationIndex = (displayRow: number, col: number): number => {
-    // 先还原到"原始棋盘行"（在是否 flip 之后）
     const originalRow = flip ? (7 - displayRow) : displayRow;
-    // 只在黑方视角时做了左右镜像：显示列 0 → 实际列 7
     const actualCol = flip ? (7 - col) : col;
 
-    // 根据 flip_activation 参数决定是否在行方向上再做一次翻转
     if (flip_activation) {
-      // 翻转激活值索引：FEN第0行对应第1行，FEN第7行对应第8行
       return originalRow * 8 + actualCol;
     } else {
-      // 不翻转激活值索引：FEN第0行对应第8行，FEN第7行对应第1行
       const standardRow = 7 - originalRow;
       return standardRow * 8 + actualCol;
     }
   };
 
-  // 新增：根据实际索引计算显示位置（考虑上下 flip + 左右镜像）
+  // Actual index -> display position (flip + mirror)
   const getBoardDisplayPosition = (actualSquareIndex: number) => {
     const actualRow = Math.floor(actualSquareIndex / 8);
     const actualCol = actualSquareIndex % 8;
-    // 垂直方向：实际行 → 显示行
     const displayRow = flip ? (7 - actualRow) : actualRow;
-    // 水平方向：只在黑方视角时做左右镜像
     const displayCol = flip ? (7 - actualCol) : actualCol;
     return { row: displayRow, col: displayCol };
   };
 
-  // 根据显示行索引获取棋盘行号（1-8）
+  // Display row index -> rank (1-8)
   const getDisplayRowNumber = (displayRowIndex: number) => {
-    if (flip) {
-      // 黑方视角：显示行0对应第1行，显示行7对应第8行
-      return displayRowIndex + 1;
-    }
-    // 白方视角：显示行0对应第8行，显示行7对应第1行
+    if (flip) return displayRowIndex + 1;
     return 8 - displayRowIndex;
   };
 
-  // 根据显示列索引获取棋盘列字母（a-h）
+  // Display col index -> file (a-h)
   const getDisplayColLetter = (colIndex: number) => {
-    if (flip) {
-      // 黑方视角：从左到右 h..a
-      return String.fromCharCode(104 - colIndex); // 104 = 'h'
-    }
-    // 白方视角：从左到右 a..h
-    return String.fromCharCode(97 + colIndex); // 97 = 'a'
+    if (flip) return String.fromCharCode(104 - colIndex);
+    return String.fromCharCode(97 + colIndex);
   };
 
-  // 统一的 从索引到标准坐标的命名（不依赖行棋方）
+  // Activation index -> standard square name (e.g. a1)
   const getSquareNameFromActivationIndex = (activationIndex: number) => {
     const row = Math.floor(activationIndex / 8);
     const col = activationIndex % 8;
-    // 根据flip_activation参数决定如何转换行号
     if (flip_activation) {
-      // 翻转模式：激活索引直接对应FEN棋盘位置
-      // FEN第0行对应第8行，FEN第7行对应第1行
       return `${String.fromCharCode(97 + col)}${8 - row}`;
     } else {
-      // 标准模式：激活值数组按照标准棋盘坐标：a1=0, ..., h8=63
-      // 标准行0对应第1行，标准行7对应第8行
       return `${String.fromCharCode(97 + col)}${row + 1}`;
     }
   };
 
-  // 新增：处理格子点击
+  // Handle square click (select from / to, or move)
   const handleSquareClick = (activationIndex: number) => {
     if (!isInteractive) return;
     
     const squareName = getSquareNameFromActivationIndex(activationIndex);
-    console.log('点击格子:', squareName, '激活索引:', activationIndex);
+    console.log('Square clicked:', squareName, 'activation index:', activationIndex);
     
     if (selectedSquare === null) {
-      // 第一次点击：选择起点
       setSelectedSquare(activationIndex);
       onSquareClick?.(squareName);
-      console.log('选择起点:', squareName);
+      console.log('From square selected:', squareName);
     } else if (selectedSquare === activationIndex) {
-      // 点击同一格子：取消选择
       setSelectedSquare(null);
-      console.log('取消选择');
+      console.log('Selection cleared');
     } else {
-      // 第二次点击：尝试移动
       const fromSquare = getSquareNameFromActivationIndex(selectedSquare);
       const moveString = `${fromSquare}${squareName}`;
       
-      console.log('尝试移动:', moveString);
+      console.log('Attempting move:', moveString);
       
-      // 调用移动回调
       onMove?.(moveString);
       
-      // 清除选择状态
       setSelectedSquare(null);
     }
   };
 
-  // 根据尺寸设置样式
+  // Size-dependent styles
   const sizeClasses = {
     small: 'w-64 h-64',
     medium: 'w-80 h-80',
@@ -515,10 +483,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   } as const;
   const boardPx = squareSizePxMap[size] * 8;
 
-  // 获取当前hover格子的Z模式目标
+  // Z-pattern targets for hovered square
   const zPatternTargets = hoveredSquare !== null ? getZPatternTargets(hoveredSquare, zPatternIndices, zPatternValues) : [];
 
-  // 处理前向推理结果
+  // Forward inference moves for arrows
   const forwardMoves = useMemo(() => {
     if (!forwardInferenceData || !forwardInferenceData.moves) return [];
 
@@ -536,36 +504,35 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   return (
     <div className="flex flex-col items-center space-y-2">
-      {/* 棋盘信息 */}
+      {/* Board info */}
       <div className="text-sm text-gray-600 text-center">
         {sampleIndex !== undefined && (
-          <div>样本 #{sampleIndex}</div>
+          <div>Sample #{sampleIndex}</div>
         )}
         {analysisName && (
-          <div>分析: {analysisName}</div>
+          <div>Analysis: {analysisName}</div>
         )}
         <div className="mt-1">
           <span className={`inline-block w-3 h-3 rounded-full mr-1 ${
             isWhiteToMove ? 'bg-white border-2 border-gray-800' : 'bg-gray-800'
           }`}></span>
-          {isWhiteToMove ? '白方行棋' : '黑方行棋'}
+          {isWhiteToMove ? 'White to move' : 'Black to move'}
         </div>
         {isInteractive && selectedSquare !== null && (
           <div className="mt-1 text-blue-600 font-medium">
-            已选择: {getSquareNameFromActivationIndex(selectedSquare)}
+            Selected: {getSquareNameFromActivationIndex(selectedSquare)}
           </div>
         )}
       </div>
 
-      {/* 棋盘容器 */}
+      {/* Board container */}
       <div className={`relative ${sizeClasses[size]} border-4 border-gray-800 rounded-lg overflow-hidden shadow-lg`}>
-        {/* 棋盘网格 */}
+        {/* Board grid */}
         <div className="w-full h-full grid grid-cols-8 grid-rows-8">
           {displayBoard.map((row, displayRowIndex) =>
             row.map((_, colIndex) => {
               const piece = row[colIndex];
-              // 计算格子颜色：
-              // 在标准棋盘上，a1是黑格（dark），h1是白格（light）
+              // Square color: a1=dark, h1=light on standard board
               const normalIsLight = (displayRowIndex + colIndex) % 2 === 0;
               const isLight = normalIsLight;
               const squareIndex = getActualSquareIndex(displayRowIndex, colIndex);
@@ -573,48 +540,36 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               const activation = activations?.[activationIndex] || 0;
               const activationColor = getActivationColor(activation);
               
-              // 检查当前格子是否是hover格子的Z模式目标
               const isZPatternTarget = zPatternTargets.some(target => target.square === activationIndex);
               const targetStrength = zPatternTargets.find(target => target.square === activationIndex)?.strength || 0;
               
-              // 检查是否为移动的起点或终点
               const isMoveFromSquare = parsedMove && parsedMove.from.index === squareIndex;
               const isMoveToSquare = parsedMove && parsedMove.to.index === squareIndex;
               
-              // 新增：检查是否为选中的格子
               const isSelectedSquare = selectedSquare === activationIndex;
               
-              // 获取基础背景色（与 exp 风格一致：浅灰 #F0F0F0 / 深灰 #D1D1D1）
               const baseColor = isLight ? 'bg-[#F0F0F0]' : 'bg-[#D1D1D1]';
               
-              // 确定最终背景色
               let finalBackgroundColor;
-              const isSourceSquare = hoveredSquare === activationIndex; // 当前格子是否为源格子
+              const isSourceSquare = hoveredSquare === activationIndex;
               
               if (isSelectedSquare) {
-                // 选中的格子用蓝色高亮
-                finalBackgroundColor = 'rgba(59, 130, 246, 0.8)'; // blue-500 with opacity
+                finalBackgroundColor = 'rgba(59, 130, 246, 0.8)';
               } else if (isMoveFromSquare) {
-                // 移动起点使用moveColor
                 finalBackgroundColor = (moveColor || 'rgba(34, 197, 94, 0.7)');
               } else if (isMoveToSquare) {
-                // 移动终点使用更深的同色系
                 finalBackgroundColor = (moveColor || 'rgba(22, 163, 74, 0.8)');
               } else if (isZPatternTarget) {
-                // Z模式目标格子根据强度使用不同颜色 - 参考feature页面逻辑
                 const absStrength = Math.abs(targetStrength);
-                const normalizedStrength = Math.min(absStrength / 0.01, 1); // 归一化到[0,1]
+                const normalizedStrength = Math.min(absStrength / 0.01, 1);
                 const opacity = Math.max(0.3, normalizedStrength * 0.7 + 0.3);
                 
                 if (targetStrength > 0) {
-                  // 正值用蓝色
                   finalBackgroundColor = `rgba(59, 130, 246, ${opacity})`;
                 } else {
-                  // 负值用橙色/红色
                   finalBackgroundColor = `rgba(249, 115, 22, ${opacity})`;
                 }
               } else if (activationColor !== 'transparent' && !isSourceSquare && hoveredSquare === null) {
-                // 只有在未悬停任何格子时才显示激活红色高亮
                 finalBackgroundColor = activationColor;
               }
               
@@ -634,7 +589,6 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     backgroundColor: finalBackgroundColor,
                   }}
                   onMouseEnter={() => {
-                    // 只有激活值不为0的格子才响应hover
                     if (activation !== 0) {
                       setHoveredSquare(activationIndex);
                     }
@@ -646,35 +600,33 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   title={`${getDisplayColLetter(colIndex)}${getDisplayRowNumber(displayRowIndex)}${
                     activation !== 0 ? ` (${activation.toFixed(3)})` : ''
                   }${
-                    isZPatternTarget ? ` [目标: ${targetStrength.toFixed(3)}]` : ''
+                    isZPatternTarget ? ` [target: ${targetStrength.toFixed(3)}]` : ''
                   }${
-                    isMoveFromSquare ? ' [移动起点]' : ''
+                    isMoveFromSquare ? ' [from]' : ''
                   }${
-                    isMoveToSquare ? ' [移动终点]' : ''
+                    isMoveToSquare ? ' [to]' : ''
                   }${
-                    isSelectedSquare ? ' [已选中]' : ''
+                    isSelectedSquare ? ' [selected]' : ''
                   }`}
                 >
-                  {/* 棋子：使用 pieces 目录下的 SVG（与 exp 风格一致） */}
+                  {/* Piece: ~93% of square size */}
                   {piece && (
                     <img
                       src={getPieceSrc(piece)}
                       alt={piece}
-                      className="piece w-full h-full object-contain select-none pointer-events-none"
+                      className="piece w-[93%] h-[93%] object-contain select-none pointer-events-none"
                       draggable={false}
                     />
                   )}
 
-                  {/* 激活值显示 - 在格子内部显示，源格子时隐去 */}
+                  {/* Activation value (hidden on source square when hovered) */}
                   {activation !== 0 && !isSourceSquare && hoveredSquare === null && (
                     <div className="absolute top-0 right-0 bg-blue-600 text-white text-xs rounded px-1 leading-3" style={{ fontSize: '10px' }}>
                       {Math.abs(activation).toFixed(2)}
                     </div>
                   )}
 
-                  {/* 移除错误的对称高亮，直接按实际起点/终点高亮 */}
-
-                  {/* Z模式值显示 - 在格子内部左上角显示 */}
+                  {/* Z-pattern value (top-left) */}
                   {isZPatternTarget && (
                     <div className={`absolute top-0 left-0 text-white text-xs rounded px-1 leading-3 ${
                       targetStrength > 0 ? 'bg-blue-700' : 'bg-orange-700'
@@ -683,18 +635,16 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     </div>
                   )}
 
-                  {/* 坐标标记（与 exp 一致：根据格子深浅选文字颜色） */}
+                  {/* Coordinates: rank right (1-8), file bottom (a-h) */}
                   {showCoordinates && (
                     <>
-                      {/* 行号：白方视角在左侧，黑方视角在右侧 */}
-                      {(!flip && colIndex === 0) || (flip && colIndex === 7) ? (
-                        <div className={`absolute ${flip ? 'right-1' : 'left-1'} top-1 text-xs font-bold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>
+                      {colIndex === 7 ? (
+                        <div className={`absolute right-1 top-1 text-xs font-bold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>
                           {getDisplayRowNumber(displayRowIndex)}
                         </div>
                       ) : null}
-                      {/* 列字母：白方视角在底部一行，黑方视角在顶部一行 */}
-                      {(!flip && displayRowIndex === 7) || (flip && displayRowIndex === 0) ? (
-                        <div className={`absolute ${flip ? 'top-1' : 'bottom-1'} ${flip ? 'left-1' : 'right-1'} text-xs font-bold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>
+                      {displayRowIndex === 7 ? (
+                        <div className={`absolute bottom-1 left-1 text-xs font-bold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>
                           {getDisplayColLetter(colIndex)}
                         </div>
                       ) : null}
@@ -705,7 +655,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             })
           )}
         
-        {/* 移动箭头覆盖层 */}
+        {/* Move arrow overlay */}
         {parsedMove && (
           <svg
             className="absolute inset-0 pointer-events-none"
@@ -723,7 +673,6 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             </marker>
           </defs>
             {(() => {
-              // 使用棋盘朝向映射，保证箭头与格子渲染一致
               const fromPos = getBoardDisplayPosition(parsedMove.from.index);
               const toPos = getBoardDisplayPosition(parsedMove.to.index);
               const sq = squareSizePxMap[size];
@@ -745,7 +694,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               );
             })()}
 
-          {/* 前向推理移动箭头 */}
+          {/* Forward inference move arrows */}
           {forwardMoves.map((moveData: any, index: number) => {
             const fromPos = getBoardDisplayPosition(moveData.from.index);
             const toPos = getBoardDisplayPosition(moveData.to.index);
@@ -755,11 +704,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             const toX = toPos.col * sq + sq / 2;
             const toY = toPos.row * sq + sq / 2;
 
-            // 根据logit值计算箭头粗细 (logit越大，箭头越粗)
+            // Arrow thickness by logit (higher logit = thicker)
             const minLogit = Math.min(...forwardMoves.map((m: any) => m.logit));
             const maxLogit = Math.max(...forwardMoves.map((m: any) => m.logit));
             const normalizedLogit = (moveData.logit - minLogit) / (maxLogit - minLogit);
-            const strokeWidth = 2 + normalizedLogit * 4; // 2-6px
+            const strokeWidth = 2 + normalizedLogit * 4;
 
             return (
               <line
@@ -779,11 +728,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         )}
       </div>
 
-              {/* FEN字符串和移动信息显示 */}
+              {/* FEN and move info */}
       <div className="absolute -bottom-12 left-0 right-0 text-xs text-gray-500 text-center space-y-1">
         {parsedMove && (
           <div className="text-green-600 font-medium">
-            移动: {parsedMove.moveString}
+            Move: {parsedMove.moveString}
           </div>
         )}
         <div className="truncate">
@@ -792,9 +741,9 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       </div>
       </div>
 
-      {/* FEN字符串显示 */}
+      {/* FEN string */}
       <div className="w-full max-w-lg text-xs text-gray-600 bg-gray-50 rounded p-2 border">
-        <div className="font-medium text-gray-800 mb-1">FEN字符串:</div>
+        <div className="font-medium text-gray-800 mb-1">FEN string:</div>
         <div className="font-mono text-xs break-all select-all">
           {fen}
         </div>
@@ -805,22 +754,21 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             w:{boardEvaluation[0].toFixed(2)}, d:{boardEvaluation[1].toFixed(2)}, l:{boardEvaluation[2].toFixed(2)}
           </div>
         ) : (
-          <div className="mt-1 text-sm text-gray-700">正在分析局面...</div>
+          <div className="mt-1 text-sm text-gray-700">Analyzing position...</div>
         )}
       </div>
 
-      {/* 激活值统计 */}
+      {/* Activation stats */}
       {activations && activations.some(a => a !== 0) && (
         <div className="text-xs text-gray-600 space-y-1">
-          <div>激活统计:</div>
           <div className="flex space-x-4">
-            <span>激活格子: {activations.filter(a => a !== 0).length}</span>
-            <span>最大值: {Math.max(...activations.map(Math.abs)).toFixed(3)}</span>
+            <span>Activated squares: {activations.filter(a => a !== 0).length}</span>
+            <span>Max: {Math.max(...activations.map(Math.abs)).toFixed(3)}</span>
           </div>
         </div>
       )}
 
-      {/* Hover状态显示Z模式连接详情 */}
+      {/* Hover: Z-pattern connections */}
       {hoveredSquare !== null && (() => {
         const squareName = getSquareNameFromActivationIndex(hoveredSquare);
         const activation = activations?.[hoveredSquare] || 0;
@@ -828,11 +776,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         return (
           <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
             <div className="font-medium text-blue-800">
-              格子 {squareName} ({activation.toFixed(3)})
+              Square {squareName} ({activation.toFixed(3)})
             </div>
             {zPatternTargets.length > 0 ? (
               <>
-                <div className="text-blue-700">({zPatternTargets.length}个):</div>
+                <div className="text-blue-700">({zPatternTargets.length} targets):</div>
                 <div className="grid grid-cols-2 gap-1">
                   {zPatternTargets.slice(0, 6).map((target, idx) => {
                     const targetName = getSquareNameFromActivationIndex(target.square);
@@ -844,27 +792,26 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     );
                   })}
                   {zPatternTargets.length > 6 && (
-                    <div className="text-blue-500 col-span-2">... 还有 {zPatternTargets.length - 6} 个连接</div>
+                    <div className="text-blue-500 col-span-2">... and {zPatternTargets.length - 6} more</div>
                   )}
                 </div>
               </>
             ) : (
-              <div className="text-blue-600">无连接</div>
+              <div className="text-blue-600">No connections</div>
             )}
           </div>
         );
       })()}
 
-      {/* 前向推理和自对弈功能 */}
+      {/* Forward inference and self-play */}
       <div className="mt-6 space-y-4">
-        {/* 推理控制按钮 */}
         <div className="flex justify-center space-x-4">
           <button
             onClick={handleForwardInference}
             disabled={forwardInferenceLoading}
             className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >
-            {forwardInferenceLoading ? '推理中...' : 'Run forward'}
+            {forwardInferenceLoading ? 'Running...' : 'Run forward'}
           </button>
           {showSelfPlay && (
             <>
@@ -873,31 +820,29 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 disabled={selfPlayLoading}
                 className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
-                {selfPlayLoading ? '进行中...' : '开始自对弈 (5步)'}
+                {selfPlayLoading ? 'Running...' : 'Start self-play (5 moves)'}
               </button>
               {selfPlayData && (
                 <button
                   onClick={() => setShowSelfPlayPanel(!showSelfPlayPanel)}
                   className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors"
                 >
-                  {showSelfPlayPanel ? '隐藏结果' : '显示结果'}
+                  {showSelfPlayPanel ? 'Hide results' : 'Show results'}
                 </button>
               )}
             </>
           )}
         </div>
 
-        {/* 前向推理错误显示 */}
         {forwardInferenceError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-red-700 text-sm">{forwardInferenceError}</p>
           </div>
         )}
 
-        {/* 前向推理结果显示 */}
         {forwardInferenceData && forwardInferenceData.moves && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <h4 className="text-sm font-semibold text-green-800 mb-2">前向推理结果 (Top 5 移动)</h4>
+            <h4 className="text-sm font-semibold text-green-800 mb-2">Forward inference (Top 5 moves)</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-2">
               {forwardInferenceData.moves.map((moveData: any, index: number) => (
                 <div key={index} className="bg-white rounded p-2 text-center border">
@@ -914,26 +859,22 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           </div>
         )}
 
-        {/* 自对弈功能 */}
         {showSelfPlay && (
           <>
-            {/* 错误显示 */}
             {selfPlayError && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <p className="text-red-700 text-sm">{selfPlayError}</p>
             </div>
             )}
 
-            {/* 自对弈结果显示 */}
             {selfPlayData && showSelfPlayPanel && (
             <div className="space-y-4">
-              {/* 步骤导航 */}
               <div className="bg-white rounded-lg border p-4">
-                <h3 className="text-lg font-semibold mb-3">自对弈步骤导航</h3>
+                <h3 className="text-lg font-semibold mb-3">Self-play step navigation</h3>
                 <div className="space-y-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      当前步骤: {currentSelfPlayStep + 1} / {selfPlayData.positions.length}
+                      Step: {currentSelfPlayStep + 1} / {selfPlayData.positions.length}
                     </label>
                     <input
                       type="range"
@@ -945,20 +886,19 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     />
                   </div>
                   
-                  {/* 步骤信息摘要 */}
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <div className="text-sm font-medium text-blue-800 mb-2">步骤 {currentSelfPlayStep + 1} 信息:</div>
+                    <div className="text-sm font-medium text-blue-800 mb-2">Step {currentSelfPlayStep + 1} info:</div>
                     <div className="space-y-1 text-xs text-blue-700">
                       {currentSelfPlayStep > 0 && (
                         <div>
-                          <span className="font-medium">执行移动:</span> 
+                          <span className="font-medium">Move played:</span> 
                           <span className="font-mono ml-1 px-1 bg-blue-100 rounded">
                             {selfPlayData.moves[currentSelfPlayStep - 1]}
                           </span>
                         </div>
                       )}
                       <div>
-                        <span className="font-medium">局面FEN:</span>
+                        <span className="font-medium">Position FEN:</span>
                         <div className="font-mono text-xs mt-1 p-2 bg-white rounded border break-all">
                           {selfPlayData.positions[currentSelfPlayStep]}
                         </div>
@@ -971,46 +911,44 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                       onClick={() => setCurrentSelfPlayStep(0)}
                       className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm"
                     >
-                      开始
+                      Start
                     </button>
                     <button
                       onClick={() => setCurrentSelfPlayStep(Math.max(0, currentSelfPlayStep - 1))}
                       className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm"
                       disabled={currentSelfPlayStep === 0}
                     >
-                      上一步
+                      Previous
                     </button>
                     <button
                       onClick={() => setCurrentSelfPlayStep(Math.min(selfPlayData.positions.length - 1, currentSelfPlayStep + 1))}
                       className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm"
                       disabled={currentSelfPlayStep === selfPlayData.positions.length - 1}
                     >
-                      下一步
+                      Next
                     </button>
                     <button
                       onClick={() => setCurrentSelfPlayStep(selfPlayData.positions.length - 1)}
                       className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors text-sm"
                     >
-                      结束
+                      End
                     </button>
                   </div>
                 </div>
               </div>
 
-              {/* 自对弈棋盘 */}
               <div className="bg-white rounded-lg border p-4">
                 <h3 className="text-lg font-semibold mb-3">
-                  自对弈局面 {currentSelfPlayStep + 1}
+                  Self-play position {currentSelfPlayStep + 1}
                   {currentSelfPlayStep < selfPlayData.moves.length && (
                     <span className="text-green-600 ml-2">
-                      (移动: {selfPlayData.moves[currentSelfPlayStep]})
+                      (Move: {selfPlayData.moves[currentSelfPlayStep]})
                     </span>
                   )}
                 </h3>
                 
-                {/* FEN字符串显示 */}
                 <div className="mb-4 p-3 bg-gray-50 rounded-lg border">
-                  <div className="text-sm font-medium text-gray-700 mb-2">当前FEN:</div>
+                  <div className="text-sm font-medium text-gray-700 mb-2">Current FEN:</div>
                   <div className="font-mono text-xs text-gray-800 break-all select-all bg-white p-2 rounded border">
                     {selfPlayData.positions[currentSelfPlayStep]}
                   </div>
@@ -1045,7 +983,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                                     <img
                                       src={getPieceSrc(piece)}
                                       alt={piece}
-                                      className="piece w-full h-full object-contain select-none pointer-events-none"
+                                      className="piece w-[93%] h-[93%] object-contain select-none pointer-events-none"
                                       draggable={false}
                                     />
                                   )}
@@ -1054,12 +992,12 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                             })
                           );
                         } catch (error) {
-                          return <div className="col-span-8 row-span-8 flex items-center justify-center text-red-500">无效FEN</div>;
+                          return <div className="col-span-8 row-span-8 flex items-center justify-center text-red-500">Invalid FEN</div>;
                         }
                       })()}
                     </div>
                     
-                    {/* 移动箭头 */}
+                    {/* Move arrow */}
                     {(() => {
                       const currentMove = currentSelfPlayStep > 0 ? selfPlayData.moves[currentSelfPlayStep - 1] : undefined;
                       const parsedMove = currentMove ? parseMove(currentMove) : null;
@@ -1093,10 +1031,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 </div>
               </div>
 
-              {/* WDL曲线图 */}
+              {/* WDL curve chart */}
               {chartData.length > 0 && (
                 <div className="bg-white rounded-lg border p-4">
-                  <h3 className="text-lg font-semibold mb-3">WDL变化曲线</h3>
+                  <h3 className="text-lg font-semibold mb-3">WDL Curve</h3>
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={chartData}>
@@ -1106,7 +1044,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                         <Tooltip 
                           formatter={(value: any, name: string) => [
                             `${parseFloat(value).toFixed(1)}%`, 
-                            name === 'whiteWin' ? '白方胜率' : name === 'draw' ? '和棋率' : name === 'blackWin' ? '黑方胜率' : name
+                            name === 'whiteWin' ? 'White win rate' : name === 'draw' ? 'Draw rate' : name === 'blackWin' ? 'Black win rate' : name
                           ]}
                         />
                         <Legend />
@@ -1115,7 +1053,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                           dataKey="whiteWin" 
                           stroke="#10b981" 
                           strokeWidth={2}
-                          name="白方胜率"
+                          name="White win rate"
                           dot={{ fill: '#10b981', strokeWidth: 2, r: 3 }}
                         />
                         <Line 
@@ -1123,7 +1061,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                           dataKey="draw" 
                           stroke="#f59e0b" 
                           strokeWidth={2}
-                          name="和棋率"
+                          name="Draw rate"
                           dot={{ fill: '#f59e0b', strokeWidth: 2, r: 3 }}
                         />
                         <Line 
@@ -1131,7 +1069,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                           dataKey="blackWin" 
                           stroke="#ef4444" 
                           strokeWidth={2}
-                          name="黑方胜率"
+                          name="Black win rate"
                           dot={{ fill: '#ef4444', strokeWidth: 2, r: 3 }}
                         />
                       </LineChart>
@@ -1140,61 +1078,58 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 </div>
               )}
 
-              {/* 当前步骤WDL评估 */}
+              {/* Current step WDL evaluation */}
               {currentSelfPlayStep < selfPlayData.wdl_history.length && (
                 <div className="bg-white rounded-lg border p-4">
-                  <h3 className="text-lg font-semibold mb-3">步骤 {currentSelfPlayStep + 1} WDL评估</h3>
+                  <h3 className="text-lg font-semibold mb-3">Step {currentSelfPlayStep + 1} WDL Evaluation</h3>
                   <div className="grid grid-cols-3 gap-4">
                     {(() => {
-                      // 根据当前局面判断行棋方
                       const currentFen = selfPlayData.positions[currentSelfPlayStep];
                       const currentIsWhiteToMove = currentFen.includes(' w ');
                       
                       if (currentIsWhiteToMove) {
-                        // 白方行棋：显示白方胜率、和棋率、黑方胜率
                         return (
                           <>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-green-600">
                                 {(selfPlayData.wdl_history[currentSelfPlayStep].win * 100).toFixed(1)}%
                               </div>
-                              <div className="text-sm text-gray-600">白方胜率</div>
+                              <div className="text-sm text-gray-600">White win rate</div>
                             </div>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-yellow-600">
                                 {(selfPlayData.wdl_history[currentSelfPlayStep].draw * 100).toFixed(1)}%
                               </div>
-                              <div className="text-sm text-gray-600">和棋率</div>
+                              <div className="text-sm text-gray-600">Draw rate</div>
                             </div>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-red-600">
                                 {(selfPlayData.wdl_history[currentSelfPlayStep].loss * 100).toFixed(1)}%
                               </div>
-                              <div className="text-sm text-gray-600">黑方胜率</div>
+                              <div className="text-sm text-gray-600">Black win rate</div>
                             </div>
                           </>
                         );
                       } else {
-                        // 黑方行棋：显示黑方胜率、和棋率、白方胜率
                         return (
                           <>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-green-600">
                                 {(selfPlayData.wdl_history[currentSelfPlayStep].win * 100).toFixed(1)}%
                               </div>
-                              <div className="text-sm text-gray-600">黑方胜率</div>
+                              <div className="text-sm text-gray-600">Black win rate</div>
                             </div>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-yellow-600">
                                 {(selfPlayData.wdl_history[currentSelfPlayStep].draw * 100).toFixed(1)}%
                               </div>
-                              <div className="text-sm text-gray-600">和棋率</div>
+                              <div className="text-sm text-gray-600">Draw rate</div>
                             </div>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-red-600">
                                 {(selfPlayData.wdl_history[currentSelfPlayStep].loss * 100).toFixed(1)}%
                               </div>
-                              <div className="text-sm text-gray-600">白方胜率</div>
+                              <div className="text-sm text-gray-600">White win rate</div>
                             </div>
                           </>
                         );
@@ -1204,11 +1139,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                 </div>
               )}
 
-              {/* 移动概率 */}
+              {/* Move probabilities */}
               {currentSelfPlayStep < selfPlayData.move_probabilities.length && 
                Object.keys(selfPlayData.move_probabilities[currentSelfPlayStep]).length > 0 && (
                 <div className="bg-white rounded-lg border p-4">
-                  <h3 className="text-lg font-semibold mb-3">步骤 {currentSelfPlayStep + 1} 移动概率</h3>
+                  <h3 className="text-lg font-semibold mb-3">Step {currentSelfPlayStep + 1} Move Probabilities</h3>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
                     {Object.entries(selfPlayData.move_probabilities[currentSelfPlayStep])
                       .sort(([,a], [,b]) => (b as number) - (a as number))
