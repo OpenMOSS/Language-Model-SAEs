@@ -23,20 +23,26 @@ interface ChessBoardProps {
   disableAutoAnalyze?: boolean; // 新增：禁用自动分析（避免重复加载模型）
 }
 
-// 棋子Unicode符号映射
-const PIECE_SYMBOLS: { [key: string]: string } = {
-  'K': '♔', // 白王
-  'Q': '♕', // 白后
-  'R': '♖', // 白车
-  'B': '♗', // 白象
-  'N': '♘', // 白马
-  'P': '♙', // 白兵
-  'k': '♚', // 黑王
-  'q': '♛', // 黑后
-  'r': '♜', // 黑车
-  'b': '♝', // 黑象
-  'n': '♞', // 黑马
-  'p': '♟', // 黑兵
+// 棋子 SVG 文件名映射（与 exp/chess-board-visualizer 一致，从 pieces 目录加载）
+const PIECE_SVG_NAMES: { [key: string]: string } = {
+  K: 'wK',
+  Q: 'wQ',
+  R: 'wR',
+  B: 'wB',
+  N: 'wN',
+  P: 'wP',
+  k: 'bK',
+  q: 'bQ',
+  r: 'bR',
+  b: 'bB',
+  n: 'bN',
+  p: 'bP',
+};
+
+/** 根据 FEN 棋子字符返回对应 SVG 的 URL（用于 img src） */
+const getPieceSrc = (piece: string): string => {
+  const name = PIECE_SVG_NAMES[piece] || piece;
+  return new URL(`./pieces/${name}.svg`, import.meta.url).href;
 };
 
 // FEN字符串解析函数
@@ -502,12 +508,6 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     large: 'w-12 h-12'
   };
 
-  const fontSize = {
-    small: 'text-lg',
-    medium: 'text-xl',
-    large: 'text-2xl'
-  };
-
   const squareSizePxMap = {
     small: 32,   // 256px / 8
     medium: 40,  // 320px / 8
@@ -584,8 +584,8 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               // 新增：检查是否为选中的格子
               const isSelectedSquare = selectedSquare === activationIndex;
               
-              // 获取基础背景色
-              const baseColor = isLight ? 'bg-amber-100' : 'bg-amber-800';
+              // 获取基础背景色（与 exp 风格一致：浅灰 #F0F0F0 / 深灰 #D1D1D1）
+              const baseColor = isLight ? 'bg-[#F0F0F0]' : 'bg-[#D1D1D1]';
               
               // 确定最终背景色
               let finalBackgroundColor;
@@ -655,20 +655,14 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     isSelectedSquare ? ' [已选中]' : ''
                   }`}
                 >
-                  {/* 棋子 */}
+                  {/* 棋子：使用 pieces 目录下的 SVG（与 exp 风格一致） */}
                   {piece && (
-                    <span
-                      className={`
-                        ${fontSize[size]} 
-                        ${piece === piece.toLowerCase() ? 'text-black' : 'text-white'}
-                        drop-shadow-sm select-none
-                      `}
-                      style={{
-                        textShadow: piece === piece.toLowerCase() ? '1px 1px 1px rgba(255,255,255,0.8)' : '1px 1px 1px rgba(0,0,0,0.8)'
-                      }}
-                    >
-                      {PIECE_SYMBOLS[piece] || piece}
-                    </span>
+                    <img
+                      src={getPieceSrc(piece)}
+                      alt={piece}
+                      className="piece w-full h-full object-contain select-none pointer-events-none"
+                      draggable={false}
+                    />
                   )}
 
                   {/* 激活值显示 - 在格子内部显示，源格子时隐去 */}
@@ -689,18 +683,18 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     </div>
                   )}
 
-                  {/* 坐标标记 */}
+                  {/* 坐标标记（与 exp 一致：根据格子深浅选文字颜色） */}
                   {showCoordinates && (
                     <>
                       {/* 行号：白方视角在左侧，黑方视角在右侧 */}
                       {(!flip && colIndex === 0) || (flip && colIndex === 7) ? (
-                        <div className={`absolute ${flip ? 'right-1' : 'left-1'} top-1 text-xs font-bold opacity-60`}>
+                        <div className={`absolute ${flip ? 'right-1' : 'left-1'} top-1 text-xs font-bold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>
                           {getDisplayRowNumber(displayRowIndex)}
                         </div>
                       ) : null}
                       {/* 列字母：白方视角在底部一行，黑方视角在顶部一行 */}
                       {(!flip && displayRowIndex === 7) || (flip && displayRowIndex === 0) ? (
-                        <div className={`absolute ${flip ? 'top-1' : 'bottom-1'} ${flip ? 'left-1' : 'right-1'} text-xs font-bold opacity-60`}>
+                        <div className={`absolute ${flip ? 'top-1' : 'bottom-1'} ${flip ? 'left-1' : 'right-1'} text-xs font-bold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>
                           {getDisplayColLetter(colIndex)}
                         </div>
                       ) : null}
@@ -1042,15 +1036,18 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                                   key={`${displayRowIndex}-${colIndex}`}
                                   className={`
                                     w-10 h-10 relative flex items-center justify-center
-                                    ${isLight ? 'bg-amber-100' : 'bg-amber-800'}
+                                    ${isLight ? 'bg-[#F0F0F0]' : 'bg-[#D1D1D1]'}
                                     ${isMoveFromSquare ? 'bg-green-400' : ''}
                                     ${isMoveToSquare ? 'bg-green-600' : ''}
                                   `}
                                 >
                                   {piece && (
-                                    <span className="text-xl select-none">
-                                      {PIECE_SYMBOLS[piece] || piece}
-                                    </span>
+                                    <img
+                                      src={getPieceSrc(piece)}
+                                      alt={piece}
+                                      className="piece w-full h-full object-contain select-none pointer-events-none"
+                                      draggable={false}
+                                    />
                                   )}
                                 </div>
                               );

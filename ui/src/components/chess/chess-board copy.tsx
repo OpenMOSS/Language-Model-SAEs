@@ -20,6 +20,7 @@ interface ChessBoardProps {
   autoFlipWhenBlack?: boolean; // 新增：到黑方行棋时自动翻转
   moveColor?: string; // 新增：箭头颜色（与节点颜色一致）
   showSelfPlay?: boolean; // 新增：是否显示自对弈功能
+  disableAutoAnalyze?: boolean; // 新增：禁用自动分析（避免重复加载模型）
 }
 
 // 棋子Unicode符号映射
@@ -189,6 +190,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   autoFlipWhenBlack = false,
   moveColor,
   showSelfPlay = false,
+  disableAutoAnalyze = false,
 }) => {
   // 一行精简日志：直接打印用于显示的数据结构
   console.log(`[CB#${sampleIndex ?? 'NA'}] activations:`, activations);
@@ -215,7 +217,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   const [forwardInferenceError, setForwardInferenceError] = useState<string | null>(null);
 
   // 修改handleAnalyze函数，移除JSON.stringify中对象的尾随逗号
-  const handleAnalyze = async () => {
+  const handleAnalyze = useCallback(async () => {
+    if (disableAutoAnalyze) {
+      return; // 如果禁用自动分析，直接返回
+    }
     try {
       console.log(`[CB#${sampleIndex ?? 'NA'}] 正在分析局面: ${fen.substring(0, 50)}...`);
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
@@ -229,12 +234,13 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     } catch (error) {
       console.error(`[CB#${sampleIndex ?? 'NA'}] 分析局面失败:`, error);
     }
-  };
+  }, [fen, disableAutoAnalyze, sampleIndex]);
 
   // 在状态声明区域之后添加 useEffect 来自动调用 handleAnalyze，当 fen 变化时触发
+  // 后端已经实现了加载锁机制，会等待正在加载的模型完成，不会重复加载
   useEffect(() => {
     handleAnalyze();
-  }, [fen]);
+  }, [handleAnalyze]);
 
   // 前向推理函数
   const handleForwardInference = useCallback(async () => {
