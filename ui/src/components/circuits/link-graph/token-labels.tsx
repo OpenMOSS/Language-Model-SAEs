@@ -39,8 +39,8 @@ export const TokenLabels: React.FC<TokenLabelsProps> = React.memo(({
       .attr("x", (d: any) => d.x)
       .attr("y", dimensions.height - BOTTOM_PADDING + 15)
       .attr("text-anchor", "middle")
-      .attr("font-size", "12px")
-      .attr("fill", "#666")
+      .attr("font-size", "11px")
+      .attr("fill", "#374151")
       .text((d: any) => d.ctx_idx);
   }, [tokenData, dimensions]);
 

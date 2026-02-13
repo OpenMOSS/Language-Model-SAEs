@@ -465,7 +465,7 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
       {showAllCircuits && otherCircuits.length > 0 && (
         <div className="mb-6">
           <h4 className="font-semibold mb-3 text-sm text-gray-700">
-            其他Circuits ({otherCircuits.length})
+            Other Circuits ({otherCircuits.length})
           </h4>
           <div className="space-y-4">
             {otherCircuits.map((circuit) => (
@@ -512,15 +512,15 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
 
       {/* 加载状态 */}
       {loadingAllCircuits && showAllCircuits && allCircuits.length === 0 && (
-        <div className="text-center py-8 text-gray-500">加载中...</div>
+        <div className="text-center py-8 text-gray-500">Loading...</div>
       )}
 
       {/* Empty state - only show when not loading and no data */}
       {!loadingAllCircuits && !loading && displayCircuits.length === 0 && (
         <div className="text-center py-8 text-gray-500">
           {showAllCircuits 
-            ? '没有找到任何circuit标注'
-            : '该feature还没有属于任何circuit标注'}
+            ? 'No circuit annotations found'
+            : 'This feature does not belong to any circuit annotations'}
         </div>
       )}
     </div>
@@ -639,7 +639,7 @@ const CircuitItem: React.FC<CircuitItemProps> = ({
           ) : (
             <div>
               <p className="text-gray-700 mb-1 text-sm">
-                <span className="font-semibold">Circuit解释:</span>{' '}
+                <span className="font-semibold">Circuit Interpretation:</span>{' '}
                 {circuit.circuit_interpretation || '(无)'}
               </p>
               <p className="text-xs text-gray-500">
@@ -655,7 +655,7 @@ const CircuitItem: React.FC<CircuitItemProps> = ({
                 onClick={() => onToggleCollapse(circuit.circuit_id)}
                 className="px-3 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600"
                 disabled={loading}
-                title={isCollapsed ? '展开' : '折叠'}
+                title={isCollapsed ? 'Expand' : 'Collapse'}
               >
                 {isCollapsed ? (
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -683,7 +683,7 @@ const CircuitItem: React.FC<CircuitItemProps> = ({
                   className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
                   disabled={loading}
                 >
-                  添加当前feature
+                  Add Current Feature
                 </button>
               )}
               <button
@@ -819,7 +819,4 @@ const CircuitItem: React.FC<CircuitItemProps> = ({
       )}
     </div>
   );
-};
-
-;
 };

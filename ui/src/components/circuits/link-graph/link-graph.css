@@ -1,10 +1,10 @@
 .link-graph-container {
   position: relative;
   width: 100%;
-  height: 600px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  overflow: hidden;
+  min-height: 420px;
+  height: 420px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .link-graph-container svg {
@@ -39,13 +39,13 @@
 .node.clicked {
   font-weight: bold;
   stroke: #ef4444;
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
 
 .node.connected {
   font-weight: bold;
-  stroke: #10b981;
-  stroke-width: 2;
+  stroke: #22c55e;
+  stroke-width: 1.5;
   r: 6;
 }
 
@@ -53,29 +53,26 @@
   pointer-events: none;
 }
 
-/* Link edge styling */
+/* Link edge styling - aligned with ui-ssr */
 .link {
+  fill: none;
+  stroke: #94a3b8;
+  opacity: 0.4;
   transition: opacity 0.3s ease, stroke-width 0.3s ease, stroke 0.3s ease;
 }
 
 .link:hover {
-  opacity: 0.06;
-}
-
-.link {
-  opacity: 0.05;
-}
-
-/* Connected links when a node is clicked */
-.link.connected {
-  opacity: 0.9;
-  stroke-width: 3px;
-}
-
-/* Connected links when hovering over a node */
-.link.connected:hover {
   opacity: 0.5;
-  stroke-width: 4px;
+}
+
+.link.connected {
+  opacity: 0.6;
+  stroke-width: 2px;
+}
+
+.link.connected:hover {
+  opacity: 0.7;
+  stroke-width: 2.5px;
 }
 
 .link-graph-container-wrapper .controls {
@@ -113,17 +110,20 @@
   font-size: 0.875rem;
 }
 
-/* Token label styling */
-.token-label {
+/* Token/position label styling - aligned with ui-ssr */
+.token-label,
+.position-index {
   font-family: 'Courier New', monospace;
   font-size: 11px;
   font-weight: 500;
   fill: #374151;
   text-anchor: middle;
   dominant-baseline: hanging;
+  user-select: none;
 }
 
-.token-label:hover {
+.token-label:hover,
+.position-index:hover {
   fill: #1f2937;
   font-weight: 600;
 } 

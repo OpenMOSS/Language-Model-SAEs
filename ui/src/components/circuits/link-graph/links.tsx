@@ -30,9 +30,9 @@ export const Links: React.FC<LinksProps> = React.memo(({
     // Merge enter and update selections to apply attributes to both new and existing elements
     linkSel.merge(linkEnter)
       .attr("d", (d: any) => d.pathStr)
-      .attr("stroke", "#666666")
-      .attr("stroke-width", (d: any) => d.strokeWidth || 1)
-      .attr("opacity", 0.03);
+      .attr("stroke", "#94a3b8")
+      .attr("stroke-width", (d: any) => (d.strokeWidth || 1) * 0.35)
+      .attr("opacity", 0.4);
   }, [positionedLinks]);
 
   return (

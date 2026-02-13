@@ -844,7 +844,7 @@ export const CircuitVisualization = () => {
     }
   }, [linkGraphData, getDictionaryName]);
 
-  // 检查 SAE 是否已加载（直接检查后端状态）
+  /** Check if SAE is loaded (by querying backend state) */
   const checkSaeLoaded = useCallback(async (): Promise<boolean> => {
     try {
       const saeComboId = typeof window !== 'undefined' 
@@ -852,7 +852,7 @@ export const CircuitVisualization = () => {
         : null;
       
       if (!saeComboId) {
-        console.warn('未找到 sae_combo_id，请先加载 SAE 组合');
+        console.warn("sae_combo_id not found; please load SAE combo first");
         return false;
       }
       
@@ -869,60 +869,59 @@ export const CircuitVisualization = () => {
         const data = await response.json();
         const logs = data.logs || [];
         
-        // 如果正在加载，返回 false
+        // If loading, return false
         if (data.is_loading === true) {
-          console.log('SAE 正在加载中...');
+          console.log("SAE is loading...");
           return false;
         }
         
-        // 检查是否有成功加载的日志（包含完成消息）
+        // Check for successful load logs (completion message)
         const hasSuccessLog = logs.some((log: { message: string }) => 
-          log.message.includes('✅ 预加载完成') || 
-          log.message.includes('预加载完成') ||
+          log.message.includes("Preload complete") ||
           log.message.includes('already_loaded') ||
-          log.message.includes('已就绪')
+          log.message.includes("ready")
         );
         
-        // 如果有成功日志，说明已加载
+        // If success log exists, SAE is loaded
         if (hasSuccessLog) {
-          console.log('✅ SAE 已加载（从日志确认）');
+          console.log("SAE loaded (confirmed from logs)");
           return true;
         }
         
-        // 如果没有日志，说明可能还没有加载过
+        // No logs: may not have loaded yet
         if (logs.length === 0) {
-          console.warn('未找到加载日志，SAE 可能未加载');
+          console.warn("No load logs found; SAE may not be loaded");
           return false;
         }
         
-        // 如果有日志但不在加载中，且没有成功消息，可能是加载失败或正在加载
-        console.warn('SAE 状态不明确，日志存在但无成功消息');
+        // Logs exist but no success message: may have failed or still loading
+        console.warn("SAE status unclear: logs exist but no success message");
         return false;
       }
       
       return false;
     } catch (error) {
-      console.warn('检查 SAE 加载状态失败:', error);
+      console.warn("Failed to check SAE load status:", error);
       return false;
     }
   }, []);
 
-  // 获取 Token Predictions 数据的函数
+  /** Fetches Token Predictions data from backend */
   const fetchTokenPredictions = useCallback(async (nodeId: string, currentSteeringScale?: number) => {
     if (!nodeId || !fen) return;
 
-    // 直接检查后端状态，而不是依赖全局状态
+    // Check backend state directly rather than global state
     const saeLoaded = await checkSaeLoaded();
     if (!saeLoaded) {
-      console.warn("TC/LoRSA 未加载，跳过 steering_analysis 调用");
-      alert("请先在上方加载 TC/LoRSA 组合（SaeComboLoader），再使用 steering 功能。");
+      console.warn("TC/LoRSA not loaded; skipping steering_analysis call");
+      alert("Please load TC/LoRSA combo (SaeComboLoader) above first, then use steering.");
       setTokenPredictions(null);
       return;
     }
     
     setLoadingTokenPredictions(true);
     try {
-      // 从 nodeId 解析出特征信息
+      // Parse feature info from nodeId
       const parts = nodeId.split('_');
       const rawLayer = Number(parts[0]) || 0;
       const featureIndex = Number(parts[1]) || 0;
@@ -933,10 +932,10 @@ export const CircuitVisualization = () => {
       const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
       const featureType = currentNode?.feature_type?.toLowerCase() === 'lorsa' ? 'lorsa' : 'transcoder';
       
-      // 使用传入的 steeringScale 或当前状态中的值
+      // Use passed steeringScale or value from current state
       const scaleToUse = currentSteeringScale !== undefined ? currentSteeringScale : steeringScale;
       
-      console.log('🔍 获取 Token Predictions 数据:', {
+      console.log("Fetching Token Predictions:", {
         nodeId,
         layerIdx,
         featureIndex,
@@ -946,7 +945,7 @@ export const CircuitVisualization = () => {
         steering_scale: scaleToUse
       });
       
-      // 调用后端 API 进行 steering 分析（支持 steering_scale 参数）
+      // Call backend API for steering analysis (supports steering_scale)
       const response = await fetch(
         `${import.meta.env.VITE_BACKEND_URL}/steering_analysis`,
         {
@@ -968,28 +967,28 @@ export const CircuitVisualization = () => {
       
       if (!response.ok) {
         const errorText = await response.text();
-        // 如果是503错误，说明模型未加载
+        // 503 means model not loaded
         if (response.status === 503) {
-          alert("请先在上方加载 TC/LoRSA 组合（SaeComboLoader），再使用 steering 功能。");
+          alert("Please load TC/LoRSA combo (SaeComboLoader) above first.");
         }
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
       
       const result = await response.json();
       
-      console.log('✅ 获取到 Token Predictions 数据:', result);
+      console.log("Token Predictions fetched:", result);
       
       setTokenPredictions(result);
       
     } catch (error) {
-      console.error('❌ 获取 Token Predictions 数据失败:', error);
+      console.error("Failed to fetch Token Predictions:", error);
       setTokenPredictions(null);
     } finally {
       setLoadingTokenPredictions(false);
     }
   }, [fen, linkGraphData, steeringScale, checkSaeLoaded]);
 
-  // 当点击节点时获取 Top Activation 数据（Token Predictions 改为手动触发）
+  /** Fetch Top Activation data when node is clicked (Token Predictions is manual) */
   useEffect(() => {
     if (clickedId) {
       fetchTopActivations(clickedId);
@@ -999,10 +998,10 @@ export const CircuitVisualization = () => {
     }
   }, [clickedId, fetchTopActivations]);
 
-  // 同步clerps到后端interpretations
+  /** Sync clerps to backend interpretations */
   const syncClerpsToBackend = useCallback(async () => {
     if (!originalCircuitJson || !originalCircuitJson.nodes) {
-      alert('⚠️ 没有可用的节点数据');
+      alert("No node data available");
       return;
     }
     
@@ -1079,7 +1078,7 @@ export const CircuitVisualization = () => {
   // 从后端interpretations同步到clerps
   const syncClerpsFromBackend = useCallback(async () => {
     if (!originalCircuitJson || !originalCircuitJson.nodes) {
-      alert('⚠️ 没有可用的节点数据');
+      alert("No node data available");
       return;
     }
     
@@ -1755,7 +1754,6 @@ export const CircuitVisualization = () => {
 
   return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
-      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
       <SaeComboLoader />
 
       {/* Header */}
@@ -1767,11 +1765,10 @@ export const CircuitVisualization = () => {
         <div className="flex flex-wrap items-start justify-end gap-3 ml-auto">
           <button
             onClick={() => setLinkGraphData(null)}
-            className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+            className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-lg border-2 border-blue-600 hover:bg-blue-600 hover:border-blue-700 shadow-md transition-all"
           >
             Upload New File
           </button>
-          {/* Graph Feature Diffing 控件 - 只在单图时显示 */}
           {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && (
             <div className="flex items-center space-x-2 px-3 py-1 bg-yellow-50 rounded-md border border-yellow-200">
               <div className="flex items-center space-x-2">
@@ -2509,13 +2506,13 @@ export const CircuitVisualization = () => {
         {clickedId && (
           <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Top Activation 棋盘</h3>
+              <h3 className="text-lg font-semibold">Top Activation Board</h3>
               <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">节点: {clickedId}</span>
+                <span className="text-sm text-gray-600">Node: {clickedId}</span>
                 {loadingTopActivations && (
                   <div className="flex items-center space-x-2">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                    <span className="text-sm text-gray-500">加载中...</span>
+                    <span className="text-sm text-gray-500">Loading...</span>
                   </div>
                 )}
               </div>
@@ -2525,7 +2522,7 @@ export const CircuitVisualization = () => {
               <div className="flex items-center justify-center py-8">
                 <div className="text-center">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                  <p className="text-gray-600">正在获取 Top Activation 数据...</p>
+                  <p className="text-gray-600">Getting Top Activation data...</p>
                 </div>
               </div>
             ) : topActivations.length > 0 ? (
@@ -2537,13 +2534,13 @@ export const CircuitVisualization = () => {
                         Top #{index + 1}
                       </div>
                       <div className="text-xs text-gray-500">
-                        最大激活值: {sample.activationStrength.toFixed(3)}
+                        Max Activation: {sample.activationStrength.toFixed(3)}
                       </div>
                     </div>
                     <ChessBoard
                       fen={sample.fen}
                       size="small"
-                      showCoordinates={false}
+                      showCoordinates={true}
                       activations={sample.activations}
                       zPatternIndices={sample.zPatternIndices}
                       zPatternValues={sample.zPatternValues}
@@ -2557,7 +2554,7 @@ export const CircuitVisualization = () => {
               </div>
             ) : (
               <div className="text-center py-8 text-gray-500">
-                <p>未找到包含棋盘的激活样本</p>
+                <p>No activation samples containing chessboard found</p>
               </div>
             )}
           </div>
@@ -2620,28 +2617,28 @@ export const CircuitVisualization = () => {
                         setSteeringScaleInput('0');
                       }
                     }}
-                    title="调节steering放大系数，支持负数输入"
+                    title="Adjust steering scale, supports negative input"
                   />
                 </div>
                 <button
                   onClick={() => clickedId && fetchTokenPredictions(clickedId)}
                   disabled={loadingTokenPredictions || !clickedId || !fen}
                   className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
-                  title="运行特征干预分析"
+                  title="Run feature intervention analysis"
                 >
                   {loadingTokenPredictions ? (
                     <>
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                      分析中...
+                      Analyzing...
                     </>
                   ) : (
-                    '开始分析'
+                    'Start Analysis'
                   )}
                 </button>
                 {loadingTokenPredictions && (
                   <div className="flex items-center space-x-2">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                    <span className="text-sm text-gray-500">分析中...</span>
+                    <span className="text-sm text-gray-500">Analyzing...</span>
                   </div>
                 )}
               </div>
@@ -2651,7 +2648,7 @@ export const CircuitVisualization = () => {
               <div className="flex items-center justify-center py-8">
                 <div className="text-center">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                  <p className="text-gray-600">正在运行特征干预分析...</p>
+                  <p className="text-gray-600">Running feature intervention analysis...</p>
                 </div>
               </div>
             ) : tokenPredictions ? (
@@ -2663,24 +2660,24 @@ export const CircuitVisualization = () => {
                       <span className="ml-1 font-medium">{Number(steeringScale).toFixed(2)}</span>
                     </div>
                     <div>
-                      <span className="text-gray-600">合法移动数:</span>
+                      <span className="text-gray-600">Total legal moves:</span>
                       <span className="ml-1 font-medium">{tokenPredictions.statistics?.total_legal_moves}</span>
                     </div>
                     <div>
-                      <span className="text-gray-600">平均概率差:</span>
+                      <span className="text-gray-600">Average probability difference:</span>
                       <span className="ml-1 font-medium">{tokenPredictions.statistics?.avg_prob_diff?.toFixed(4)}</span>
                     </div>
                     <div>
-                      <span className="text-gray-600">平均Logit差:</span>
+                      <span className="text-gray-600">Average Logit difference:</span>
                       <span className="ml-1 font-medium">{tokenPredictions.statistics?.avg_logit_diff?.toFixed(4)}</span>
                     </div>
                     <div>
-                      <span className="text-gray-600">原始Value:</span>
+                      <span className="text-gray-600">Original Value:</span>
                       <span className="ml-1 font-medium">{tokenPredictions.statistics?.original_value?.toFixed(4)}</span>
                     </div>
                     <div>
                       <span className={`text-gray-600 ${tokenPredictions.statistics?.value_diff > 0 ? 'text-green-600' : tokenPredictions.statistics?.value_diff < 0 ? 'text-red-600' : ''}`}>
-                        Value变化:
+                        Value change:
                         <span className="ml-1 font-medium">
                           {tokenPredictions.statistics?.value_diff > 0 ? '+' : ''}{tokenPredictions.statistics?.value_diff?.toFixed(4)}
                         </span>
@@ -2689,23 +2686,22 @@ export const CircuitVisualization = () => {
                   </div>
                 </div>
 
-                {/* 概率差异最大前5（增加最多） */}
                 {tokenPredictions.promoting_moves && tokenPredictions.promoting_moves.length > 0 && (
                   <div className="bg-white rounded-lg p-3 border">
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">概率差异最大（增加最多）Top 5</h4>
+                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Probability difference maximum (increase most) Top 5</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
                       {tokenPredictions.promoting_moves.map((move: any, index: number) => (
                         <div key={index} className="bg-gray-50 rounded p-3 border">
                           <div className="text-center">
                             <div className="text-lg font-bold text-gray-800 mb-1">{move.uci}</div>
                             <div className="text-xs text-gray-600 space-y-1">
-                              <div>排名: #{index + 1}</div>
-                              <div>概率差: <span className="font-medium">{formatProbability(move.prob_diff)}</span></div>
-                              <div>原始概率: {formatProbability(move.original_prob)}</div>
-                              <div>修改后概率: {formatProbability(move.modified_prob)}</div>
-                              <div>Logit差: {move.diff?.toFixed(4)}</div>
-                              <div>原始Logit: {move.original_logit?.toFixed(4)}</div>
-                              <div>修改后Logit: {move.modified_logit?.toFixed(4)}</div>
+                              <div>Rank: #{index + 1}</div>
+                              <div>Probability difference: <span className="font-medium">{formatProbability(move.prob_diff)}</span></div>
+                              <div>Original probability: {formatProbability(move.original_prob)}</div>
+                              <div>Modified probability: {formatProbability(move.modified_prob)}</div>
+                              <div>Logit difference: {move.diff?.toFixed(4)}</div>
+                              <div>Original Logit: {move.original_logit?.toFixed(4)}</div>
+                              <div>Modified Logit: {move.modified_logit?.toFixed(4)}</div>
                             </div>
                           </div>
                         </div>
@@ -2717,20 +2713,20 @@ export const CircuitVisualization = () => {
                 {/* 概率差异最小前5（减少最多，负数最小） */}
                 {tokenPredictions.inhibiting_moves && tokenPredictions.inhibiting_moves.length > 0 && (
                   <div className="bg-white rounded-lg p-3 border">
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">概率差异最小（减少最多）Top 5</h4>
+                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Probability difference minimum (decrease most) Top 5</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
                       {tokenPredictions.inhibiting_moves.map((move: any, index: number) => (
                         <div key={index} className="bg-gray-50 rounded p-3 border">
                           <div className="text-center">
                             <div className="text-lg font-bold text-gray-800 mb-1">{move.uci}</div>
                             <div className="text-xs text-gray-600 space-y-1">
-                              <div>排名: #{index + 1}</div>
-                              <div>概率差: <span className="font-medium">{formatProbability(move.prob_diff)}</span></div>
-                              <div>原始概率: {formatProbability(move.original_prob)}</div>
-                              <div>修改后概率: {formatProbability(move.modified_prob)}</div>
-                              <div>Logit差: {move.diff?.toFixed(4)}</div>
-                              <div>原始Logit: {move.original_logit?.toFixed(4)}</div>
-                              <div>修改后Logit: {move.modified_logit?.toFixed(4)}</div>
+                              <div>Rank: #{index + 1}</div>
+                              <div>Probability difference: <span className="font-medium">{formatProbability(move.prob_diff)}</span></div>
+                              <div>Original probability: {formatProbability(move.original_prob)}</div>
+                              <div>Modified probability: {formatProbability(move.modified_prob)}</div>
+                              <div>Logit difference: {move.diff?.toFixed(4)}</div>
+                              <div>Original Logit: {move.original_logit?.toFixed(4)}</div>
+                              <div>Modified Logit: {move.modified_logit?.toFixed(4)}</div>
                             </div>
                           </div>
                         </div>
@@ -2741,8 +2737,8 @@ export const CircuitVisualization = () => {
               </div>
             ) : (
               <div className="text-center py-8 text-gray-500">
-                <p>点击"开始分析"按钮以运行Token Predictions分析</p>
-                <p className="text-sm mt-2">请先在上方加载 TC/LoRSA 组合（SaeComboLoader）</p>
+                <p>Click "Start Analysis" button to run Token Predictions analysis</p>
+                <p className="text-sm mt-2">Please load TC/LoRSA combination (SaeComboLoader) above</p>
               </div>
             )}
           </div>
@@ -2754,7 +2750,7 @@ export const CircuitVisualization = () => {
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold">Feature Interpretation Editor</h3>
               <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">节点: {clickedId}</span>
+                <span className="text-sm text-gray-600">Node: {clickedId}</span>
                 {nodeActivationData.nodeType && (
                   <span className="px-2 py-1 bg-blue-100 text-blue-800 text-sm font-medium rounded-full">
                     {nodeActivationData.nodeType.toUpperCase()}
@@ -2763,20 +2759,19 @@ export const CircuitVisualization = () => {
               </div>
             </div>
             
-            {/* 始终显示编辑器，无论clerp是否存在或为空 */}
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-medium text-gray-700">
-                  Feature Interpretation (可编辑)
+                  Feature Interpretation (Editable)
                   {nodeActivationData.clerp === undefined && (
-                    <span className="text-xs text-gray-500 ml-2">(节点暂无interpretation字段，可新建)</span>
+                    <span className="text-xs text-gray-500 ml-2">(Node has no interpretation field, you can create a new one)</span>
                   )}
                   {nodeActivationData.clerp === '' && (
-                    <span className="text-xs text-gray-500 ml-2">(当前为空，可编辑)</span>
+                    <span className="text-xs text-gray-500 ml-2">(Currently empty)</span>
                   )}
                 </label>
                 <div className="text-xs text-gray-500">
-                  字符数: {editingClerp.length}
+                  Character count: {editingClerp.length}
                 </div>
               </div>
               <textarea
@@ -2785,8 +2780,8 @@ export const CircuitVisualization = () => {
                 className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
                 placeholder={
                   nodeActivationData.clerp === undefined 
-                    ? "该节点暂无interpretation字段，您可以在此输入新的interpretation内容..." 
-                    : "输入或编辑节点的interpretation内容..."
+                    ? "No interpretation" 
+                    : "Enter or edit node interpretation content..."
                 }
               />
               <div className="flex justify-end space-x-2">
@@ -2795,11 +2790,11 @@ export const CircuitVisualization = () => {
                   className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
                   disabled={isSaving}
                 >
-                  重置
+                  Reset
                 </button>
                 {(() => {
                   const isDisabled = isSaving || editingClerp.trim() === (nodeActivationData.clerp || '');
-                  console.log('🔍 按钮状态调试:', {
+                  console.log('Button state debugging:', {
                     isSaving,
                     editingClerpTrimmed: editingClerp.trim(),
                     nodeActivationDataClerp: nodeActivationData.clerp,
@@ -2813,51 +2808,50 @@ export const CircuitVisualization = () => {
                       onClick={handleSaveClerp}
                       disabled={isDisabled}
                       className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
-                      title="保存更改并自动下载更新后的文件到Downloads文件夹"
+                      title="Save changes and automatically download updated file to Downloads folder"
                     >
                       {isSaving && (
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                       )}
-                      {isSaving ? '保存中...' : '保存并下载'}
+                      {isSaving ? 'Saving...' : 'Save and Download'}
                     </button>
                   );
                 })()}
               </div>
               {editingClerp.trim() !== (nodeActivationData.clerp || '') && (
                 <div className="text-xs text-orange-600 bg-orange-50 p-2 rounded">
-                  ⚠️ 内容已修改，请点击"保存并下载"以保存更改
+                  ⚠️ Content modified, please click "Save and Download" to save changes
                 </div>
               )}
               
-              {/* 显示当前状态信息 */}
               <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
                 <div className="flex justify-between">
                   <span>
-                    原始状态: {
+                    Original state: {
                       nodeActivationData.clerp === undefined 
-                        ? '无interpretation字段' 
+                        ? 'No interpretation field' 
                         : nodeActivationData.clerp === '' 
-                          ? '空字符串' 
-                          : `有内容 (${nodeActivationData.clerp.length} 字符)`
+                          ? 'Empty string' 
+                          : `Has content (${nodeActivationData.clerp.length} characters)`
                     }
                   </span>
                   <span>
-                    当前编辑: {editingClerp === '' ? '空' : `${editingClerp.length} 字符`}
+                    Current edit: {editingClerp === '' ? 'Empty' : `${editingClerp.length} characters`}
                   </span>
                 </div>
               </div>
               
               {/* 使用说明 */}
               <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded border-l-4 border-blue-200">
-                <div className="font-medium mb-1">💡 文件更新工作流程:</div>
+                <div className="font-medium mb-1">💡 File update workflow:</div>
                 <ol className="list-decimal list-inside space-y-1 text-blue-700">
-                  <li>编辑interpretation内容后点击"保存并下载"</li>
-                  <li>更新后的文件会自动下载到Downloads文件夹</li>
-                  <li>用新文件替换原文件，或重新拖拽到此页面</li>
-                  <li>文件名包含时间戳，避免意外覆盖</li>
+                  <li>Edit interpretation content then click "Save and Download"</li>
+                  <li>Updated file will be automatically downloaded to Downloads folder</li>
+                  <li>Replace original file with new file, or drag and drop again to this page</li>
+                  <li>File name includes timestamp to avoid accidental overwrite</li>
                 </ol>
                 <div className="mt-2 text-xs">
-                  <strong>提示:</strong> 由于浏览器安全限制，无法直接修改原文件，但下载的文件包含所有更改。
+                  <strong>Tip:</strong> Due to browser security restrictions, cannot directly modify original file, but downloaded file contains all changes.
                 </div>
               </div>
             </div>
@@ -2866,21 +2860,18 @@ export const CircuitVisualization = () => {
 
         {/* Bottom Row: Feature Card below Link Graph Container */}
         {clickedId && displayLinkGraphData && (() => {
-          // 获取当前选中节点的信息
           const currentNode = displayLinkGraphData.nodes.find(node => node.nodeId === clickedId);
           
           if (!currentNode) {
             return null;
           }
           
-          // 从node_id解析真正的feature ID (格式: layer_featureId_ctxIdx)
-          // 注意：layer需要除以2得到实际的模型层数，因为M和A分别占一层
           const parseNodeId = (nodeId: string) => {
             const parts = nodeId.split('_');
             if (parts.length >= 2) {
               const rawLayer = parseInt(parts[0]) || 0;
               return {
-                layerIdx: Math.floor(rawLayer / 2), // 除以2得到实际模型层数
+                layerIdx: Math.floor(rawLayer / 2),
                 featureIndex: parseInt(parts[1]) || 0
               };
             }
@@ -2890,8 +2881,7 @@ export const CircuitVisualization = () => {
           const { layerIdx, featureIndex } = parseNodeId(currentNode.nodeId);
           const isLorsa = currentNode.feature_type?.toLowerCase() === 'lorsa';
           
-          // 调试节点连接信息
-          console.log('🔍 节点连接调试:', {
+          console.log('Node connection debugging:', {
             nodeId: currentNode.nodeId,
             hasSourceLinks: !!currentNode.sourceLinks,
             sourceLinksCount: currentNode.sourceLinks?.length || 0,
@@ -2900,7 +2890,6 @@ export const CircuitVisualization = () => {
             totalLinksInData: displayLinkGraphData.links.length
           });
           
-          // 使用辅助函数获取字典名
           const dictionary = getDictionaryName(layerIdx, isLorsa);
           
           const nodeTypeDisplay = isLorsa ? 'LORSA' : 'SAE';
@@ -2918,17 +2907,16 @@ export const CircuitVisualization = () => {
                       </span>
                     </div>
                   )}
-                  {/* 跳转到Feature页面的链接 */}
                   {currentNode && featureIndex !== undefined && (
                     <Link
                       to={`/features?dictionary=${encodeURIComponent(dictionary)}&featureIndex=${featureIndex}`}
                       className="inline-flex items-center px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 transition-colors"
-                      title={`跳转到L${layerIdx} ${nodeTypeDisplay} Feature #${featureIndex}`}
+                      title={`Go to L${layerIdx} ${nodeTypeDisplay} Feature #${featureIndex}`}
                     >
                       <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                       </svg>
-                      查看L{layerIdx} {nodeTypeDisplay} #{featureIndex}
+                      View L{layerIdx} {nodeTypeDisplay} #{featureIndex}
                     </Link>
                   )}
                 </div>

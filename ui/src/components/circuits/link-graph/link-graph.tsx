@@ -212,14 +212,14 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
   if (!positionedNodes.length || !x || !y) {
     return (
       <div ref={containerRef} className="link-graph-container">
-        <div>Loading...</div>
+        <div className="flex items-center justify-center h-full text-slate-500">Loading circuit graph...</div>
       </div>
     );
   }
 
   return (
-    <div 
-      ref={containerRef} 
+    <div
+      ref={containerRef}
       className="link-graph-container"
     >
       <svg
@@ -232,7 +232,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
             onNodeClick("", false);
           }
         }}
-        style={{ position: "relative", zIndex: 1 }}
+        style={{ position: "relative", zIndex: 1, pointerEvents: "auto" }}
       >
         {/* Atomic components - each manages its own rendering */}
         <RowBackgrounds 
