@@ -928,7 +928,6 @@ export const CircuitVisualization = () => {
       const pos = Number(parts[2]) || 0;
       const layerIdx = Math.floor(rawLayer / 2);
       
-      // 确定节点类型
       const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
       const featureType = currentNode?.feature_type?.toLowerCase() === 'lorsa' ? 'lorsa' : 'transcoder';
       
@@ -1007,12 +1006,10 @@ export const CircuitVisualization = () => {
     
     setSyncingToBackend(true);
     try {
-      // 从metadata中提取analysis_name
       const metadata = (linkGraphData?.metadata || originalCircuitJson?.metadata) as any;
       const lorsaAnalysisName = metadata?.lorsa_analysis_name;
       const tcAnalysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
       
-      // 准备节点数据
       const nodes = originalCircuitJson.nodes.map((node: any) => {
         const parts = node.node_id.split('_');
         const rawLayer = parseInt(parts[0]) || 0;
@@ -1028,7 +1025,7 @@ export const CircuitVisualization = () => {
         };
       });
       
-      console.log('📤 开始同步clerps到后端:', {
+      console.log('Sync interpretations to backend:', {
         totalNodes: nodes.length,
         nodesWithClerp: nodes.filter((n: any) => n.clerp).length,
         lorsaAnalysisName,
@@ -1056,26 +1053,25 @@ export const CircuitVisualization = () => {
       
       const result = await response.json();
       
-      console.log('✅ 同步完成:', result);
+      console.log('✅ Synchronization completed:', result);
       
       alert(
-        `✅ Clerp同步到后端完成！\n\n` +
-        `📊 统计:\n` +
-        `- 总节点数: ${result.total_nodes}\n` +
-        `- 成功同步: ${result.synced}\n` +
-        `- 跳过(无clerp): ${result.skipped}\n` +
-        `- 失败: ${result.errors}`
+        `Interpretation synchronized to backend successfully!\n\n` +
+        `Statistics:\n` +
+        `- Total nodes: ${result.total_nodes}\n` +
+        `- Successfully synchronized: ${result.synced}\n` +
+        `- Skipped (no clerp): ${result.skipped}\n` +
+        `- Failed: ${result.errors}`
       );
       
     } catch (error) {
-      console.error('❌ 同步失败:', error);
-      alert(`❌ 同步失败: ${error}`);
+      console.error('Synchronization failed:', error);
+      alert(`Synchronization failed: ${error}`);
     } finally {
       setSyncingToBackend(false);
     }
   }, [originalCircuitJson, linkGraphData]);
 
-  // 从后端interpretations同步到clerps
   const syncClerpsFromBackend = useCallback(async () => {
     if (!originalCircuitJson || !originalCircuitJson.nodes) {
       alert("No node data available");
@@ -1084,12 +1080,11 @@ export const CircuitVisualization = () => {
     
     setSyncingFromBackend(true);
     try {
-      // 从metadata中提取analysis_name
       const metadata = (linkGraphData?.metadata || originalCircuitJson?.metadata) as any;
       const lorsaAnalysisName = metadata?.lorsa_analysis_name;
       const tcAnalysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
       
-      // 准备节点数据
+      // Prepare node data
       const nodes = originalCircuitJson.nodes.map((node: any) => {
         const parts = node.node_id.split('_');
         const rawLayer = parseInt(parts[0]) || 0;
@@ -1104,7 +1099,7 @@ export const CircuitVisualization = () => {
         };
       });
       
-      console.log('📥 开始从后端同步interpretations到clerps:', {
+      console.log('Sync interpretations to clerps from backend:', {
         totalNodes: nodes.length,
         lorsaAnalysisName,
         tcAnalysisName
@@ -1131,12 +1126,12 @@ export const CircuitVisualization = () => {
       
       const result = await response.json();
       
-      console.log('✅ 同步完成:', result);
+      console.log('✅ Synchronization completed:', result);
       
-      // 更新原始JSON数据
+      // Update original JSON data
       const updatedCircuitJson = JSON.parse(JSON.stringify(originalCircuitJson));
       
-      // 根据返回的updated_nodes更新clerp
+      // Update clerp based on returned updated_nodes
       const updatedNodesMap = new Map(
         result.updated_nodes.map((n: any) => [n.node_id, n.clerp])
       );
@@ -1152,33 +1147,32 @@ export const CircuitVisualization = () => {
         }
       });
       
-      // 更新状态
+      // Update state
       setOriginalCircuitJson(updatedCircuitJson);
       setUpdateCounter(prev => prev + 1);
       setHasUnsavedChanges(true);
       
       alert(
-        `✅ 从后端同步Interpretation完成！\n\n` +
-        `📊 统计:\n` +
-        `- 总节点数: ${result.total_nodes}\n` +
-        `- 找到interpretation: ${result.found}\n` +
-        `- 未找到: ${result.not_found}\n` +
-        `- 实际更新: ${updatedCount}\n\n` +
-        `💡 建议: 点击"导出"按钮保存更新后的文件`
+        `Interpretation synchronized from backend successfully!\n\n` +
+        `Statistics:\n` +
+        `- Total nodes: ${result.total_nodes}\n` +
+        `- Found interpretation: ${result.found}\n` +
+        `- Not found: ${result.not_found}\n` +
+        `- Actual updated: ${updatedCount}\n\n` +
+        `Suggestion: Click "Export" button to save the updated file`
       );
       
     } catch (error) {
-      console.error('❌ 同步失败:', error);
-      alert(`❌ 同步失败: ${error}`);
+      console.error('Synchronization failed:', error);
+      alert(`Synchronization failed: ${error}`);
     } finally {
       setSyncingFromBackend(false);
     }
   }, [originalCircuitJson, linkGraphData, setOriginalCircuitJson, setUpdateCounter, setHasUnsavedChanges]);
 
-  // 检查dense features的函数
   const checkDenseFeatures = useCallback(async () => {
     if (!linkGraphData || !linkGraphData.nodes) {
-      console.warn('⚠️ 没有可用的节点数据');
+      console.warn('No available node data');
       return;
     }
     
@@ -1186,9 +1180,9 @@ export const CircuitVisualization = () => {
     try {
       const threshold = denseThreshold === '' ? null : parseInt(denseThreshold);
       
-      // 从linkGraphData中提取所有节点的信息
+      // Extract all node information from linkGraphData
       const nodes = linkGraphData.nodes.map(node => {
-        // 从nodeId解析layer和feature
+        // Parse layer and feature from nodeId
         const parts = node.nodeId.split('_');
         const rawLayer = parseInt(parts[0]) || 0;
         const featureIdx = parseInt(parts[1]) || 0;
@@ -1202,22 +1196,22 @@ export const CircuitVisualization = () => {
         };
       });
       
-      // 从metadata中提取模型名称并转换为analysis_name
+      // Extract model name from metadata and convert to analysis_name
       const metadata = (linkGraphData.metadata || {}) as any;
       const lorsaAnalysisNameRaw = metadata.lorsa_analysis_name;
       const tcAnalysisNameRaw = metadata.tc_analysis_name || metadata.clt_analysis_name;
-      // 从metadata中读取sae_series，如果没有则使用默认值
+      // Read sae_series from metadata, use default value if not present
       const saeSeries = (metadata as any).sae_series || 'BT4-exp128';
       
-      // 根据analysis_name构建模板
-      // 格式：如果analysis_name是 "BT4_lorsa_k30_e16"，模板应该是 "BT4_lorsa_L{}A_k30_e16"
-      // 如果analysis_name是 "BT4_lorsa"（默认），模板应该是 "BT4_lorsa_L{}A"
+      // Build template based on analysis_name
+      // Format: If analysis_name is "BT4_lorsa_k30_e16", template should be "BT4_lorsa_L{}A_k30_e16"
+      // If analysis_name is "BT4_lorsa" (default), template should be "BT4_lorsa_L{}A"
       let lorsaAnalysisName = undefined;
       let tcAnalysisName = undefined;
       
       if (lorsaAnalysisNameRaw) {
         if (lorsaAnalysisNameRaw.includes('BT4_lorsa')) {
-          // 提取后缀（如果有）："BT4_lorsa_k30_e16" -> "k30_e16"
+          // Extract suffix (if present): "BT4_lorsa_k30_e16" -> "k30_e16"
           const suffix = lorsaAnalysisNameRaw.replace('BT4_lorsa', '').replace(/^_/, '');
           if (suffix) {
             lorsaAnalysisName = `BT4_lorsa_L{}A_${suffix}`;
@@ -1231,7 +1225,7 @@ export const CircuitVisualization = () => {
       
       if (tcAnalysisNameRaw) {
         if (tcAnalysisNameRaw.includes('BT4_tc')) {
-          // 提取后缀（如果有）："BT4_tc_k30_e16" -> "k30_e16"
+          // Extract suffix (if present): "BT4_tc_k30_e16" -> "k30_e16"
           const suffix = tcAnalysisNameRaw.replace('BT4_tc', '').replace(/^_/, '');
           if (suffix) {
             tcAnalysisName = `BT4_tc_L{}M_${suffix}`;
@@ -1243,7 +1237,7 @@ export const CircuitVisualization = () => {
         }
       }
       
-      console.log('🔍 开始检查dense features:', {
+      console.log('Check dense features:', {
         totalNodes: nodes.length,
         threshold: threshold,
         saeSeries: saeSeries,
@@ -1277,7 +1271,7 @@ export const CircuitVisualization = () => {
       
       const result = await response.json();
       
-      console.log('✅ Dense features检查完成:', {
+      console.log('✅ Dense features checked successfully:', {
         denseNodeCount: result.dense_nodes.length,
         totalNodes: result.total_nodes,
         threshold: result.threshold
@@ -1286,14 +1280,14 @@ export const CircuitVisualization = () => {
       setDenseNodes(new Set(result.dense_nodes));
       
     } catch (error) {
-      console.error('❌ 检查dense features失败:', error);
-      alert(`检查dense features失败: ${error}`);
+      console.error('Check dense features failed:', error);
+      alert(`Check dense features failed: ${error}`);
     } finally {
       setCheckingDenseFeatures(false);
     }
   }, [linkGraphData, denseThreshold]);
 
-  // 应用dense节点颜色覆盖
+  // Apply dense node color overlay
   const applyDenseNodeColors = useCallback((data: any) => {
     if (!data || !data.nodes || denseNodes.size === 0) {
       return data;
@@ -1305,8 +1299,8 @@ export const CircuitVisualization = () => {
         if (denseNodes.has(node.nodeId)) {
           return {
             ...node,
-            nodeColor: '#000000',  // 黑色
-            isDense: true  // 标记为dense节点
+            nodeColor: '#000000',  // Black
+            isDense: true 
           };
         }
         return node;
@@ -1314,7 +1308,7 @@ export const CircuitVisualization = () => {
     };
   }, [denseNodes]);
 
-  // 应用inactive节点颜色覆盖（金色）
+  // Apply inactive node color overlay (golden)
   const applyInactiveNodeColors = useCallback((data: any) => {
     if (!data || !data.nodes || inactiveNodes.size === 0) {
       return data;
@@ -1326,8 +1320,8 @@ export const CircuitVisualization = () => {
         if (inactiveNodes.has(node.nodeId)) {
           return {
             ...node,
-            nodeColor: '#FFD700',  // 金色
-            isInactive: true  // 标记为inactive节点
+            nodeColor: '#FFD700',  // Golden
+            isInactive: true
           };
         }
         return node;
@@ -1335,16 +1329,12 @@ export const CircuitVisualization = () => {
     };
   }, [inactiveNodes]);
 
-  // 应用 position 映射高亮覆盖
   const applyPositionMappingHighlights = useCallback((data: any) => {
     if (!enablePositionMapping) return data;
     if (!data || !data.nodes || !data.metadata?.sourceFileNames || data.metadata.sourceFileNames.length <= 1) {
       return data;
     }
 
-    // 仅对“每个文件所选 position”上的 feature 节点做跨文件对齐：
-    // key = (rawLayer, featureOrHead, feature_type_norm)
-    // 若同 key 在 >=2 个 source 中出现，则这些节点都高亮
     type Hit = { nodeId: string; sourceIdx: number };
     const buckets = new Map<string, Hit[]>();
 
@@ -1352,7 +1342,6 @@ export const CircuitVisualization = () => {
       const nodeId = String(node.nodeId);
       const { rawLayer, featureOrHead, ctxIdx } = parseNodeIdParts(nodeId);
 
-      // 仅针对 feature 节点：排除 embedding/logit/error
       const ftRaw = typeof node.feature_type === "string" ? node.feature_type : "";
       const ft = ftRaw.toLowerCase();
       if (ft.includes("embedding") || ft.includes("logit") || ft.includes("error")) continue;
@@ -1386,7 +1375,6 @@ export const CircuitVisualization = () => {
     return {
       ...data,
       nodes: (data.nodes as any[]).map((node) => {
-        // Dense 节点优先级最高：保持黑色，不允许被 position 映射高亮覆盖
         if ((node as any)?.isDense === true) {
           return node;
         }
@@ -1402,7 +1390,6 @@ export const CircuitVisualization = () => {
     };
   }, [enablePositionMapping, parseNodeIdParts, positionMappingSelections, POSITION_MAPPING_HIGHLIGHT_COLOR]);
 
-  // 获取应用了dense和inactive颜色的图数据
   const displayLinkGraphData = useMemo(() => {
     let data = linkGraphData;
     data = applyDenseNodeColors(data);
@@ -1411,24 +1398,24 @@ export const CircuitVisualization = () => {
     return data;
   }, [linkGraphData, applyDenseNodeColors, applyInactiveNodeColors, applyPositionMappingHighlights]);
 
-  // 统计当前高亮命中的节点数（用于给用户反馈“有没有生效”）
+  // Count the number of nodes currently highlighted (for user feedback "has it worked")
   const positionMappedCount = useMemo(() => {
     const names = (displayLinkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
     if (!enablePositionMapping || !names || names.length <= 1) return 0;
     return (displayLinkGraphData?.nodes || []).filter((n: any) => (n as any)?.isPositionMapped === true).length;
   }, [displayLinkGraphData, enablePositionMapping]);
 
-  // 比较FEN激活差异
+  // Compare FEN activation differences
   const compareFenActivations = useCallback(async () => {
     if (!originalCircuitJson || !perturbedFen.trim()) {
-      alert('请先上传graph文件并输入perturbed FEN');
+      alert('Please upload graph file and input perturbed FEN');
       return;
     }
 
-    // 获取原始FEN
+    // Get original FEN
     const originalFen = extractFenFromPrompt();
     if (!originalFen) {
-      alert('无法从graph文件中提取原始FEN');
+      alert('Cannot extract original FEN from graph file');
       return;
     }
 
@@ -1446,17 +1433,17 @@ export const CircuitVisualization = () => {
     };
 
     try {
-      addLog('开始比较FEN激活差异...');
-      addLog(`原始FEN: ${originalFen}`);
-      addLog(`扰动FEN: ${perturbedFen}`);
+      addLog('Comparing FEN activation differences...');
+      addLog(`Original FEN: ${originalFen}`);
+      addLog(`Perturbed FEN: ${perturbedFen}`);
 
-      // 从metadata中提取模型名称
+      // Extract model name from metadata
       const metadata = (linkGraphData?.metadata || originalCircuitJson?.metadata) as any;
       const modelName = metadata?.model_name || 'lc0/BT4-1024x15x32h';
 
-      addLog(`使用模型: ${modelName}`);
+      addLog(`Using model: ${modelName}`);
 
-      // 调用后端API
+      // Call backend API
       const response = await fetch(
         `${import.meta.env.VITE_BACKEND_URL}/circuit/compare_fen_activations`,
         {
@@ -1483,54 +1470,54 @@ export const CircuitVisualization = () => {
             errorMessage = errorJson.detail;
           }
         } catch {
-          // 如果无法解析JSON，使用原始错误文本
+          // If cannot parse JSON, use original error text
         }
         throw new Error(errorMessage);
       }
 
       const result = await response.json();
       
-      addLog(`✅ 比较完成:`);
-      addLog(`   - 总节点数: ${result.total_nodes}`);
-      addLog(`   - 未激活节点数: ${result.inactive_nodes_count}`);
+      addLog(`✅ Comparison completed:`);
+      addLog(`   - Total nodes: ${result.total_nodes}`);
+      addLog(`   - Inactive nodes: ${result.inactive_nodes_count}`);
 
-      // 更新inactive nodes集合
+      // Update inactive nodes set
       const inactiveNodeIds = new Set<string>(
         result.inactive_nodes.map((node: any) => String(node.node_id))
       );
       setInactiveNodes(inactiveNodeIds);
 
-      // 显示统计信息
+      // Display statistics
       if (result.statistics) {
-        addLog(`按层统计:`);
+        addLog(`By layer statistics:`);
         Object.entries(result.statistics.by_layer).forEach(([layer, count]) => {
-          addLog(`   Layer ${layer}: ${count} 个节点`);
+          addLog(`   Layer ${layer}: ${count} nodes`);
         });
-        addLog(`按类型统计:`);
+        addLog(`By type statistics:`);
         Object.entries(result.statistics.by_type).forEach(([type, count]) => {
-          addLog(`   ${type}: ${count} 个节点`);
+          addLog(`   ${type}: ${count} nodes`);
         });
       }
 
       alert(
-        `✅ FEN激活差异比较完成！\n\n` +
-        `📊 统计:\n` +
-        `- 总节点数: ${result.total_nodes}\n` +
-        `- 未激活节点数: ${result.inactive_nodes_count}\n\n` +
-        `💡 未激活的节点已在图中标记为金色`
+        `FEN activation difference comparison completed!\n\n` +
+        `Statistics:\n` +
+        `- Total nodes: ${result.total_nodes}\n` +
+        `- Inactive nodes: ${result.inactive_nodes_count}\n\n` +
+        `Inactive nodes are marked in golden color in the graph`
       );
 
     } catch (error) {
-      console.error('❌ 比较失败:', error);
+      console.error('Comparison failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      addLog(`❌ 比较失败: ${errorMessage}`);
-      alert(`比较失败: ${errorMessage}`);
+      addLog(`Comparison failed: ${errorMessage}`);
+      alert(`Comparison failed: ${errorMessage}`);
     } finally {
       setIsComparingFens(false);
     }
   }, [originalCircuitJson, perturbedFen, linkGraphData, extractFenFromPrompt]);
 
-  // 递归查找某个节点的所有上游节点（包括它们的上游）
+  // Recursively find all upstream nodes of a node (including their upstream nodes)
   const findUpstreamNodes = useCallback((nodeId: string, graphData: any): Set<string> => {
     const upstreamNodes = new Set<string>();
     const visited = new Set<string>();
@@ -1540,10 +1527,10 @@ export const CircuitVisualization = () => {
       visited.add(currentNodeId);
       upstreamNodes.add(currentNodeId);
       
-      // 查找指向当前节点的所有边（入边）
+      // Find all edges pointing to the current node (incoming edges)
       const incomingLinks = graphData.links.filter((link: any) => link.target === currentNodeId);
       
-      // 递归查找每个源节点的上游
+      // Recursively find the upstream nodes of each source node
       for (const link of incomingLinks) {
         traverse(link.source);
       }
@@ -1553,21 +1540,21 @@ export const CircuitVisualization = () => {
     return upstreamNodes;
   }, []);
 
-  // 创建子图数据
+  // Create subgraph data
   const createSubgraph = useCallback((rootNodeId: string, graphData: any) => {
     const upstreamNodeIds = findUpstreamNodes(rootNodeId, graphData);
     
-    // 过滤节点：只保留上游节点
+    // Filter nodes: only keep upstream nodes
     const subgraphNodes = graphData.nodes.filter((node: any) => 
       upstreamNodeIds.has(node.nodeId)
     );
     
-    // 过滤边：只保留两端都在子图中的边
+    // Filter edges: only keep edges where both ends are in the subgraph
     const subgraphLinks = graphData.links.filter((link: any) => 
       upstreamNodeIds.has(link.source) && upstreamNodeIds.has(link.target)
     );
     
-    // 创建子图数据结构
+    // Create subgraph data structure
     const subgraph = {
       nodes: subgraphNodes,
       links: subgraphLinks,
@@ -1583,7 +1570,7 @@ export const CircuitVisualization = () => {
       }
     };
     
-    console.log('🔍 创建子图:', {
+    console.log('Create subgraph:', {
       rootNodeId,
       totalUpstreamNodes: upstreamNodeIds.size,
       subgraphNodes: subgraphNodes.length,
@@ -1595,7 +1582,7 @@ export const CircuitVisualization = () => {
     return subgraph;
   }, [findUpstreamNodes]);
 
-  // 显示子图
+  // Display subgraph
   const handleShowSubgraph = useCallback(() => {
     if (!clickedId || !displayLinkGraphData) return;
     
@@ -1604,41 +1591,41 @@ export const CircuitVisualization = () => {
     setSubgraphRootNodeId(clickedId);
     setShowSubgraph(true);
     
-    console.log('🎯 显示子图模式:', {
+    console.log('Display subgraph mode:', {
       rootNodeId: clickedId,
       nodeCount: subgraph.nodes.length,
       linkCount: subgraph.links.length
     });
   }, [clickedId, displayLinkGraphData, createSubgraph]);
 
-  // 退出子图模式
+  // Exit subgraph mode
   const handleExitSubgraph = useCallback(() => {
     setShowSubgraph(false);
     setSubgraphData(null);
     setSubgraphRootNodeId(null);
-    console.log('🔙 退出子图模式');
+    console.log('Exit subgraph mode');
   }, []);
 
-  // 保存子图为JSON文件
+  // Save subgraph as JSON file
   const handleSaveSubgraph = useCallback(() => {
     if (!subgraphData || !subgraphRootNodeId) return;
     
-    // 从原始数据中获取完整的节点信息（包括激活数据、z_pattern等）
+    // Get complete node information from original data (including activations, z_pattern, etc.)
     const enrichSubgraphWithOriginalData = (subgraph: any) => {
       if (!originalCircuitJson) return subgraph;
       
       const enrichedNodes = subgraph.nodes.map((node: any) => {
-        // 从原始JSON中查找对应的完整节点数据
+        // Find corresponding complete node data in original JSON
         const originalNodeData = getNodeActivationDataFromJson(originalCircuitJson, node.nodeId);
         
         return {
           ...node,
-          // 添加原始数据中的完整信息
+          // Add complete information from original data
           activations: originalNodeData.activations,
           zPatternIndices: originalNodeData.zPatternIndices,
           zPatternValues: originalNodeData.zPatternValues,
           clerp: originalNodeData.clerp,
-          // 保留所有原始字段
+          // Keep all original fields
           ...(originalCircuitJson.nodes?.find((n: any) => n.node_id === node.nodeId) || {})
         };
       });
@@ -1651,12 +1638,12 @@ export const CircuitVisualization = () => {
     
     const enrichedSubgraph = enrichSubgraphWithOriginalData(subgraphData);
     
-    // 生成文件名
+    // Generate file name
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const rootNodeForFilename = subgraphRootNodeId.replace(/[^a-zA-Z0-9]/g, '_');
     const fileName = `subgraph_${rootNodeForFilename}_${timestamp}.json`;
     
-    // 创建下载
+    // Create download
     const jsonString = JSON.stringify(enrichedSubgraph, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1669,7 +1656,7 @@ export const CircuitVisualization = () => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     
-    console.log('💾 子图已保存:', {
+    console.log('Subgraph saved:', {
       fileName,
       rootNodeId: subgraphRootNodeId,
       nodeCount: enrichedSubgraph.nodes.length,
@@ -1677,14 +1664,14 @@ export const CircuitVisualization = () => {
     });
     
     alert(
-      `✅ 子图已保存！\n\n` +
-      `📁 文件名: ${fileName}\n` +
-      `🎯 根节点: ${subgraphRootNodeId}\n` +
-      `📊 统计:\n` +
-      `  - 节点数: ${enrichedSubgraph.nodes.length}\n` +
-      `  - 边数: ${enrichedSubgraph.links.length}\n` +
-      `  - 包含完整激活数据和z_pattern信息\n\n` +
-      `💡 文件已保存到Downloads文件夹`
+      `Subgraph saved!\n\n` +
+      `File name: ${fileName}\n` +
+      `Root node: ${subgraphRootNodeId}\n` +
+      `Statistics:\n` +
+      `  - Node count: ${enrichedSubgraph.nodes.length}\n` +
+      `  - Edge count: ${enrichedSubgraph.links.length}\n` +
+      `  - Contains complete activation data and z_pattern information\n\n` +
+      `File saved to Downloads folder`
     );
     
   }, [subgraphData, subgraphRootNodeId, originalCircuitJson, getNodeActivationDataFromJson]);
@@ -1738,9 +1725,9 @@ export const CircuitVisualization = () => {
     );
   }
 
-  // 调试传递给ChessBoard的数据
+  // Debug data passed to ChessBoard
   if (clickedId && nodeActivationData) {
-    console.log('🎲 传递给ChessBoard的数据:', {
+    console.log('Data passed to ChessBoard:', {
       nodeId: clickedId,
       hasActivations: !!nodeActivationData.activations,
       activationsLength: nodeActivationData.activations?.length || 0,
@@ -1780,13 +1767,13 @@ export const CircuitVisualization = () => {
                   placeholder="Enter perturbed FEN..."
                   className="w-64 px-2 py-1 text-sm border border-gray-300 rounded"
                   disabled={isComparingFens}
-                  title="输入扰动后的FEN字符串，用于比较激活差异"
+                  title="Enter perturbed FEN string, for comparing activation differences"
                 />
                 <button
                   onClick={compareFenActivations}
                   disabled={isComparingFens || !perturbedFen.trim()}
                   className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
-                  title="比较原始FEN和扰动FEN的激活差异"
+                  title="Compare activation differences between original FEN and perturbed FEN"
                 >
                   {isComparingFens ? (
                     <>
@@ -1805,20 +1792,20 @@ export const CircuitVisualization = () => {
                 <button
                   onClick={() => setShowDiffingLogs(!showDiffingLogs)}
                   className="px-2 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
-                  title="显示/隐藏比较日志"
+                  title="Show/hide comparison logs"
                 >
                   {showDiffingLogs ? 'Hide Logs' : 'Show Logs'}
                 </button>
               </div>
             </div>
           )}
-          {/* Clerp同步控件 */}
+          {/* Clerp sync controls */}
           <div className="flex items-center space-x-2 px-3 py-1 bg-blue-50 rounded-md border border-blue-200">
             <button
               onClick={syncClerpsToBackend}
               disabled={syncingToBackend || !originalCircuitJson}
               className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
-              title="将JSON中所有节点的clerp同步到后端MongoDB的interpretation"
+              title="Synchronize clerp of all nodes in JSON to interpretation in backend MongoDB"
             >
               {syncingToBackend ? (
                 <>
@@ -1838,7 +1825,7 @@ export const CircuitVisualization = () => {
               onClick={syncClerpsFromBackend}
               disabled={syncingFromBackend || !originalCircuitJson}
               className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
-              title="从后端MongoDB读取interpretation并同步到JSON节点的clerp"
+              title="Read interpretation from backend MongoDB and synchronize to clerp of nodes in JSON"
             >
               {syncingFromBackend ? (
                 <>
@@ -1856,7 +1843,7 @@ export const CircuitVisualization = () => {
             </button>
           </div>
           
-          {/* Dense Feature检查控件 */}
+          {/* Dense Feature check controls */}
           <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-md">
             <label className="text-sm text-gray-700">Dense threshold:</label>
             <input
@@ -1865,13 +1852,13 @@ export const CircuitVisualization = () => {
               onChange={(e) => setDenseThreshold(e.target.value)}
               placeholder="No limit"
               className="w-24 px-2 py-1 text-sm border border-gray-300 rounded"
-              title="激活次数阈值，空表示无限大（所有节点保留）"
+              title="Activation threshold, empty means no limit (all nodes kept)"
             />
             <button
               onClick={checkDenseFeatures}
               disabled={checkingDenseFeatures}
               className="px-3 py-1 text-sm bg-purple-500 text-white rounded hover:bg-purple-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
-              title="检查哪些节点是dense feature"
+              title="Check which nodes are dense feature"
             >
               {checkingDenseFeatures ? (
                 <>
@@ -1889,7 +1876,7 @@ export const CircuitVisualization = () => {
             )}
           </div>
           
-          {/* 颜色-文件名图例（多文件时显示） */}
+          {/* Color-file name legend (displayed when multiple files) */}
           {displayLinkGraphData && displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
             <div className="hidden md:flex items-center space-x-3 mr-4">
               {displayLinkGraphData.metadata.sourceFileNames.map((name, idx) => (
@@ -1905,7 +1892,7 @@ export const CircuitVisualization = () => {
             </div>
           )}
 
-          {/* Position 映射高亮开关（多文件时显示） */}
+          {/* Position mapping highlight switch (displayed when multiple files) */}
           {displayLinkGraphData && displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
             <div className="flex flex-wrap items-center gap-2 px-3 py-1 bg-purple-50 rounded-md border border-purple-200">
               <label className="text-sm text-purple-800 font-medium flex items-center gap-2">
@@ -1917,7 +1904,7 @@ export const CircuitVisualization = () => {
                 Position mapping highlight
               </label>
               <span className="text-xs text-purple-700">
-                为每个文件选一个 pos（0-63），高亮“不同文件的不同 pos 上但同一 (layer, feature) 的节点”
+                Select one pos (0-63) for each file, highlight nodes on different pos but same (layer, feature) in different files
               </span>
               {enablePositionMapping && (
                 <span className="text-xs text-purple-700">
@@ -1933,7 +1920,7 @@ export const CircuitVisualization = () => {
               <button
                 onClick={handleQuickExport}
                 className="ml-2 px-2 py-1 bg-orange-200 hover:bg-orange-300 text-orange-900 rounded text-xs transition-colors"
-                title="立即导出所有更改"
+                title="Export all changes immediately"
               >
                 Export
               </button>
@@ -1961,17 +1948,17 @@ export const CircuitVisualization = () => {
         </div>
       </div>
 
-      {/* Chess Board Display - 单文件 */}
+      {/* Chess Board Display - Single file */}
       {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="flex justify-center gap-6 mb-6">
-          {/* Circuit棋盘状态 - 左侧 */}
+          {/* Circuit board state - left */}
           <div className="bg-white rounded-lg border shadow-sm p-4 pb-8">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-center flex-1">
                 Circuit Board State
                 {clickedId && displayActivationData && (
                   <span className="text-sm font-normal text-blue-600 ml-2">
-                    (节点: {clickedId}{displayActivationData.nodeType ? ` - ${displayActivationData.nodeType.toUpperCase()}` : ''})
+                    (Node: {clickedId}{displayActivationData.nodeType ? ` - ${displayActivationData.nodeType.toUpperCase()}` : ''})
                   </span>
                 )}
               </h3>
@@ -1984,7 +1971,7 @@ export const CircuitVisualization = () => {
                         ? 'bg-blue-500 text-white hover:bg-blue-600'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
-                    title={showAllPositions ? '显示单个位置的激活' : '显示所有位置的激活（合并）'}
+                    title={showAllPositions ? 'Single position activation' : 'All positions activation (merged)'}
                   >
                     {showAllPositions ? 'Single Position Mode' : 'All Positions Mode'}
                   </button>
@@ -2016,13 +2003,13 @@ export const CircuitVisualization = () => {
               <div className="text-center mb-2 text-sm text-purple-600">
                 {showAllPositions ? (
                   <>
-                    所有位置合并激活: {displayActivationData.activations.filter((v: number) => v !== 0).length} 个非零激活
+                    All positions merged activation: {displayActivationData.activations.filter((v: number) => v !== 0).length} non-zero activations
                   </>
                 ) : (
                   <>
-                    激活数据: {displayActivationData.activations.filter((v: number) => v !== 0).length} 个非零激活
+                    Activation data: {displayActivationData.activations.filter((v: number) => v !== 0).length} non-zero activations
                     {displayActivationData.zPatternIndices && displayActivationData.zPatternValues && 
-                      `, ${displayActivationData.zPatternValues.length} 个Z模式连接`
+                      `, ${displayActivationData.zPatternValues.length} Z pattern connections`
                     }
                   </>
                 )}
@@ -2045,15 +2032,15 @@ export const CircuitVisualization = () => {
             />
           </div>
 
-          {/* 自定义FEN分析 - 右侧 */}
+          {/* Custom FEN analysis - right */}
           {clickedId && (() => {
-            // 从 nodeId 解析出 layer 和 featureIndex
+            // Parse layer and featureIndex from nodeId
             const parts = clickedId.split('_');
             const rawLayer = parseInt(parts[0]) || 0;
             const featureIdx = parseInt(parts[1]) || 0;
             const layerIdx = Math.floor(rawLayer / 2);
             
-            // 确定节点类型和对应的字典名
+            // Determine node type and corresponding dictionary name
             const currentNode = displayLinkGraphData?.nodes.find(n => n.nodeId === clickedId);
             const isLorsa = currentNode?.feature_type?.toLowerCase() === 'lorsa';
             const dictionary = getDictionaryName(layerIdx, isLorsa);
@@ -2069,11 +2056,11 @@ export const CircuitVisualization = () => {
         </div>
       )}
 
-      {/* PosFeatureCard - 位置 Feature 分析 */}
+      {/* PosFeatureCard - Position Feature Analysis (TODO: not used) */}
       {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="w-full max-w-6xl mx-auto mb-6">
           <div className="bg-white rounded-lg border shadow-sm p-4">
-            <h3 className="text-lg font-semibold mb-4">位置 Feature 分析</h3>
+            <h3 className="text-lg font-semibold mb-4">Position Feature Analysis</h3>
             <div className="grid grid-cols-[auto_1fr_auto_auto_auto_auto] gap-4 items-center mb-4">
               <label className="font-bold">FEN:</label>
               <input
@@ -2082,7 +2069,7 @@ export const CircuitVisualization = () => {
                 readOnly
                 className="px-3 py-2 border rounded bg-gray-50"
               />
-              <label className="font-bold">层:</label>
+              <label className="font-bold">Layer:</label>
               <input
                 type="number"
                 min="0"
@@ -2091,15 +2078,15 @@ export const CircuitVisualization = () => {
                 onChange={(e) => setPosFeatureLayer(parseInt(e.target.value) || 0)}
                 className="w-20 px-3 py-2 border rounded"
               />
-              <label className="font-bold">位置:</label>
+              <label className="font-bold">Position:</label>
               <input
                 type="text"
-                placeholder="例如: 36 或 16,20,34"
+                placeholder="e.g. 36 or 16,20,34"
                 value={posFeaturePositions}
                 onChange={(e) => setPosFeaturePositions(e.target.value)}
                 className="w-48 px-3 py-2 border rounded"
               />
-              <label className="font-bold">组件:</label>
+              <label className="font-bold">Component:</label>
               <select
                 value={posFeatureComponentType}
                 onChange={(e) => setPosFeatureComponentType(e.target.value as "attn" | "mlp")}
@@ -2135,7 +2122,7 @@ export const CircuitVisualization = () => {
         </div>
       )}
 
-      {/* Graph Feature Diffing 日志显示 - 只在单图时显示 */}
+      {/* Graph Feature Diffing Log Display - Only show when single graph */}
       {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && showDiffingLogs && (
         <div className="w-full border rounded-lg overflow-hidden mb-6">
           <div className="bg-yellow-800 text-white px-4 py-2 flex items-center justify-between">
@@ -2177,22 +2164,22 @@ export const CircuitVisualization = () => {
         </div>
       )}
 
-      {/* Chess Board Display - 多文件：为每个源文件渲染一个棋盘，并按来源显示激活 */}
+      {/* Chess Board Display - Multiple files: Render a chess board for each source file, and display activations by source */}
       {displayLinkGraphData && displayLinkGraphData.metadata.sourceFileNames && displayLinkGraphData.metadata.sourceFileNames.length > 1 && (
         <div className="space-y-4 mb-6">
-          {/* 多文件：position 映射选择器 */}
+          {/* Multiple files: position mapping selector */}
           {enablePositionMapping && (
             <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
               <div className="flex flex-wrap items-center gap-3">
-                <div className="text-sm font-medium text-purple-900">Position 映射选择（每文件一个）</div>
+                <div className="text-sm font-medium text-purple-900">Position mapping selector (one per file)</div>
                 <div className="text-xs text-purple-700">
-                  说明：先在下方输入 pos（草稿），再点击“应用映射”才会生效并刷新图（不会改变节点合并规则）
+                  Note: First input pos (draft) below, then click "Apply mapping" to take effect and refresh the graph (does not change node merging rules)
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => {
-                    // 应用：将草稿写入真正的选择，并强制刷新一次图
+                    // Apply: Write draft to actual selection, and force refresh once
                     setPositionMappingSelections(() => {
                       const next: Record<number, number> = {};
                       const names = displayLinkGraphData?.metadata?.sourceFileNames || [];
@@ -2205,13 +2192,13 @@ export const CircuitVisualization = () => {
                     setPositionMappingApplyNonce((x) => x + 1);
                   }}
                   className="px-3 py-1 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors"
-                  title="将当前输入的 pos 应用到高亮逻辑，并刷新图"
+                  title="Apply current input pos to highlight logic, and refresh graph"
                 >
-                  应用映射
+                  Apply mapping
                 </button>
                 <button
                   onClick={() => {
-                    // 重置草稿为已应用值
+                    // Reset draft to applied value
                     setDraftPositionMappingSelections((prev) => {
                       const names = displayLinkGraphData?.metadata?.sourceFileNames || [];
                       const next: Record<number, number> = { ...prev };
@@ -2223,12 +2210,12 @@ export const CircuitVisualization = () => {
                     });
                   }}
                   className="px-3 py-1 text-sm bg-white text-purple-800 border border-purple-300 rounded hover:bg-purple-100 transition-colors"
-                  title="撤销未应用的修改"
+                  title="Undo unapplied modifications"
                 >
-                  撤销输入
+                  Undo input
                 </button>
                 <span className="text-xs text-purple-700">
-                  已应用命中：<span className="font-semibold">{positionMappedCount}</span>
+                  Applied hits: <span className="font-semibold">{positionMappedCount}</span>
                 </span>
               </div>
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2257,20 +2244,20 @@ export const CircuitVisualization = () => {
                             [idx]: Number.isFinite(v) ? Math.max(0, Math.min(63, v)) : 0,
                           }));
                         }}
-                        title="选择该文件用于对齐/高亮的 position（0-63）"
+                        title="Choose position (0-63) for this file for alignment/highlight"
                       />
-                      <span className="text-xs text-purple-700">↦ 高亮</span>
+                      <span className="text-xs text-purple-700">↦ Highlight</span>
                     </div>
                   </div>
                 ))}
               </div>
               <div className="mt-2 text-xs text-purple-700">
-                高亮颜色：<span className="font-mono">{POSITION_MAPPING_HIGHLIGHT_COLOR}</span>
+                Highlight color: <span className="font-mono">{POSITION_MAPPING_HIGHLIGHT_COLOR}</span>
               </div>
             </div>
           )}
 
-          {/* 所有位置模式切换按钮（多文件时） */}
+          {/* All positions mode switch button (multiple files) */}
           {clickedId && (
             <div className="flex justify-center">
               <button
@@ -2280,9 +2267,9 @@ export const CircuitVisualization = () => {
                     ? 'bg-blue-500 text-white hover:bg-blue-600'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
-                title={showAllPositions ? '显示单个位置的激活' : '显示所有位置的激活（合并）'}
+                title={showAllPositions ? 'Show activation of single position' : 'Show activation of all positions (merged)'}
               >
-                {showAllPositions ? '单位置模式' : '所有位置模式'}
+                {showAllPositions ? 'Single position mode' : 'All positions mode'}
               </button>
             </div>
           )}
@@ -2291,25 +2278,25 @@ export const CircuitVisualization = () => {
               const fileFen = extractFenFromCircuitJson(entry.json);
               if (!fileFen) return null;
               const fileMove = extractOutputMoveFromCircuitJson(entry.json);
-              // 判断当前选中节点是否属于该文件
+              // Check if current selected node belongs to this file
               const currentNode = clickedId ? displayLinkGraphData.nodes.find(n => n.nodeId === clickedId) : null;
               const belongs = currentNode && (currentNode.sourceIndices?.includes(idx) || currentNode.sourceIndex === idx);
               
-              // 获取该文件的激活数据
+              // Get activation data for this file
               let perFileActivation: NodeActivationData = { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
               if (clickedId) {
                 if (showAllPositions) {
-                  // 在所有位置模式下，为每个文件都获取该feature的激活数据
+                  // In all positions mode, get activation data for each file
                   const multiGraphData = multiGraphActivationData[idx];
                   if (multiGraphData) {
                     perFileActivation = multiGraphData;
                   } else {
-                    // 回退到从JSON文件中同步获取数据
+                    // Fall back to get data from JSON file
                     const allPosData = getAllPositionsActivationDataSync(clickedId, entry.json);
                     perFileActivation = allPosData || perFileActivation;
                   }
                 } else {
-                  // 获取单个位置的激活数据
+                  // Get activation data for single position
                   perFileActivation = getNodeActivationDataFromJson(entry.json, clickedId);
                 }
               }
@@ -2324,19 +2311,19 @@ export const CircuitVisualization = () => {
                     />
                     <span className="truncate" title={entry.fileName}>{entry.fileName}</span>
                     {clickedId && belongs && (
-                      <span className="text-xs font-normal text-blue-600 ml-2">(含该节点)</span>
+                      <span className="text-xs font-normal text-blue-600 ml-2">(Contains this node)</span>
                     )}
                   </h3>
                   {fileMove && (
                     <div className="text-center mb-2 text-sm text-green-600 font-medium">
-                      输出移动: {fileMove} 🎯
+                      Output policy: {fileMove}
                     </div>
                   )}
                   {clickedId && belongs && showAllPositions && loadingAllPositions && (
                     <div className="text-center mb-2 text-sm text-blue-600">
                       <div className="flex items-center justify-center space-x-2">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                        <span>正在从后端获取所有位置的激活数据...</span>
+                        <span>Getting activation data from backend...</span>
                       </div>
                     </div>
                   )}
@@ -2344,13 +2331,13 @@ export const CircuitVisualization = () => {
                     <div className="text-center mb-2 text-sm text-purple-600">
                       {showAllPositions ? (
                         <>
-                          所有位置合并激活: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
+                          All positions merged activation: {perFileActivation.activations.filter((v: number) => v !== 0).length} non-zero activations
                         </>
                       ) : (
                         <>
-                          激活数据: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
+                          Activation data: {perFileActivation.activations.filter((v: number) => v !== 0).length} non-zero activations
                           {perFileActivation.zPatternIndices && perFileActivation.zPatternValues &&
-                            `, ${perFileActivation.zPatternValues.length} 个Z模式连接`}
+                            `, ${perFileActivation.zPatternValues.length} Z-pattern`}
                         </>
                       )}
                     </div>
@@ -2379,12 +2366,12 @@ export const CircuitVisualization = () => {
 
       {/* Circuit Visualization Layout */}
       <div className="space-y-6 w-full max-w-full overflow-hidden">
-        {/* 子图模式控制栏 */}
+        {/* Subgraph mode control bar */}
         {clickedId && (
           <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
-                <span className="text-sm font-medium text-blue-900">选中节点:</span>
+                <span className="text-sm font-medium text-blue-900">Selected node:</span>
                 <code className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm font-mono">
                   {clickedId}
                 </code>
@@ -2394,12 +2381,12 @@ export const CircuitVisualization = () => {
                 <button
                   onClick={handleShowSubgraph}
                   className="px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 transition-colors flex items-center"
-                  title="显示以该节点为根的子图（包含所有上游节点）"
+                  title="Subgraph mode with this node as root"
                 >
                   <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                   </svg>
-                  显示子图
+                  Show subgraph
                 </button>
               ) : (
                 <div className="flex items-center space-x-3">
@@ -2407,32 +2394,32 @@ export const CircuitVisualization = () => {
                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                     </svg>
-                    <span className="font-medium">子图模式</span>
+                    <span className="font-medium">Subgraph mode</span>
                     <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
-                      {subgraphData?.nodes.length || 0} 个节点
+                      {subgraphData?.nodes.length || 0} nodes
                     </span>
                   </div>
                   
                   <button
                     onClick={handleSaveSubgraph}
                     className="px-3 py-1 bg-green-500 text-white text-sm font-medium rounded hover:bg-green-600 transition-colors flex items-center"
-                    title="保存子图为JSON文件（包含完整的激活数据和z_pattern）"
+                    title="Save subgraph as JSON file (includes complete activation data and z_pattern)"
                   >
                     <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    保存子图
+                    Save subgraph
                   </button>
                   
                   <button
                     onClick={handleExitSubgraph}
                     className="px-3 py-1 bg-gray-500 text-white text-sm font-medium rounded hover:bg-gray-600 transition-colors flex items-center"
-                    title="退出子图模式，显示完整图形"
+                    title="Exit subgraph mode, show full graph"
                   >
                     <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
-                    退出子图
+                    Exit subgraph
                   </button>
                 </div>
               )}
@@ -2441,18 +2428,18 @@ export const CircuitVisualization = () => {
             {showSubgraph && subgraphData && (
               <div className="text-xs text-gray-600 space-y-1">
                 <div className="flex items-center space-x-2">
-                  <span>根节点:</span>
+                  <span>Root node:</span>
                   <code className="px-1 bg-gray-100 rounded">{subgraphRootNodeId}</code>
                 </div>
                 <div className="flex items-center space-x-4">
                   <span>
-                    节点: {subgraphData.nodes.length}/{subgraphData.metadata?.originalNodeCount || 0}
+                    Nodes: {subgraphData.nodes.length}/{subgraphData.metadata?.originalNodeCount || 0}
                     <span className="text-green-600 ml-1">
                       ({((subgraphData.nodes.length / (subgraphData.metadata?.originalNodeCount || 1)) * 100).toFixed(1)}%)
                     </span>
                   </span>
                   <span>
-                    边: {subgraphData.links.length}/{subgraphData.metadata?.originalLinkCount || 0}
+                    Edges: {subgraphData.links.length}/{subgraphData.metadata?.originalLinkCount || 0}
                     <span className="text-blue-600 ml-1">
                       ({((subgraphData.links.length / (subgraphData.metadata?.originalLinkCount || 1)) * 100).toFixed(1)}%)
                     </span>
@@ -2589,7 +2576,7 @@ export const CircuitVisualization = () => {
           );
         })()}
 
-        {/* Token Predictions Section (简化版) */}
+        {/* Token Predictions Section */}
         {clickedId && (
           <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
             <div className="flex justify-between items-center mb-4">
@@ -2710,7 +2697,6 @@ export const CircuitVisualization = () => {
                   </div>
                 )}
 
-                {/* 概率差异最小前5（减少最多，负数最小） */}
                 {tokenPredictions.inhibiting_moves && tokenPredictions.inhibiting_moves.length > 0 && (
                   <div className="bg-white rounded-lg p-3 border">
                     <h4 className="text-sm font-semibold text-gray-900 mb-2">Probability difference minimum (decrease most) Top 5</h4>
@@ -2841,7 +2827,6 @@ export const CircuitVisualization = () => {
                 </div>
               </div>
               
-              {/* 使用说明 */}
               <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded border-l-4 border-blue-200">
                 <div className="font-medium mb-1">💡 File update workflow:</div>
                 <ol className="list-decimal list-inside space-y-1 text-blue-700">

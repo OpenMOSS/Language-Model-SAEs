@@ -52,12 +52,9 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29640 --nproc_per_no
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29610 --nproc_per_node=8 exp/gen_lc0_tc_2d_BT4.py
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29680 --nproc_per_node=8 exp/gen_lc0_tc_2d_BT4_M14.py
 
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29680 --nproc_per_node=8 exp/gen_lc0_tc_2d_BT4_lichess_puzzle.py
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29690 --nproc_per_node=8 exp/gen_lc0_tc_2d_BT4_lichess_puzzle_M14.py
-
 # gen sae
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29690 --nproc_per_node=8 exp/gen_lc0_sae_BT4_resid_post_after_ln.py
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29690 --nproc_per_node=8 exp/gen_lc0_sae_2d_BT4_resid_post_after_ln.py
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29690 --nproc_per_node=8 exp/gen_lc0_sae_BT4.py
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29695 --nproc_per_node=8 exp/gen_lc0_sae_2d_BT4.py
 
 # gen lorsa
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port=29620 --nproc_per_node=8 exp/gen_lc0_lorsa_2d_T82.py

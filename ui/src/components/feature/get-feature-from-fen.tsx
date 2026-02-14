@@ -635,17 +635,17 @@ export const GetFeatureFromFen = ({
                   )}
                 </Button>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              <div className="w-full max-w-full min-w-0 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                 {features.map((feature) => (
                   <div
                     key={feature.feature_index}
-                    className="border rounded-lg p-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                    className="min-w-0 border rounded-lg p-2 bg-gray-50 hover:bg-gray-100 transition-colors flex flex-col items-center"
                   >
-                    <div className="text-center mb-2">
+                    <div className="text-center mb-1 w-full">
                       <div className="text-sm font-medium text-gray-700">
                         Feature #{feature.feature_index}
                       </div>
-                      <div className="text-xs text-gray-600 mt-1">
+                      <div className="text-xs text-gray-600 mt-0.5">
                         <span
                           className={
                             feature.activation_value > 0 ? "text-green-600" : "text-red-600"
@@ -656,7 +656,7 @@ export const GetFeatureFromFen = ({
                         </span>
                       </div>
                     </div>
-                    <div className="flex items-center justify-center mb-2">
+                    <div className="flex items-center justify-center mb-1 w-full max-w-full overflow-hidden">
                       {loadingFeatureTopActivations.has(feature.feature_index) ? (
                         <div className="flex flex-col items-center justify-center py-4">
                           <Loader2 className="w-6 h-6 animate-spin text-gray-400 mb-2" />
@@ -671,19 +671,23 @@ export const GetFeatureFromFen = ({
                                 to={`/features?dictionary=${encodeURIComponent(getDictionaryName())}&featureIndex=${feature.feature_index}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="cursor-pointer"
+                                className="cursor-pointer block max-w-full"
                                 title="点击在Feature页面查看完整详情"
                               >
-                                <ChessBoard
-                                  fen={topActivation.fen}
-                                  size="small"
-                                  showCoordinates={false}
-                                  activations={topActivation.activations}
-                                  zPatternIndices={topActivation.zPatternIndices}
-                                  zPatternValues={topActivation.zPatternValues}
-                                  flip_activation={topActivation.fen.includes(" b ")}
-                                  autoFlipWhenBlack={true}
-                                />
+                                <div className="max-w-full overflow-hidden flex justify-center" style={{ maxWidth: "100%" }}>
+                                  <div className="origin-center shrink-0" style={{ transform: "scale(0.65)" }}>
+                                    <ChessBoard
+                                      fen={topActivation.fen}
+                                      size="small"
+                                      showCoordinates={true}
+                                      activations={topActivation.activations}
+                                      zPatternIndices={topActivation.zPatternIndices}
+                                      zPatternValues={topActivation.zPatternValues}
+                                      flip_activation={topActivation.fen.includes(" b ")}
+                                      autoFlipWhenBlack={true}
+                                    />
+                                  </div>
+                                </div>
                               </Link>
                             );
                           } else {
@@ -795,18 +799,22 @@ export const GetFeatureFromFen = ({
                                 最大激活值: {sample.activationStrength.toFixed(3)}
                               </div>
                             </div>
-                            <ChessBoard
-                              fen={sample.fen}
-                              size="small"
-                              showCoordinates={false}
-                              activations={sample.activations}
-                              zPatternIndices={sample.zPatternIndices}
-                              zPatternValues={sample.zPatternValues}
-                              sampleIndex={sample.sampleIndex}
-                              analysisName={`Context ${sample.contextId}`}
-                              flip_activation={sample.fen.includes(" b ")}
-                              autoFlipWhenBlack={true}
-                            />
+                            <div className="max-w-full overflow-hidden flex justify-center">
+                              <div className="origin-center shrink-0" style={{ transform: "scale(0.75)" }}>
+                                <ChessBoard
+                                  fen={sample.fen}
+                                  size="small"
+                                  showCoordinates={true}
+                                  activations={sample.activations}
+                                  zPatternIndices={sample.zPatternIndices}
+                                  zPatternValues={sample.zPatternValues}
+                                  sampleIndex={sample.sampleIndex}
+                                  analysisName={`Context ${sample.contextId}`}
+                                  flip_activation={sample.fen.includes(" b ")}
+                                  autoFlipWhenBlack={true}
+                                />
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>

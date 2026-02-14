@@ -78,45 +78,40 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
           handleClick(d.nodeId, event.metaKey || event.ctrlKey);
         });
 
-    // Regular nodes: circles
+    // Regular nodes: circles - append first, then set all attrs on merge
     const regularSel = svg.selectAll(".node.node-regular").data(regularNodes, (d: any) => d.nodeId);
-    const regularEnter = regularSel
-      .enter()
-      .append("circle")
+    const regularEnter = regularSel.enter().append("circle");
+    const regularMerged = regularSel.merge(regularEnter)
       .attr("class", "node node-regular")
-      .attr("r", 4);
-    regularSel
-      .merge(regularEnter)
+      .attr("r", 4)
       .attr("cx", (d: any) => d.pos[0])
       .attr("cy", (d: any) => d.pos[1])
       .attr("fill", (d: any) => d.nodeColor)
       .attr("stroke", getStroke)
       .attr("stroke-width", getStrokeWidth);
-    nodeEvents(regularSel.merge(regularEnter));
+    nodeEvents(regularMerged);
 
     // Error nodes: squares (rect)
     const size = 6;
     const errorSel = svg.selectAll(".node.node-error").data(errorNodes, (d: any) => d.nodeId);
-    const errorEnter = errorSel
-      .enter()
-      .append("rect")
+    const errorEnter = errorSel.enter().append("rect");
+    const errorMerged = errorSel.merge(errorEnter)
       .attr("class", "node node-error")
       .attr("width", size)
-      .attr("height", size);
-    errorSel
-      .merge(errorEnter)
+      .attr("height", size)
       .attr("x", (d: any) => d.pos[0] - size / 2)
       .attr("y", (d: any) => d.pos[1] - size / 2)
       .attr("fill", (d: any) => d.nodeColor)
       .attr("stroke", getStroke)
       .attr("stroke-width", getStrokeWidth);
-    nodeEvents(errorSel.merge(errorEnter));
+    nodeEvents(errorMerged);
 
     // Hover indicators: circles for regular, rects for error
     const hoverReg = svg.selectAll(".hover-indicator.hover-regular").data(regularNodes, (d: any) => d.nodeId);
-    hoverReg.enter().append("circle").attr("class", "hover-indicator hover-regular").attr("r", 6);
-    hoverReg
-      .merge(hoverReg.enter())
+    const hoverRegEnter = hoverReg.enter().append("circle");
+    hoverReg.merge(hoverRegEnter)
+      .attr("class", "hover-indicator hover-regular")
+      .attr("r", 6)
       .attr("cx", (d: any) => d.pos[0])
       .attr("cy", (d: any) => d.pos[1])
       .attr("stroke", "#f0f")
@@ -124,11 +119,13 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       .attr("fill", "none")
       .style("opacity", (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0));
 
-    const hoverErr = svg.selectAll(".hover-indicator.hover-error").data(errorNodes, (d: any) => d.nodeId);
     const hSize = 12;
-    hoverErr.enter().append("rect").attr("class", "hover-indicator hover-error").attr("width", hSize).attr("height", hSize);
-    hoverErr
-      .merge(hoverErr.enter())
+    const hoverErr = svg.selectAll(".hover-indicator.hover-error").data(errorNodes, (d: any) => d.nodeId);
+    const hoverErrEnter = hoverErr.enter().append("rect");
+    hoverErr.merge(hoverErrEnter)
+      .attr("class", "hover-indicator hover-error")
+      .attr("width", hSize)
+      .attr("height", hSize)
       .attr("x", (d: any) => d.pos[0] - hSize / 2)
       .attr("y", (d: any) => d.pos[1] - hSize / 2)
       .attr("stroke", "#f0f")
