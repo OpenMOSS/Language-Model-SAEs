@@ -61,6 +61,8 @@ interface GetFeatureFromFenProps {
   }; // 自定义按钮文本
   showTopActivations?: boolean;
   showFenActivations?: boolean;
+  /** When false, render only inner content (no Card wrapper). Use when parent already provides the card and title. */
+  wrapInCard?: boolean;
   className?: string;
 }
 
@@ -76,6 +78,7 @@ export const GetFeatureFromFen = ({
   actionButtonLabels = {}, // 默认使用内置文本
   showTopActivations = true,
   showFenActivations = true,
+  wrapInCard = true,
   className,
 }: GetFeatureFromFenProps) => {
   // 默认按钮文本
@@ -441,20 +444,8 @@ export const GetFeatureFromFen = ({
 
   const features = featuresState.value || [];
 
-  return (
-    <Card className={className}>
-      <CardHeader>
-        <CardTitle>
-          位置 Feature 分析
-          <div className="text-sm font-normal mt-2 text-gray-600">
-            FEN: <code className="bg-gray-100 px-2 py-1 rounded text-xs">{fen}</code>
-            <br />
-            层: {layer} | 位置: {position} | 组件: {componentType === "attn" ? "Attention (LoRSA)" : "MLP (Transcoder)"}
-          </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
+  const content = (
+    <div className="space-y-4">
           {/* 刷新按钮 */}
           <Button
             onClick={() => fetchFeatures()}
@@ -829,6 +820,26 @@ export const GetFeatureFromFen = ({
             </Tabs>
           )}
         </div>
+  );
+
+  if (!wrapInCard) {
+    return <div className={className}>{content}</div>;
+  }
+
+  return (
+    <Card className={className}>
+      <CardHeader>
+        <CardTitle>
+          位置 Feature 分析
+          <div className="text-sm font-normal mt-2 text-gray-600">
+            FEN: <code className="bg-gray-100 px-2 py-1 rounded text-xs">{fen}</code>
+            <br />
+            层: {layer} | 位置: {position} | 组件: {componentType === "attn" ? "Attention (LoRSA)" : "MLP (Transcoder)"}
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {content}
       </CardContent>
     </Card>
   );

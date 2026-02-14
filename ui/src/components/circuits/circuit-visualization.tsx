@@ -2056,69 +2056,57 @@ export const CircuitVisualization = () => {
         </div>
       )}
 
-      {/* PosFeatureCard - Position Feature Analysis (TODO: not used) */}
-      {displayLinkGraphData && (!displayLinkGraphData.metadata.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
+      {/* Position Feature Analysis: single config row + PosFeatureCard (no duplicate title/card) */}
+      {displayLinkGraphData && (!displayLinkGraphData.metadata?.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="w-full max-w-6xl mx-auto mb-6">
-          <div className="bg-white rounded-lg border shadow-sm p-4">
-            <h3 className="text-lg font-semibold mb-4">Position Feature Analysis</h3>
-            <div className="grid grid-cols-[auto_1fr_auto_auto_auto_auto] gap-4 items-center mb-4">
-              <label className="font-bold">FEN:</label>
-              <input
-                type="text"
-                value={fen}
-                readOnly
-                className="px-3 py-2 border rounded bg-gray-50"
-              />
-              <label className="font-bold">Layer:</label>
-              <input
-                type="number"
-                min="0"
-                max="14"
-                value={posFeatureLayer}
-                onChange={(e) => setPosFeatureLayer(parseInt(e.target.value) || 0)}
-                className="w-20 px-3 py-2 border rounded"
-              />
-              <label className="font-bold">Position:</label>
-              <input
-                type="text"
-                placeholder="e.g. 36 or 16,20,34"
-                value={posFeaturePositions}
-                onChange={(e) => setPosFeaturePositions(e.target.value)}
-                className="w-48 px-3 py-2 border rounded"
-              />
-              <label className="font-bold">Component:</label>
-              <select
-                value={posFeatureComponentType}
-                onChange={(e) => setPosFeatureComponentType(e.target.value as "attn" | "mlp")}
-                className="px-3 py-2 border rounded"
-              >
-                <option value="attn">Attention</option>
-                <option value="mlp">MLP</option>
-              </select>
-            </div>
-            {fen && posFeaturePositions.trim() && (() => {
-              const parsedPositions = posFeaturePositions
-                .split(",")
-                .map((p) => parseInt(p.trim()))
-                .filter((p) => !isNaN(p) && p >= 0 && p < 64);
-              
-              if (parsedPositions.length === 0) return null;
-              
-              return (
-                <PosFeatureCard
-                  fen={fen}
-                  layer={posFeatureLayer}
-                  positions={parsedPositions}
-                  componentType={posFeatureComponentType}
-                  saeComboId={
-                    typeof window !== "undefined"
-                      ? window.localStorage.getItem("bt4_sae_combo_id") || undefined
-                      : undefined
-                  }
-                />
-              );
-            })()}
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <label className="text-sm font-medium">Layer:</label>
+            <input
+              type="number"
+              min={0}
+              max={14}
+              value={posFeatureLayer}
+              onChange={(e) => setPosFeatureLayer(parseInt(e.target.value) || 0)}
+              className="w-20 px-2 py-1 border rounded text-sm"
+            />
+            <label className="text-sm font-medium">Positions:</label>
+            <input
+              type="text"
+              placeholder="e.g. 36 or 16,20,34"
+              value={posFeaturePositions}
+              onChange={(e) => setPosFeaturePositions(e.target.value)}
+              className="w-48 px-2 py-1 border rounded text-sm"
+            />
+            <label className="text-sm font-medium">Component:</label>
+            <select
+              value={posFeatureComponentType}
+              onChange={(e) => setPosFeatureComponentType(e.target.value as "attn" | "mlp")}
+              className="px-2 py-1 border rounded text-sm"
+            >
+              <option value="attn">Attention</option>
+              <option value="mlp">MLP</option>
+            </select>
           </div>
+          {posFeaturePositions.trim() && (() => {
+            const parsedPositions = posFeaturePositions
+              .split(",")
+              .map((p) => parseInt(p.trim(), 10))
+              .filter((p) => !isNaN(p) && p >= 0 && p < 64);
+            if (parsedPositions.length === 0) return null;
+            return (
+              <PosFeatureCard
+                fen={fen}
+                layer={posFeatureLayer}
+                positions={parsedPositions}
+                componentType={posFeatureComponentType}
+                saeComboId={
+                  typeof window !== "undefined"
+                    ? window.localStorage.getItem("bt4_sae_combo_id") || undefined
+                    : undefined
+                }
+              />
+            );
+          })()}
         </div>
       )}
 

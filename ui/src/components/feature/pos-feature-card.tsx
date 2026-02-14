@@ -788,6 +788,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
               actionTypes={["add_to_steer"]}
               showTopActivations={true}
               showFenActivations={true}
+              wrapInCard={false}
               onFeatureAction={(action) => {
                 if (action.type === "add_to_steer") {
                   addSteeringNode(singlePosition, action.featureIndex);
