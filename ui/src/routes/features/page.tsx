@@ -16,7 +16,6 @@ const FeatureCard = lazy(() => import("@/components/feature/feature-card").then(
 import { ChessBoard } from "@/components/chess/chess-board";
 import { CustomFenInput } from "@/components/feature/custom-fen-input";
 
-// 全局计数器确保唯一ID
 let boardCounter = 0;
 
 
@@ -30,30 +29,6 @@ export const FeaturesPage = () => {
   const [currentFeature, setCurrentFeature] = useState<any>(null);
   const [featureLoading, setFeatureLoading] = useState<boolean>(false);
   const [featureError, setFeatureError] = useState<string | null>(null);
-  const [modelLoaded, setModelLoaded] = useState<boolean>(false);
-
-  // 预加载HookedTransformer模型
-  const preloadModel = useCallback(async () => {
-    if (modelLoaded) return;
-    
-    try {
-      console.log('🔄 正在预加载HookedTransformer模型...');
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' })
-      });
-      
-      if (response.ok) {
-        setModelLoaded(true);
-        console.log('✅ HookedTransformer模型预加载成功');
-      } else {
-        console.warn('⚠️ 模型预加载失败，但将继续运行');
-      }
-    } catch (error) {
-      console.warn('⚠️ 模型预加载出错，但将继续运行:', error);
-    }
-  }, [modelLoaded]);
 
   const [dictionariesState, fetchDictionaries] = useAsyncFn(async () => {
     return await fetch(`${import.meta.env.VITE_BACKEND_URL}/dictionaries`)
@@ -158,9 +133,6 @@ export const FeaturesPage = () => {
 
 
   useMount(async () => {
-    // 预加载模型
-    await preloadModel();
-    
     await fetchDictionaries();
     if (searchParams.get("dictionary")) {
       const dict = searchParams.get("dictionary")!;
@@ -558,13 +530,13 @@ export const FeaturesPage = () => {
             }
           }
           
-          // 按照最大激活值从大到小排序
+          // Sort by maximum activation value from largest to smallest
           chessSamples.sort((a, b) => Math.abs(b.maxActivation) - Math.abs(a.maxActivation));
           
-          console.log('🎯 分析完成: 找到 ' + chessSamples.length + ' 个FEN样本');
-          console.log('🎯 排序后的最大激活值:', chessSamples.slice(0, 10).map(s => s.maxActivation.toFixed(3)));
+          console.log('Analysis completed: found ' + chessSamples.length + ' FEN samples');
+          console.log('Sorted maximum activation values:', chessSamples.slice(0, 10).map(s => s.maxActivation.toFixed(3)));
           
-          // 生成棋盘组件
+          // Generate chessboard components
           const chessBoards: JSX.Element[] = chessSamples.map((chessSample, index) => (
             <ChessBoard
               key={`chess-${chessSample.groupIndex}-${chessSample.sampleIndex}-${chessSample.lineIndex}-${index}`}
@@ -584,14 +556,14 @@ export const FeaturesPage = () => {
           const validFENFound = chessSamples.length;
           
           if (chessBoards.length > 0) {
-            console.log(`🎯 生成了 ${chessBoards.length} 个棋盘`);
+            console.log(`Generated ${chessBoards.length} chessboards`);
             
             return (
               <div className="w-full max-w-6xl mx-auto mb-8">
                 <div className="text-center mb-6">
-                  <h3 className="text-xl font-bold mb-2">Feature #{feature.featureIndex} 棋盘可视化</h3>
+                  <h3 className="text-xl font-bold mb-2">Feature #{feature.featureIndex} Chessboard Visualization</h3>
                   <div className="text-sm text-gray-600">
-                    找到 {validFENFound} 个包含FEN的样本（按最大激活值排序）
+                    Found {validFENFound} samples containing FEN (sorted by maximum activation value)
                   </div>
                 </div>
                 
@@ -601,25 +573,25 @@ export const FeaturesPage = () => {
               </div>
             );
           } else {
-            // 如果没有找到棋盘，显示调试信息
+            // If no chessboard is found, display debug information
             return (
               <div className="w-full max-w-6xl mx-auto mb-8">
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
-                  <h3 className="text-lg font-bold text-yellow-800 mb-4">⚠️ 未找到棋盘可视化</h3>
+                  <h3 className="text-lg font-bold text-yellow-800 mb-4">⚠️ No chessboard visualization found</h3>
                   <div className="text-sm text-yellow-700 mb-4">
-                    <strong>Feature #{feature.featureIndex}</strong> (激活次数: {feature.actTimes})
+                    <strong>Feature #{feature.featureIndex}</strong> (Activation times: {feature.actTimes})
                   </div>
                   
                   <div className="text-xs text-yellow-600 mb-4">
-                    <strong>数据统计:</strong><br/>
-                    • 总样本数: {totalSamples}<br/>
-                    • 找到的FEN: {validFENFound}
+                    <strong>Data statistics:</strong><br/>
+                    • Total samples: {totalSamples}<br/>
+                    • Found FEN: {validFENFound}
                   </div>
                   
                   <div className="text-xs text-yellow-500 mt-4">
-                    💡 可能的原因：<br/>
-                    1. 样本中没有包含FEN格式的文本<br/>
-                    2. 样本数据结构与预期不符
+                    💡 Possible reasons:<br/>
+                    1. Sample does not contain FEN formatted text<br/>
+                    2. Sample data structure does not match expectations
                   </div>
                 </div>
               </div>

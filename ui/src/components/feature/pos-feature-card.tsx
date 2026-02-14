@@ -13,8 +13,8 @@ import { GetFeatureFromFen } from "@/components/feature/get-feature-from-fen";
 interface PosFeatureCardProps {
   fen: string;
   layer: number;
-  positions: number[] | string; // 一个或多个位置索引 (0-63)，支持数字数组或字符串格式如"0-7,9,12-15"
-  componentType: "attn" | "mlp"; // "attn" 或 "mlp"
+  positions: number[] | string;
+  componentType: "attn" | "mlp";
   modelName?: string;
   saeComboId?: string;
   onFeatureSelect?: (selection: { featureIndex: number; position: number } | null) => void;
@@ -103,7 +103,6 @@ interface FenActivationData {
   zPatternValues?: number[];
 }
 
-// 测试函数 - 可以用来验证位置解析逻辑
 export const _testParsePositionsInput = (positionsInput: number[] | string): number[] => {
   if (Array.isArray(positionsInput)) {
     return positionsInput;
@@ -115,7 +114,6 @@ export const _testParsePositionsInput = (positionsInput: number[] | string): num
   for (const part of parts) {
     const trimmed = part.trim();
     if (trimmed.includes('-')) {
-      // 处理范围，如"0-7"
       const [startStr, endStr] = trimmed.split('-');
       const start = parseInt(startStr.trim(), 10);
       const end = parseInt(endStr.trim(), 10);
@@ -128,7 +126,6 @@ export const _testParsePositionsInput = (positionsInput: number[] | string): num
         }
       }
     } else {
-      // 处理单个数字，如"9"
       const num = parseInt(trimmed, 10);
       if (!isNaN(num) && !result.includes(num)) {
         result.push(num);
@@ -136,15 +133,13 @@ export const _testParsePositionsInput = (positionsInput: number[] | string): num
     }
   }
 
-  // 排序并确保在有效范围内 (0-63)
   return result
     .filter(pos => pos >= 0 && pos <= 63)
     .sort((a, b) => a - b);
 };
 
-// 简单的测试函数来验证解析逻辑
 if (typeof window !== 'undefined') {
-  console.log('🧪 测试解析逻辑:');
+  console.log('Testing parsing logic:');
   console.log('  "0-2,3" ->', _testParsePositionsInput("0-2,3"));
   console.log('  "0-7" ->', _testParsePositionsInput("0-7"));
   console.log('  "0,2,4" ->', _testParsePositionsInput("0,2,4"));
@@ -161,47 +156,43 @@ export const PosFeatureCard = ({
   saeComboId,
   onFeatureSelect,
 }: PosFeatureCardProps) => {
-  console.log('🔍 PosFeatureCard 接收到props:', { fen, layer, positions, componentType });
+  console.log('PosFeatureCard received props:', { fen, layer, positions, componentType });
   const [selectedFeatureIndex, setSelectedFeatureIndex] = useState<number | null>(null);
   const [topActivations, setTopActivations] = useState<TopActivationSample[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
   const [selectedFeaturePos, setSelectedFeaturePos] = useState<number | null>(null);
   const [steeringNodes, setSteeringNodes] = useState<SteeringNode[]>([]);
   const [defaultSteeringScale, setDefaultSteeringScale] = useState<number>(2.0);
-  const [autoSteerThreshold, setAutoSteerThreshold] = useState<number>(1e-6);
+  const [autoSteerThreshold, setAutoSteerThreshold] = useState<number>(0);
 
-  // 监听positions变化，用于调试
   useEffect(() => {
-    console.log('🔄 positions prop 改变:', positions);
+    console.log('positions prop changed:', positions);
   }, [positions]);
 
   const parseScaleInput = useCallback((raw: string): number => {
     const v = parseFloat(raw);
-    // 允许负数与 0；仅在 NaN 时回退为 0
     return Number.isFinite(v) ? v : 1;
   }, []);
 
-// 解析位置字符串格式，如"0-7,9,12-15" -> [0,1,2,3,4,5,6,7,9,12,13,14,15]
 const parsePositionsInput = useCallback((positionsInput: number[] | string): number[] => {
   if (Array.isArray(positionsInput)) {
     return positionsInput;
   }
 
-  console.log('🔍 开始解析字符串:', positionsInput);
+  console.log('Starting to parse string:', positionsInput);
 
   const result: number[] = [];
   const parts = positionsInput.split(',');
 
-  console.log('🔍 分割后的parts:', parts);
+  console.log('Split parts:', parts);
 
   for (const part of parts) {
     const trimmed = part.trim();
-    console.log('🔍 处理part:', trimmed);
+    console.log('Processing part:', trimmed);
 
     if (trimmed.includes('-')) {
-      // 处理范围，如"0-7"
       const rangeParts = trimmed.split('-');
-      console.log('🔍 范围分割:', rangeParts);
+      console.log('Range parts:', rangeParts);
 
       if (rangeParts.length === 2) {
         const startStr = rangeParts[0].trim();
@@ -209,62 +200,57 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
         const start = parseInt(startStr, 10);
         const end = parseInt(endStr, 10);
 
-        console.log('🔍 解析范围:', { startStr, endStr, start, end });
+        console.log('Parsed range:', { startStr, endStr, start, end });
 
         if (!isNaN(start) && !isNaN(end) && start <= end) {
-          console.log('🔍 开始添加范围:', { start, end });
+          console.log('Starting to add range:', { start, end });
           for (let i = start; i <= end; i++) {
             if (!result.includes(i)) {
               result.push(i);
-              console.log('🔍 添加到结果:', i);
+              console.log('Added to result:', i);
             }
           }
         } else {
-          console.log('🔍 范围无效:', { start, end });
+          console.log('Range is invalid:', { start, end });
         }
       }
     } else {
-      // 处理单个数字，如"9"
       const num = parseInt(trimmed, 10);
-      console.log('🔍 解析单个数字:', { trimmed, num });
+      console.log('Parsed single number:', { trimmed, num });
 
       if (!isNaN(num) && !result.includes(num)) {
         result.push(num);
-        console.log('🔍 添加单个数字到结果:', num);
+        console.log('Added single number to result:', num);
       }
     }
   }
 
-  console.log('🔍 过滤前的结果:', result);
+  console.log('Result before filtering:', result);
 
-  // 排序并确保在有效范围内 (0-63)
   const filtered = result
     .filter(pos => pos >= 0 && pos <= 63)
     .sort((a, b) => a - b);
 
-  console.log('🔍 最终结果:', filtered);
+  console.log('Final result:', filtered);
   return filtered;
 }, []);
 
-  // 解析位置输入，支持数组或字符串格式
   const parsedPositions = useMemo(() => {
     const result = parsePositionsInput(positions);
-    console.log('🔍 解析位置输入:', {
+    console.log('Parsed positions input:', {
       input: positions,
       inputType: typeof positions,
       isArray: Array.isArray(positions),
       output: result,
       outputLength: result.length
     });
-    console.log('🔍 parsedPositions 详情:', result);
+    console.log('parsedPositions details:', result);
     return result;
   }, [positions, parsePositionsInput]);
 
-  // 判断是否为单个位置（使用共享组件）
   const isSinglePosition = parsedPositions.length === 1;
   const singlePosition = isSinglePosition ? parsedPositions[0] : null;
 
-  // 获取激活的 features
   const [featuresState, fetchFeatures] = useAsyncFn(async () => {
     if (!fen || parsedPositions.length === 0) {
       return null;
@@ -308,7 +294,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
           features: sortedFeatures,
         });
       } else {
-        // 即使没有features也添加位置信息
         positionFeatures.push({
           position: pos,
           features: [],
@@ -322,7 +307,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
   const backendFeatureType = componentType === "attn" ? "lorsa" : "transcoder";
 
   const parseAnalyzeFen = useCallback((data: AnalyzeFenResponse): FenActivationData => {
-    // 与 CustomFenInput 保持一致：稀疏 indices/values -> 64 维稠密激活
     let activations: number[] | undefined = undefined;
     if (Array.isArray(data.feature_acts_indices) && Array.isArray(data.feature_acts_values)) {
       activations = new Array(64).fill(0);
@@ -351,7 +335,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
   const addSteeringNode = useCallback(
     (pos: number, feature: number) => {
       setSteeringNodes((prev) => {
-        // 去重：同一 pos + feature 不重复添加
         if (prev.some((n) => n.pos === pos && n.feature === feature)) {
           return prev;
         }
@@ -399,10 +382,10 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
 
   const [steeringState, runMultiSteering] = useAsyncFn(async () => {
     if (!fen?.trim()) {
-      throw new Error("FEN 不能为空");
+      throw new Error("FEN cannot be empty");
     }
     if (steeringNodes.length === 0) {
-      throw new Error("请先添加至少一个要 steer 的 feature");
+      throw new Error("Please add at least one feature to steer");
     }
 
     const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/steering_analysis/multi`, {
@@ -435,7 +418,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     return (await response.json()) as MultiSteeringResult;
   }, [fen, steeringNodes, backendFeatureType, layer, modelName, saeComboId]);
 
-  // 构建字典名（用于请求 /dictionaries/... 接口 & 跳转到 feature 页面）
   const getDictionaryName = useCallback(() => {
     const lorsaSuffix = componentType === "attn" ? "A" : "M";
     const baseDict = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${lorsaSuffix}`;
@@ -446,10 +428,9 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     return baseDict;
   }, [componentType, layer, saeComboId]);
 
-  // 与 CustomFenInput 对齐：查看“当前 FEN 下，该 feature 在 64 个棋盘格上的激活值”
   const [fenActivationState, fetchFenActivationForSelectedFeature] = useAsyncFn(async () => {
     if (!fen?.trim()) {
-      throw new Error("FEN 不能为空");
+      throw new Error("FEN cannot be empty");
     }
     if (selectedFeatureIndex === null) {
       return null;
@@ -477,18 +458,16 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     return parseAnalyzeFen(data);
   }, [fen, selectedFeatureIndex, getDictionaryName, parseAnalyzeFen]);
 
-  // 一键：选择某个 feature 后，把“所有激活该 feature 的位置”都加入 steeringNodes，并统一赋值 steering_scale
   const [autoSteerState, runAutoSteerAllPositions] = useAsyncFn(async () => {
     if (!fen?.trim()) {
-      throw new Error("FEN 不能为空");
+      throw new Error("FEN cannot be empty");
     }
     if (selectedFeatureIndex === null) {
-      throw new Error("请先在上方列表里选择一个 feature");
+      throw new Error("Please select a feature in the list above");
     }
 
     const dictionary = getDictionaryName();
     const response = await fetch(
-      // 与 CustomFenInput 保持一致：统一用 analyze_fen（稀疏 indices/values -> 64格激活）
       `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${selectedFeatureIndex}/analyze_fen`,
       {
         method: "POST",
@@ -515,29 +494,26 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
       if (Math.abs(v) > autoSteerThreshold) activePositions.push(pos);
     }
 
-    // 直接“按 feature 的激活位置”生成 nodes，统一用当前 defaultSteeringScale（允许负数）
     const nodes: SteeringNode[] = activePositions.map((pos) => ({
       pos,
       feature: selectedFeatureIndex,
       steering_scale: defaultSteeringScale,
     }));
 
-    // 默认采用“替换”策略，避免手动配置的 nodes 被隐式 max/merge
     setSteeringNodes(nodes);
 
     return { activePositions, count: nodes.length };
   }, [fen, selectedFeatureIndex, autoSteerThreshold, defaultSteeringScale, getDictionaryName, parseAnalyzeFen]);
 
-  // UI 渲染时做一次前端排序，避免依赖后端返回顺序
   const sortedPromotingMoves = useMemo(() => {
     const moves = steeringState.value?.promoting_moves ?? [];
     return [...moves].sort((a, b) => {
       const ap = a.prob_diff;
       const bp = b.prob_diff;
-      if (typeof ap === "number" && typeof bp === "number") return bp - ap; // prob_diff 降序
+      if (typeof ap === "number" && typeof bp === "number") return bp - ap;
       if (typeof ap === "number") return -1;
       if (typeof bp === "number") return 1;
-      return b.diff - a.diff; // fallback: logit diff 降序
+      return b.diff - a.diff;
     });
   }, [steeringState.value]);
 
@@ -546,10 +522,10 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     return [...moves].sort((a, b) => {
       const ap = a.prob_diff;
       const bp = b.prob_diff;
-      if (typeof ap === "number" && typeof bp === "number") return ap - bp; // prob_diff 升序（更负在前）
+      if (typeof ap === "number" && typeof bp === "number") return ap - bp;
       if (typeof ap === "number") return -1;
       if (typeof bp === "number") return 1;
-      return a.diff - b.diff; // fallback: logit diff 升序（更负在前）
+      return a.diff - b.diff;
     });
   }, [steeringState.value]);
 
@@ -558,31 +534,27 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     return [...moves].sort((a, b) => {
       const am = typeof a.modified_prob === "number" ? a.modified_prob : a.original_prob;
       const bm = typeof b.modified_prob === "number" ? b.modified_prob : b.original_prob;
-      if (typeof am === "number" && typeof bm === "number") return bm - am; // 概率降序
+      if (typeof am === "number" && typeof bm === "number") return bm - am;
       if (typeof am === "number") return -1;
       if (typeof bm === "number") return 1;
       return b.diff - a.diff;
     });
   }, [steeringState.value]);
 
-  // 获取指定 feature 的 top activation
   const fetchTopActivationsForFeature = useCallback(
     async (featureIndex: number, isLorsa: boolean) => {
       setLoadingTopActivations(true);
       try {
-        // 构建字典名
         const lorsaSuffix = componentType === "attn" ? "A" : "M";
         const dictionary = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${lorsaSuffix}`;
 
-        // 如果有组合ID，需要添加到字典名中
         let fullDictionary = dictionary;
         if (saeComboId && saeComboId !== "k_128_e_128") {
-          // 从 combo_id 提取后缀，例如 k_30_e_16 -> k30_e16
           const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, "k$1_e$2");
           fullDictionary = `${dictionary}_${comboParts}`;
         }
 
-        console.log("🔍 获取 Top Activation 数据:", {
+        console.log("Get Top Activation data:", {
           layer,
           featureIndex,
           dictionary: fullDictionary,
@@ -623,7 +595,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
           }
         }
 
-        // 查找包含 FEN 的样本并提取激活值
         const chessSamples: TopActivationSample[] = [];
 
         for (const sample of allSamples) {
@@ -641,7 +612,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                   const boardRows = boardPart.split("/");
 
                   if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
-                    // 验证 FEN 格式
                     let isValidBoard = true;
                     let totalSquares = 0;
 
@@ -663,7 +633,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                     }
 
                     if (isValidBoard && totalSquares === 64) {
-                      // 处理稀疏激活数据
                       let activationsArray: number[] | undefined = undefined;
                       let maxActivation = 0;
 
@@ -711,14 +680,13 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
           }
         }
 
-        // 按最大激活值排序并取前8个
         const topSamples = chessSamples
           .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
           .slice(0, 8);
 
         setTopActivations(topSamples);
       } catch (error) {
-        console.error("❌ 获取 Top Activation 数据失败:", error);
+        console.error("Failed to get Top Activation data:", error);
         setTopActivations([]);
       } finally {
         setLoadingTopActivations(false);
@@ -727,7 +695,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     [layer, componentType, saeComboId]
   );
 
-  // 当选择的 feature 改变时，获取 top activation
   useEffect(() => {
     if (selectedFeatureIndex !== null) {
       fetchTopActivationsForFeature(selectedFeatureIndex, componentType === "attn");
@@ -736,7 +703,6 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     }
   }, [selectedFeatureIndex, fetchTopActivationsForFeature, componentType]);
 
-  // 当选择的 feature 或 FEN 改变时，拉取该 feature 在当前 FEN 的 64格激活（与 CustomFenInput 一致）
   useEffect(() => {
     if (selectedFeatureIndex !== null) {
       fetchFenActivationForSelectedFeature();
@@ -757,25 +723,22 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {/* 刷新按钮 - 仅在多位置模式下显示（单位置模式由 GetFeatureFromFen 处理） */}
           {!isSinglePosition && (
             <Button
               onClick={() => fetchFeatures()}
               disabled={featuresState.loading || !fen || parsedPositions.length === 0}
               className="w-full"
             >
-              {featuresState.loading ? "加载中..." : "获取激活的 Features"}
+              {featuresState.loading ? "Loading..." : "Get activated Features"}
             </Button>
           )}
 
-          {/* 错误显示 */}
           {featuresState.error && (
             <div className="text-red-500 font-bold text-center p-4 bg-red-50 rounded">
-              错误: {featuresState.error instanceof Error ? featuresState.error.message : String(featuresState.error)}
+              Error: {featuresState.error instanceof Error ? featuresState.error.message : String(featuresState.error)}
             </div>
           )}
 
-          {/* Features 列表 - 单个位置使用共享组件，多个位置使用原有逻辑 */}
           {isSinglePosition && singlePosition !== null ? (
             <GetFeatureFromFen
               fen={fen}
@@ -798,21 +761,21 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
             featuresState.value && featuresState.value.length > 0 && (
               <div className="space-y-4">
                 <h3 className="font-semibold">
-                  按位置显示激活的 Features ({featuresState.value.length} 个位置)
+                  Display activated Features by positions ({featuresState.value.length} positions)
                 </h3>
                 <div className="text-sm text-gray-600">
-                  📊 解析后的位置: [{parsedPositions.join(', ')}]
+                  Parsed positions: [{parsedPositions.join(', ')}]
                 </div>
                 {featuresState.value.map((posFeatures, index) => {
-                  console.log(`🔍 渲染位置 ${index}:`, posFeatures.position, posFeatures.features.length);
+                  console.log(`Rendering position ${index}:`, posFeatures.position, posFeatures.features.length);
                   return (
                     <div key={posFeatures.position} className="border rounded-lg p-4">
                       <div className="flex items-center justify-between gap-3 mb-2">
                         <h4 className="font-medium text-gray-800">
-                          位置 {posFeatures.position}
+                          Position {posFeatures.position}
                           {posFeatures.features.length > 0 && (
                             <span className="text-sm text-gray-500 ml-2">
-                              ({posFeatures.features.length} 个激活的 Features)
+                              ({posFeatures.features.length} activated Features)
                             </span>
                           )}
                         </h4>
@@ -821,9 +784,9 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                           size="sm"
                           disabled={posFeatures.features.length === 0}
                           onClick={() => addAllSteeringNodesAtPosition(posFeatures.position, posFeatures.features)}
-                          title="把该位置激活的所有 Features 一次性加入 Multi Steering（会自动去重）"
+                          title="Add all activated Features at this position to Multi Steering (will automatically deduplicate)"
                         >
-                          加入该位置全部 Steer
+                          Add all Steer at this position
                         </Button>
                       </div>
                       {posFeatures.features.length > 0 ? (
@@ -870,7 +833,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                                       addSteeringNode(posFeatures.position, feature.feature_index);
                                     }}
                                   >
-                                    加入 Steer
+                                    Steer
                                   </Button>
                                   <Link
                                     to={`/features?dictionary=${encodeURIComponent(
@@ -880,7 +843,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                                     className="text-blue-600 hover:text-blue-800 text-sm"
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    查看详情 →
+                                    View details →
                                   </Link>
                                 </div>
                               </div>
@@ -889,7 +852,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                         </div>
                       ) : (
                         <div className="text-gray-500 text-sm italic">
-                          该位置没有激活的 Features
+                          No activated Features at this position
                         </div>
                       )}
                     </div>
@@ -899,13 +862,12 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
             )
           )}
 
-          {/* Multi Steering */}
           <div className="border rounded-lg p-4 bg-gray-50">
             <div className="flex items-center justify-between mb-3">
               <div>
-                <h3 className="font-semibold">Multi Steering（多 feature、多位置）</h3>
+                <h3 className="font-semibold">Steering (multiple features, multiple positions)</h3>
                 <p className="text-xs text-gray-600 mt-1">
-                  组件: {componentType === "attn" ? "Attention (LoRSA)" : "MLP (Transcoder)"}，层: {layer}
+                  Component: {componentType === "attn" ? "Attention (LoRSA)" : "MLP (Transcoder)"}, Layer: {layer}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -914,17 +876,17 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                   onClick={clearSteeringNodes}
                   disabled={steeringNodes.length === 0 || steeringState.loading}
                 >
-                  清空
+                  Clear
                 </Button>
                 <Button onClick={runMultiSteering} disabled={steeringState.loading || steeringNodes.length === 0}>
-                  {steeringState.loading ? "Steering 中..." : "运行 Steering"}
+                  {steeringState.loading ? "Steering..." : "Run Steering"}
                 </Button>
               </div>
             </div>
 
             <div className="flex items-center gap-3 mb-3">
               <Label htmlFor="default-steering-scale" className="text-sm">
-                默认 steering_scale
+                Default steering_scale
               </Label>
               <Input
                 id="default-steering-scale"
@@ -939,15 +901,14 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                 onClick={() => applySteeringScaleToAllNodes(defaultSteeringScale)}
                 disabled={steeringNodes.length === 0 || steeringState.loading}
               >
-                应用到全部
+                Apply to all
               </Button>
-              <span className="text-xs text-gray-500">新加入的 feature 将使用该默认值（可为负数，表示反向 steering）</span>
+              <span className="text-xs text-gray-500">Newly added features will use this default value (can be negative, indicating reverse steering)</span>
             </div>
 
-            {/* 一键添加：选中某个 feature 后，把所有激活位置同时加入 steering */}
             <div className="flex flex-wrap items-center gap-3 mb-3">
               <Label htmlFor="auto-steer-threshold" className="text-sm">
-                自动选择阈值 |act| &gt;
+                Automatic select threshold act &gt;
               </Label>
               <Input
                 id="auto-steer-threshold"
@@ -962,14 +923,12 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                 onClick={() => runAutoSteerAllPositions()}
                 disabled={autoSteerState.loading || selectedFeatureIndex === null || !fen?.trim()}
               >
-                {autoSteerState.loading ? "处理中..." : "一键：按激活位置加入 Steer（替换）"}
+                {autoSteerState.loading ? "Processing..." : "One-click: add Steer at all activated positions (replace)"}
               </Button>
-              <span className="text-xs text-gray-500">
-                先点上方列表选中一个 feature，然后点击此按钮；会把该 feature 在所有激活位置同时 steer。
-              </span>
+
               {autoSteerState.value && (
                 <span className="text-xs text-gray-600">
-                  已加入 {autoSteerState.value.count} 个位置
+                  Added {autoSteerState.value.count} positions
                 </span>
               )}
             </div>
@@ -1018,7 +977,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                             onClick={() => removeSteeringNode(n.pos, n.feature)}
                             disabled={steeringState.loading}
                           >
-                            移除
+                            Remove
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -1026,15 +985,13 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                   </TableBody>
                 </Table>
               </div>
-            ) : (
-              <div className="text-sm text-gray-500 mb-4">暂无已选择的 feature，点击上方列表的“加入 Steer”。</div>
-            )}
+            ) : null}
 
             {steeringState.value && (
               <div className="space-y-4">
                 <div className="text-sm text-gray-700 space-y-1">
                   <div>
-                    <span className="font-medium">合法走法数:</span> {steeringState.value.statistics.total_legal_moves}{" "}
+                    <span className="font-medium">Total legal moves:</span> {steeringState.value.statistics.total_legal_moves}{" "}
                     <span className="font-medium ml-4">avg_logit_diff:</span>{" "}
                     {steeringState.value.statistics.avg_logit_diff.toFixed(6)}
                     {typeof steeringState.value.statistics.avg_prob_diff === "number" && (
@@ -1045,10 +1002,10 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                     )}
                   </div>
                   <div>
-                    <span className="font-medium">原始Value:</span> {steeringState.value.statistics.original_value?.toFixed(6) || "N/A"}{" "}
-                    <span className="font-medium ml-4">修改后Value:</span>{" "}
+                    <span className="font-medium">Original Value:</span> {steeringState.value.statistics.original_value?.toFixed(6) || "N/A"}{" "}
+                    <span className="font-medium ml-4">Modified Value:</span>{" "}
                     {steeringState.value.statistics.modified_value?.toFixed(6) || "N/A"}{" "}
-                    <span className="font-medium ml-4">Value差异:</span>{" "}
+                    <span className="font-medium ml-4">Value difference:</span>{" "}
                     <span className={(steeringState.value.statistics.value_diff ?? 0) >= 0 ? "text-green-600" : "text-red-600"}>
                       {((steeringState.value.statistics.value_diff ?? 0) >= 0 ? "+" : "") + (steeringState.value.statistics.value_diff?.toFixed(6) ?? "N/A")}
                     </span>
@@ -1057,7 +1014,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="bg-white border rounded p-3">
-                    <h4 className="font-semibold mb-2 text-sm">Promoting（概率提升最多 Top 5）</h4>
+                    <h4 className="font-semibold mb-2 text-sm">Promoting (Top 5 with highest probability increase)</h4>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1081,7 +1038,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                   </div>
 
                   <div className="bg-white border rounded p-3">
-                    <h4 className="font-semibold mb-2 text-sm">Inhibiting（概率下降最多 Top 5）</h4>
+                    <h4 className="font-semibold mb-2 text-sm">Inhibiting (Top 5 with highest probability decrease)</h4>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1107,7 +1064,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
 
                 {steeringState.value.top_moves_by_prob && steeringState.value.top_moves_by_prob.length > 0 && (
                   <div className="bg-white border rounded p-3">
-                    <h4 className="font-semibold mb-2 text-sm">Top Moves by Prob（前 10）</h4>
+                    <h4 className="font-semibold mb-2 text-sm">Top Moves by Prob (Top 10)</h4>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1142,17 +1099,16 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
             )}
           </div>
 
-          {/* Top Activation 显示 - 仅在多位置模式下显示（单位置模式由 GetFeatureFromFen 处理） */}
           {!isSinglePosition && selectedFeatureIndex !== null && (
             <Tabs defaultValue="fen-activations" className="w-full">
               <TabsList>
-                <TabsTrigger value="fen-activations">当前 FEN（64格激活）</TabsTrigger>
+                <TabsTrigger value="fen-activations">Current FEN (64 positions activated)</TabsTrigger>
                 <TabsTrigger value="top-activations">Top Activations</TabsTrigger>
               </TabsList>
               <TabsContent value="fen-activations" className="space-y-4">
                 {fenActivationState.error && (
                   <div className="text-red-500 font-bold text-center p-4 bg-red-50 rounded">
-                    错误:{" "}
+                    Error:{" "}
                     {fenActivationState.error instanceof Error
                       ? fenActivationState.error.message
                       : String(fenActivationState.error)}
@@ -1162,7 +1118,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                   <div className="flex items-center justify-center py-8">
                     <div className="text-center">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                      <p className="text-gray-600">正在获取当前 FEN 的 64 格激活...</p>
+                      <p className="text-gray-600">Getting 64 positions activated for current FEN...</p>
                     </div>
                   </div>
                 ) : (
@@ -1187,13 +1143,13 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                   <div className="flex items-center justify-center py-8">
                     <div className="text-center">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                      <p className="text-gray-600">正在获取 Top Activation 数据...</p>
+                      <p className="text-gray-600">Getting Top Activation data...</p>
                     </div>
                   </div>
                 ) : topActivations.length > 0 ? (
                   <div>
                     <h4 className="font-semibold mb-4">
-                      Feature #{selectedFeatureIndex} 的 Top Activations
+                      Feature #{selectedFeatureIndex} Top Activations
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                       {topActivations.map((sample, index) => (
@@ -1201,7 +1157,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                           <div className="text-center mb-2">
                             <div className="text-sm font-medium text-gray-700">Top #{index + 1}</div>
                             <div className="text-xs text-gray-500">
-                              最大激活值: {sample.activationStrength.toFixed(3)}
+                              Maximum activation value: {sample.activationStrength.toFixed(3)}
                             </div>
                           </div>
                           <ChessBoard
@@ -1222,7 +1178,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
                   </div>
                 ) : (
                   <div className="text-center py-8 text-gray-500">
-                    <p>未找到包含棋盘的激活样本</p>
+                    <p>No activation samples found with chessboard</p>
                   </div>
                 )}
               </TabsContent>

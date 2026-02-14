@@ -53,12 +53,12 @@ interface GetFeatureFromFenProps {
     featureIndex: number;
     activationValue: number;
   }) => void;
-  actionTypes?: Array<"add_to_source" | "set_as_target" | "add_to_steer">; // 指定要显示的操作按钮，默认显示所有
+  actionTypes?: Array<"add_to_source" | "set_as_target" | "add_to_steer">;
   actionButtonLabels?: {
     add_to_source?: string;
     set_as_target?: string;
     add_to_steer?: string;
-  }; // 自定义按钮文本
+  };
   showTopActivations?: boolean;
   showFenActivations?: boolean;
   /** When false, render only inner content (no Card wrapper). Use when parent already provides the card and title. */
@@ -74,21 +74,19 @@ export const GetFeatureFromFen = ({
   modelName = "lc0/BT4-1024x15x32h",
   saeComboId,
   onFeatureAction,
-  actionTypes = ["add_to_source", "set_as_target", "add_to_steer"], // 默认显示所有按钮
-  actionButtonLabels = {}, // 默认使用内置文本
+  actionTypes = ["add_to_source", "set_as_target", "add_to_steer"],
+  actionButtonLabels = {}, 
   showTopActivations = true,
   showFenActivations = true,
   wrapInCard = true,
   className,
 }: GetFeatureFromFenProps) => {
-  // 默认按钮文本
   const defaultLabels = {
-    add_to_source: "加入Source",
-    set_as_target: "设为Target",
-    add_to_steer: "加入Steer",
+    add_to_source: "Add to Source",
+    set_as_target: "Set as Target",
+    add_to_steer: "Add to Steer",
   };
   
-  // 合并自定义标签和默认标签
   const buttonLabels = {
     add_to_source: actionButtonLabels?.add_to_source || defaultLabels.add_to_source,
     set_as_target: actionButtonLabels?.set_as_target || defaultLabels.set_as_target,
@@ -97,11 +95,9 @@ export const GetFeatureFromFen = ({
   const [selectedFeatureIndex, setSelectedFeatureIndex] = useState<number | null>(null);
   const [topActivations, setTopActivations] = useState<TopActivationSample[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
-  // 存储每个 feature 的 top activation（只存储第一个用于预览）
   const [featureTopActivations, setFeatureTopActivations] = useState<Map<number, TopActivationSample | null>>(new Map());
   const [loadingFeatureTopActivations, setLoadingFeatureTopActivations] = useState<Set<number>>(new Set());
 
-  // 获取激活的features
   const [featuresState, fetchFeatures] = useAsyncFn(async () => {
     if (!fen || position < 0 || position > 63) {
       return null;
@@ -135,14 +131,12 @@ export const GetFeatureFromFen = ({
     const features = componentType === "attn" ? data.attn_features : data.mlp_features;
 
     if (features && Array.isArray(features)) {
-      // 按激活值降序排序
       return [...features].sort((a, b) => b.activation_value - a.activation_value);
     }
 
     return [];
   }, [fen, layer, position, componentType, modelName, saeComboId]);
 
-  // 构建字典名
   const getDictionaryName = useCallback(() => {
     const lorsaSuffix = componentType === "attn" ? "A" : "M";
     const baseDict = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${lorsaSuffix}`;
@@ -153,7 +147,6 @@ export const GetFeatureFromFen = ({
     return baseDict;
   }, [componentType, layer, saeComboId]);
 
-  // 解析analyze_fen响应
   const parseAnalyzeFen = useCallback((data: AnalyzeFenResponse): FenActivationData => {
     let activations: number[] | undefined = undefined;
     if (Array.isArray(data.feature_acts_indices) && Array.isArray(data.feature_acts_values)) {
@@ -180,10 +173,9 @@ export const GetFeatureFromFen = ({
     return { activations, zPatternIndices, zPatternValues };
   }, []);
 
-  // 获取当前FEN下feature的64格激活值
   const [fenActivationState, fetchFenActivationForSelectedFeature] = useAsyncFn(async () => {
     if (!fen?.trim()) {
-      throw new Error("FEN 不能为空");
+      throw new Error("FEN cannot be empty");
     }
     if (selectedFeatureIndex === null) {
       return null;
@@ -211,7 +203,6 @@ export const GetFeatureFromFen = ({
     return parseAnalyzeFen(data);
   }, [fen, selectedFeatureIndex, getDictionaryName, parseAnalyzeFen]);
 
-  // 辅助函数：解析 top activation 数据
   const parseTopActivationData = useCallback((camelData: any): TopActivationSample[] => {
     const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
     const allSamples: any[] = [];
@@ -222,7 +213,6 @@ export const GetFeatureFromFen = ({
       }
     }
 
-    // 查找包含FEN的样本并提取激活值
     const chessSamples: TopActivationSample[] = [];
 
     for (const sample of allSamples) {
@@ -240,7 +230,6 @@ export const GetFeatureFromFen = ({
               const boardRows = boardPart.split("/");
 
               if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
-                // 验证FEN格式
                 let isValidBoard = true;
                 let totalSquares = 0;
 
@@ -262,7 +251,6 @@ export const GetFeatureFromFen = ({
                 }
 
                 if (isValidBoard && totalSquares === 64) {
-                  // 处理稀疏激活数据
                   let activationsArray: number[] | undefined = undefined;
                   let maxActivation = 0;
 
@@ -310,11 +298,9 @@ export const GetFeatureFromFen = ({
       }
     }
 
-    // 按最大激活值排序
     return chessSamples.sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength));
   }, []);
 
-  // 获取指定feature的top activation（用于选中后的详细显示）
   const fetchTopActivationsForFeature = useCallback(
     async (featureIndex: number) => {
       setLoadingTopActivations(true);
@@ -350,7 +336,7 @@ export const GetFeatureFromFen = ({
         const topSamples = chessSamples.slice(0, 8);
         setTopActivations(topSamples);
       } catch (error) {
-        console.error("❌ 获取Top Activation数据失败:", error);
+        console.error("Failed to fetch top activation data:", error);
         setTopActivations([]);
       } finally {
         setLoadingTopActivations(false);
@@ -359,15 +345,12 @@ export const GetFeatureFromFen = ({
     [getDictionaryName, parseTopActivationData]
   );
 
-  // 获取单个 feature 的第一个 top activation（用于表格预览）
   const fetchFirstTopActivationForFeature = useCallback(
     async (featureIndex: number) => {
-      // 如果已经有缓存，跳过
       if (featureTopActivations.has(featureIndex)) {
         return;
       }
 
-      // 如果正在加载，跳过
       if (loadingFeatureTopActivations.has(featureIndex)) {
         return;
       }
@@ -411,7 +394,7 @@ export const GetFeatureFromFen = ({
           return newMap;
         });
       } catch (error) {
-        console.error(`❌ 获取 Feature #${featureIndex} 的 Top Activation 失败:`, error);
+        console.error(`Failed to fetch top activation for feature #${featureIndex}:`, error);
         setFeatureTopActivations((prev) => {
           const newMap = new Map(prev);
           newMap.set(featureIndex, null);
@@ -428,7 +411,6 @@ export const GetFeatureFromFen = ({
     [getDictionaryName, parseTopActivationData, featureTopActivations, loadingFeatureTopActivations]
   );
 
-  // 当选择的feature改变时，获取top activation和FEN激活值
   useEffect(() => {
     if (selectedFeatureIndex !== null) {
       if (showTopActivations) {
@@ -446,7 +428,6 @@ export const GetFeatureFromFen = ({
 
   const content = (
     <div className="space-y-4">
-          {/* 刷新按钮 */}
           <Button
             onClick={() => fetchFeatures()}
             disabled={featuresState.loading || !fen || position < 0 || position > 63}
@@ -455,25 +436,23 @@ export const GetFeatureFromFen = ({
             {featuresState.loading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                加载中...
+                Loading...
               </>
             ) : (
-              "获取激活的 Features"
+              "Get activated Features"
             )}
           </Button>
 
-          {/* 错误显示 */}
           {featuresState.error && (
             <div className="text-red-500 font-bold text-center p-4 bg-red-50 rounded">
-              错误: {featuresState.error instanceof Error ? featuresState.error.message : String(featuresState.error)}
+              Error: {featuresState.error instanceof Error ? featuresState.error.message : String(featuresState.error)}
             </div>
           )}
 
-          {/* Features列表 */}
           {features.length > 0 && (
             <div className="space-y-4">
               <h3 className="font-semibold">
-                激活的 Features ({features.length} 个)
+                Activated Features ({features.length} features)
               </h3>
               <div className="max-h-96 overflow-y-auto">
                 <Table>
@@ -521,7 +500,7 @@ export const GetFeatureFromFen = ({
                             target="_blank"
                             rel="noopener noreferrer"
                           >
-                            查看详情
+                            View samples
                           </Link>
                         </TableCell>
                         <TableCell>
@@ -586,30 +565,27 @@ export const GetFeatureFromFen = ({
                 </Table>
                 {features.length > 50 && (
                   <p className="text-sm text-gray-500 mt-2">
-                    显示前50个features，总共{features.length}个
+                    Displaying first 50 features, total {features.length} features
                   </p>
                 )}
               </div>
             </div>
           )}
 
-          {/* Top Activations 预览区域 */}
           {features.length > 0 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold">
-                  Top Activations 预览
+                  Top Activations preview
                 </h3>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={async () => {
-                    // 批量加载所有features的top activation（约30个）
                     for (const feature of features) {
                       if (!featureTopActivations.has(feature.feature_index) && 
                           !loadingFeatureTopActivations.has(feature.feature_index)) {
                         await fetchFirstTopActivationForFeature(feature.feature_index);
-                        // 添加小延迟避免同时发送太多请求
                         await new Promise(resolve => setTimeout(resolve, 100));
                       }
                     }
@@ -619,10 +595,10 @@ export const GetFeatureFromFen = ({
                   {loadingFeatureTopActivations.size > 0 ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      加载中...
+                      Loading...
                     </>
                   ) : (
-                    `加载所有Features的Top Activation (${features.length}个)`
+                    `Load all features' top activation (${features.length} features)`
                   )}
                 </Button>
               </div>
@@ -651,7 +627,7 @@ export const GetFeatureFromFen = ({
                       {loadingFeatureTopActivations.has(feature.feature_index) ? (
                         <div className="flex flex-col items-center justify-center py-4">
                           <Loader2 className="w-6 h-6 animate-spin text-gray-400 mb-2" />
-                          <span className="text-xs text-gray-400">加载中...</span>
+                          <span className="text-xs text-gray-400">Loading...</span>
                         </div>
                       ) : featureTopActivations.has(feature.feature_index) ? (
                         (() => {
@@ -663,7 +639,7 @@ export const GetFeatureFromFen = ({
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="cursor-pointer block max-w-full"
-                                title="点击在Feature页面查看完整详情"
+                                title="Click to view full details in Feature page"
                               >
                                 <div className="max-w-full overflow-hidden flex justify-center" style={{ maxWidth: "100%" }}>
                                   <div className="origin-center shrink-0" style={{ transform: "scale(0.65)" }}>
@@ -684,7 +660,7 @@ export const GetFeatureFromFen = ({
                           } else {
                             return (
                               <div className="text-center py-4">
-                                <span className="text-xs text-gray-400">无数据</span>
+                                <span className="text-xs text-gray-400">No data</span>
                               </div>
                             );
                           }
@@ -699,7 +675,7 @@ export const GetFeatureFromFen = ({
                           }}
                           className="text-xs"
                         >
-                          加载
+                          Load
                         </Button>
                       )}
                     </div>
@@ -711,23 +687,22 @@ export const GetFeatureFromFen = ({
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        查看详情
+                        View details
                       </Link>
                     </div>
                   </div>
                 ))}
               </div>
               <p className="text-sm text-gray-500 text-center">
-                显示所有 {features.length} 个features的Top Activation预览，点击棋盘可在Feature页面查看完整详情
+                Displaying top activation preview for all {features.length} features, click on the chessboard to view full details in Feature page
               </p>
             </div>
           )}
 
-          {/* 选中的Feature详情 - Top Activations和FEN激活值 */}
           {selectedFeatureIndex !== null && (showTopActivations || showFenActivations) && (
             <Tabs defaultValue="fen-activations" className="w-full">
               <TabsList>
-                {showFenActivations && <TabsTrigger value="fen-activations">当前FEN（64格激活）</TabsTrigger>}
+                {showFenActivations && <TabsTrigger value="fen-activations">Current FEN (64 positions activated)</TabsTrigger>}
                 {showTopActivations && <TabsTrigger value="top-activations">Top Activations</TabsTrigger>}
               </TabsList>
               
@@ -735,7 +710,7 @@ export const GetFeatureFromFen = ({
                 <TabsContent value="fen-activations" className="space-y-4">
                   {fenActivationState.error && (
                     <div className="text-red-500 font-bold text-center p-4 bg-red-50 rounded">
-                      错误:{" "}
+                      Error:{" "}
                       {fenActivationState.error instanceof Error
                         ? fenActivationState.error.message
                         : String(fenActivationState.error)}
@@ -745,7 +720,7 @@ export const GetFeatureFromFen = ({
                     <div className="flex items-center justify-center py-8">
                       <div className="text-center">
                         <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
-                        <p className="text-gray-600">正在获取当前FEN的64格激活...</p>
+                        <p className="text-gray-600">Getting 64 positions activated for current FEN...</p>
                       </div>
                     </div>
                   ) : (
@@ -773,13 +748,13 @@ export const GetFeatureFromFen = ({
                     <div className="flex items-center justify-center py-8">
                       <div className="text-center">
                         <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
-                        <p className="text-gray-600">正在获取Top Activation数据...</p>
+                        <p className="text-gray-600">Getting top activation data...</p>
                       </div>
                     </div>
                   ) : topActivations.length > 0 ? (
                     <div>
                       <h4 className="font-semibold mb-4">
-                        Feature #{selectedFeatureIndex} 的Top Activations
+                        Feature #{selectedFeatureIndex} top activations
                       </h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         {topActivations.map((sample, index) => (
@@ -787,7 +762,7 @@ export const GetFeatureFromFen = ({
                             <div className="text-center mb-2">
                               <div className="text-sm font-medium text-gray-700">Top #{index + 1}</div>
                               <div className="text-xs text-gray-500">
-                                最大激活值: {sample.activationStrength.toFixed(3)}
+                                Maximum activation value: {sample.activationStrength.toFixed(3)}
                               </div>
                             </div>
                             <div className="max-w-full overflow-hidden flex justify-center">
@@ -812,7 +787,7 @@ export const GetFeatureFromFen = ({
                     </div>
                   ) : (
                     <div className="text-center py-8 text-gray-500">
-                      <p>未找到包含棋盘的激活样本</p>
+                      <p>No activation samples found with chessboard</p>
                     </div>
                   )}
                 </TabsContent>
