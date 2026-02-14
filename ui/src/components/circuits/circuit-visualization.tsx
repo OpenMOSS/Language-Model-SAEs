@@ -2056,9 +2056,10 @@ export const CircuitVisualization = () => {
         </div>
       )}
 
-      {/* Position Feature Analysis: single config row + PosFeatureCard (no duplicate title/card) */}
+      {/* Position Feature Analysis: section entry + config row + PosFeatureCard (single title inside card) */}
       {displayLinkGraphData && (!displayLinkGraphData.metadata?.sourceFileNames || displayLinkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="w-full max-w-6xl mx-auto mb-6">
+          <h3 className="text-lg font-semibold mb-3">Position Feature Analysis</h3>
           <div className="flex flex-wrap items-center gap-3 mb-3">
             <label className="text-sm font-medium">Layer:</label>
             <input

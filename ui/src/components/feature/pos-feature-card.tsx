@@ -748,11 +748,10 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     <Card key={`pos-feature-card-${JSON.stringify(positions)}`} className="w-full">
       <CardHeader>
         <CardTitle>
-          位置 Feature 分析
           <div className="text-sm font-normal mt-2 text-gray-600">
             FEN: <code className="bg-gray-100 px-2 py-1 rounded text-xs">{fen}</code>
             <br />
-            层: {layer} | 位置: {Array.isArray(positions) ? positions.join(", ") : positions} | 组件: {componentType === "attn" ? "Attention" : "MLP"}
+            Layer: {layer} | Positions: {Array.isArray(positions) ? positions.join(", ") : positions} | Component: {componentType === "attn" ? "Attention" : "MLP"}
           </div>
         </CardTitle>
       </CardHeader>

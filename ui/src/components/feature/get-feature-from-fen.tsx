@@ -830,11 +830,11 @@ export const GetFeatureFromFen = ({
     <Card className={className}>
       <CardHeader>
         <CardTitle>
-          位置 Feature 分析
+          Position Feature Analysis
           <div className="text-sm font-normal mt-2 text-gray-600">
             FEN: <code className="bg-gray-100 px-2 py-1 rounded text-xs">{fen}</code>
             <br />
-            层: {layer} | 位置: {position} | 组件: {componentType === "attn" ? "Attention (LoRSA)" : "MLP (Transcoder)"}
+            Layer: {layer} | Position: {position} | Component: {componentType === "attn" ? "Attention (LoRSA)" : "MLP (Transcoder)"}
           </div>
         </CardTitle>
       </CardHeader>
