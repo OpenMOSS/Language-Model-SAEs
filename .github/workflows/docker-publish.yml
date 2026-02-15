@@ -28,8 +28,8 @@ jobs:
           - context: .
             file: server/Dockerfile
             image: ghcr.io/${{ github.repository }}-backend
-          - context: ui-ssr
-            file: ui-ssr/Dockerfile
+          - context: ui
+            file: ui/Dockerfile
             image: ghcr.io/${{ github.repository }}-frontend
 
     steps:

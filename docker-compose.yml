@@ -26,7 +26,7 @@ services:
 
   frontend:
     build:
-      context: ui-ssr
+      context: ui
       dockerfile: Dockerfile
     restart: always
     ports:

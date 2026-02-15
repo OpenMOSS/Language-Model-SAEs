@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "ui-ssr",
+      "name": "ui",
       "dependencies": {
         "@faker-js/faker": "^10.0.0",
         "@msgpack/msgpack": "^3.0.0-beta2",

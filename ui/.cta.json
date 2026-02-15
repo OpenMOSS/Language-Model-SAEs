@@ -1,5 +1,5 @@
 {
-  "projectName": "ui-ssr",
+  "projectName": "ui",
   "mode": "file-router",
   "typescript": true,
   "tailwind": true,

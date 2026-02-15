@@ -1,134 +1,147 @@
-import React, { useEffect, useRef, useCallback } from 'react';
-// @ts-ignore
-import d3 from "../static_js/d3";
+import React, { useCallback, useMemo } from 'react'
+import type { PositionedNode } from '@/types/circuit'
+import type { EdgeIndex } from '@/utils/circuit-index'
+import { getNodeColor } from '@/utils/circuit'
+import { isNodeConnected } from '@/utils/circuit-index'
 
 interface NodesProps {
-  positionedNodes: any[];
-  positionedLinks: any[];
-  visState: { 
-    clickedId: string | null; 
-    hoveredId: string | null;
-  };
-  onNodeMouseEnter: (nodeId: string) => void;
-  onNodeMouseLeave: () => void;
-  onNodeClick: (nodeId: string, metaKey: boolean) => void;
+  positionedNodes: PositionedNode[]
+  edgeIndex: EdgeIndex
+  visState: {
+    clickedId: string | null
+    hoveredId: string | null
+    selectedIds?: string[]
+  }
 }
 
-export const Nodes: React.FC<NodesProps> = React.memo(({
-  positionedNodes,
-  positionedLinks,
-  visState,
-  onNodeMouseEnter,
-  onNodeMouseLeave,
-  onNodeClick
-}) => {
+export const Nodes: React.FC<NodesProps> = React.memo(
+  ({ positionedNodes, edgeIndex, visState }) => {
+    const isConnected = useCallback(
+      (nodeId: string) => {
+        if (!visState.clickedId) return false
+        return isNodeConnected(edgeIndex, visState.clickedId, nodeId)
+      },
+      [visState.clickedId, edgeIndex],
+    )
 
-  const svgRef = useRef<SVGSVGElement>(null);
+    const isErrorNode = useCallback(
+      (d: PositionedNode) =>
+        d.featureType === 'lorsa error' ||
+        d.featureType === 'mlp reconstruction error',
+      [],
+    )
 
-  // Memoize the event handlers to prevent them from being recreated on every render
-  const handleMouseEnter = useCallback((nodeId: string) => {
-    onNodeMouseEnter(nodeId);
-  }, [onNodeMouseEnter]);
+    const { regularNodes, errorNodes } = useMemo(() => {
+      const regular: PositionedNode[] = []
+      const error: PositionedNode[] = []
+      for (const node of positionedNodes) {
+        if (isErrorNode(node)) {
+          error.push(node)
+        } else {
+          regular.push(node)
+        }
+      }
+      return { regularNodes: regular, errorNodes: error }
+    }, [positionedNodes, isErrorNode])
 
-  const handleMouseLeave = useCallback(() => {
-    onNodeMouseLeave();
-  }, [onNodeMouseLeave]);
+    return (
+      <g>
+        {regularNodes.map((d) => (
+          <circle
+            key={d.nodeId}
+            className="node"
+            cx={d.pos[0]}
+            cy={d.pos[1]}
+            r={3}
+            fill={getNodeColor(d.featureType)}
+            stroke={
+              d.nodeId === visState.clickedId
+                ? '#ef4444'
+                : visState.selectedIds?.includes(d.nodeId)
+                  ? '#22c55e'
+                  : '#000'
+            }
+            strokeWidth={
+              d.nodeId === visState.clickedId ||
+              visState.selectedIds?.includes(d.nodeId) ||
+              isConnected(d.nodeId)
+                ? '1.5'
+                : '0.5'
+            }
+            style={{
+              pointerEvents: 'none',
+              transition: 'all 0.2s ease',
+            }}
+          />
+        ))}
 
-  const handleClick = useCallback((nodeId: string, metaKey: boolean) => {
-    onNodeClick(nodeId, metaKey);
-  }, [onNodeClick]);
+        {errorNodes.map((d) => (
+          <rect
+            key={d.nodeId}
+            className="node"
+            x={d.pos[0] - 3}
+            y={d.pos[1] - 3}
+            width={6}
+            height={6}
+            fill={getNodeColor(d.featureType)}
+            stroke={
+              d.nodeId === visState.clickedId
+                ? '#ef4444'
+                : visState.selectedIds?.includes(d.nodeId)
+                  ? '#22c55e'
+                  : '#000'
+            }
+            strokeWidth={
+              d.nodeId === visState.clickedId ||
+              visState.selectedIds?.includes(d.nodeId) ||
+              isConnected(d.nodeId)
+                ? '1.5'
+                : '0.5'
+            }
+            style={{
+              pointerEvents: 'none',
+              transition: 'all 0.2s ease',
+            }}
+          />
+        ))}
 
-  useEffect(() => {
-    if (!svgRef.current || !positionedNodes.length) return;
+        {regularNodes.map((d) => (
+          <circle
+            key={`hover-${d.nodeId}`}
+            className="hover-indicator"
+            cx={d.pos[0]}
+            cy={d.pos[1]}
+            r={6}
+            stroke="#f0f"
+            strokeWidth={2}
+            fill="none"
+            style={{
+              pointerEvents: 'none',
+              opacity: d.nodeId === visState.hoveredId ? 1 : 0,
+            }}
+          />
+        ))}
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
+        {errorNodes.map((d) => (
+          <rect
+            key={`hover-${d.nodeId}`}
+            className="hover-indicator"
+            x={d.pos[0] - 6}
+            y={d.pos[1] - 6}
+            width={12}
+            height={12}
+            stroke="#f0f"
+            strokeWidth={2}
+            fill="none"
+            style={{
+              pointerEvents: 'none',
+              opacity: d.nodeId === visState.hoveredId ? 1 : 0,
+            }}
+          />
+        ))}
+      </g>
+    )
+  },
+)
 
-    // Draw nodes
-    const nodeSel = svg.selectAll(".node").data(positionedNodes, (d: any) => d.nodeId);
-    
-    // Enter: create new nodes
-    const nodeEnter = nodeSel.enter().append("circle")
-      .attr("class", "node")
-      .attr("cx", (d: any) => d.pos[0])
-      .attr("cy", (d: any) => d.pos[1])
-      .attr("r", 4)
-      .attr("fill", (d: any) => d.nodeColor)
-      .attr("stroke", "#000")
-      .attr("stroke-width", "0.5")
-      .classed("clicked", (d: any) => d.nodeId === visState.clickedId)
-      .classed("connected", (d: any) => {
-        if (!visState.clickedId) return false;
-        // Check if this node is connected to the clicked node
-        return positionedLinks.some(link => 
-          (link.source === visState.clickedId && link.target === d.nodeId) ||
-          (link.target === visState.clickedId && link.source === d.nodeId)
-        );
-      })
-      .style("cursor", "pointer")
-      .on("mouseenter", function(event: any, d: any) {
-        handleMouseEnter(d.nodeId);
-      })
-      .on("mouseleave", function(event: any, d: any) {
-        handleMouseLeave();
-      })
-      .on("click", function(event: any, d: any) {
-        event.stopPropagation(); // Prevent event bubbling
-        const metaKey = event.metaKey || event.ctrlKey;
-        handleClick(d.nodeId, metaKey);
-      });
-    
-    // Merge enter and update selections to apply attributes to both new and existing elements
-    nodeSel.merge(nodeEnter)
-      .attr("cx", (d: any) => d.pos[0])
-      .attr("cy", (d: any) => d.pos[1])
-      .attr("fill", (d: any) => d.nodeColor)
-      .classed("clicked", (d: any) => d.nodeId === visState.clickedId)
-      .classed("connected", (d: any) => {
-        if (!visState.clickedId) return false;
-        // Check if this node is connected to the clicked node
-        return positionedLinks.some(link => 
-          (link.source === visState.clickedId && link.target === d.nodeId) ||
-          (link.target === visState.clickedId && link.source === d.nodeId)
-        );
-      })
-      .style("cursor", "pointer")
-      .on("mouseenter", function(event: any, d: any) {
-        handleMouseEnter(d.nodeId);
-      })
-      .on("mouseleave", function(event: any, d: any) {
-        handleMouseLeave();
-      })
-      .on("click", function(event: any, d: any) {
-        event.stopPropagation(); // Prevent event bubbling
-        const metaKey = event.metaKey || event.ctrlKey;
-        handleClick(d.nodeId, metaKey);
-      });
-
-    // Draw hover indicators (only when hovering over nodes)
-    svg.selectAll(".hover-indicator").data(positionedNodes, (d: any) => d.nodeId)
-      .enter().append("circle")
-      .attr("class", "hover-indicator")
-      .attr("cx", (d: any) => d.pos[0])
-      .attr("cy", (d: any) => d.pos[1])
-      .attr("r", 6)
-      .attr("stroke", "#f0f")
-      .attr("stroke-width", 2)
-      .attr("fill", "none")
-      .style("opacity", (d: any) => d.nodeId === visState.hoveredId ? 1 : 0);
-
-    // Cleanup function to clear hover state when component unmounts or nodes change
-    return () => {
-      handleMouseLeave();
-    };
-  }, [positionedNodes, positionedLinks, visState, handleMouseEnter, handleMouseLeave, handleClick]);
-
-  return (
-    <g 
-      ref={svgRef} 
-      className="nodes"
-    />
-  );
-});
-
-Nodes.displayName = 'Nodes'; 
+Nodes.displayName = 'Nodes'

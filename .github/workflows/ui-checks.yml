@@ -1,4 +1,4 @@
-name: UI SSR Checks
+name: UI Checks
 
 on:
   push:
@@ -6,15 +6,15 @@ on:
       - main
       - dev
     paths:
-      - "ui-ssr/**"
-      - ".github/workflows/ui-ssr-checks.yml"
+      - "ui/**"
+      - ".github/workflows/ui-checks.yml"
   pull_request:
     branches:
       - main
       - dev
     paths:
-      - "ui-ssr/**"
-      - ".github/workflows/ui-ssr-checks.yml"
+      - "ui/**"
+      - ".github/workflows/ui-checks.yml"
 
 permissions:
   contents: read
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ui-ssr
+        working-directory: ui
 
     steps:
       - name: Checkout repository

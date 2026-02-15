@@ -1,48 +1,53 @@
-import React, { useEffect, useRef } from 'react';
-// @ts-ignore
-import d3 from "../static_js/d3";
+import React from 'react'
+import * as d3 from 'd3'
 
 interface RowBackgroundsProps {
-  dimensions: { width: number; height: number };
-  positionedNodes: any[];
-  y: d3.ScaleBand<number>;
+  dimensions: { width: number; height: number }
+  positionedNodes: { layer: number; featureType: string }[]
+  y: d3.ScaleBand<number>
 }
 
-export const RowBackgrounds: React.FC<RowBackgroundsProps> = React.memo(({
-  dimensions,
-  positionedNodes,
-  y
-}) => {
-  const svgRef = useRef<SVGSVGElement>(null);
+const SIDE_PADDING = 70
 
-  useEffect(() => {
-    if (!svgRef.current || !positionedNodes.length) return;
+export const RowBackgrounds: React.FC<RowBackgroundsProps> = React.memo(
+  ({ dimensions, positionedNodes, y }) => {
+    const hasEmbedding = positionedNodes.some(
+      (d) => d.featureType === 'embedding',
+    )
+    const hasLogit = positionedNodes.some((d) => d.featureType === 'logit')
+    const yNumTicks = (d3.max(positionedNodes, (d) => d.layer) || 0) + 2
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
+    return (
+      <g>
+        {d3.range(yNumTicks).map((layerIdx: number) => {
+          const yPos = y(layerIdx) || 0
+          const rowHeight = y.bandwidth() - 1
 
-    const yNumTicks = d3.max(positionedNodes, (d: any) => d.layerIdx) + 1;
-    
-    // Draw alternating row backgrounds
-    d3.range(yNumTicks).forEach((layerIdx: number) => {
-      const yPos = y(layerIdx);
-      const rowHeight = y.bandwidth();
-      
-      // Alternate between two subtle background colors
-      const backgroundColor = layerIdx % 2 === 0 ? "#F5F4EE" : "#EBE9E0";
-      
-      svg.append("rect")
-        .attr("x", 0)
-        .attr("y", yPos)
-        .attr("width", dimensions.width)
-        .attr("height", rowHeight)
-        .attr("fill", backgroundColor);
-    });
-  }, [dimensions, positionedNodes, y]);
+          let backgroundColor: string
+          if (hasEmbedding && layerIdx === 0) {
+            backgroundColor = '#e5e7eb' // Embedding - slate with slight purple tint
+          } else if (hasLogit && layerIdx === yNumTicks - 1) {
+            backgroundColor = '#e8e4e0' // Logits - slate with slight warm tint
+          } else if ((layerIdx - (hasEmbedding ? 1 : 0)) % 2 === 1) {
+            backgroundColor = '#e2e8f0' // MLP - original slate
+          } else {
+            backgroundColor = '#e0e7ef' // Attention - slate with slight blue tint
+          }
 
-  return (
-    <g ref={svgRef} className="row-backgrounds" />
-  );
-});
+          return (
+            <rect
+              key={layerIdx}
+              x={SIDE_PADDING}
+              y={yPos}
+              width={dimensions.width}
+              height={rowHeight}
+              fill={backgroundColor}
+            />
+          )
+        })}
+      </g>
+    )
+  },
+)
 
-RowBackgrounds.displayName = 'RowBackgrounds'; 
+RowBackgrounds.displayName = 'RowBackgrounds'

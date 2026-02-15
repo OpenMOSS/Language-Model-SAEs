@@ -65,7 +65,7 @@ A forked version of `TransformerLens` is also included in the dependencies to pr
 If you want to use the visualization tools, you also need to install the required packages for the frontend, which uses [bun](https://bun.sh/) for dependency management. Follow the instructions on the website to install it, and then run the following command:
 
 ```bash
-cd ui-ssr
+cd ui
 bun install
 ```
 
