@@ -279,9 +279,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 ln_q_w_local = mhsa.ln_q.w[lorsa_qk_indices // qk_exp_factor]  # type: ignore[attr-defined]
                 if mhsa.cfg.n_key_value_heads is not None:
                     ln_k_w_local = torch.repeat_interleave(
-                        mhsa.ln_k.w,
+                        mhsa.ln_k.w,  # type: ignore[attr-defined]
                         mhsa.cfg.n_heads // mhsa.cfg.n_key_value_heads,
-                        dim=0,  # type: ignore[attr-defined]
+                        dim=0,
                     )[lorsa_qk_indices // qk_exp_factor]
                 else:
                     ln_k_w_local = mhsa.ln_k.w[lorsa_qk_indices // qk_exp_factor]  # type: ignore[attr-defined]
