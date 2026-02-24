@@ -55,7 +55,6 @@ export const FeatureInteractionPage = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState<LoadingStatus>({ loaded: false, loading: false });
 
-  // 从 localStorage 读取 sae_combo_id
   useEffect(() => {
     const stored = window.localStorage.getItem(LOCAL_STORAGE_KEY);
     if (stored) {
@@ -63,7 +62,6 @@ export const FeatureInteractionPage = () => {
     }
   }, []);
 
-  // 监听 localStorage 变化
   useEffect(() => {
     const handleStorageChange = () => {
       const stored = window.localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -86,7 +84,6 @@ export const FeatureInteractionPage = () => {
     };
   }, [saeComboId]);
 
-  // 检查全局加载状态
   const checkLoadingStatus = useCallback(async () => {
     if (!saeComboId) return;
 
@@ -116,7 +113,7 @@ export const FeatureInteractionPage = () => {
     return () => clearInterval(interval);
   }, [checkLoadingStatus]);
 
-  // 添加source feature
+  // Add source feature
   const addSourceFeature = useCallback((featureIndex: number, activationValue: number) => {
     const newFeature: FeatureNode = {
       layer,
@@ -126,7 +123,7 @@ export const FeatureInteractionPage = () => {
       activation_value: activationValue,
     };
     setSourceFeatures(prev => {
-      // 检查是否已存在
+      // Check if already exists
       if (prev.some(f => f.layer === newFeature.layer && f.pos === newFeature.pos && f.feature === newFeature.feature && f.feature_type === newFeature.feature_type)) {
         return prev;
       }
@@ -134,7 +131,7 @@ export const FeatureInteractionPage = () => {
     });
   }, [layer, position, componentType]);
 
-  // 设置target feature
+  // Set target feature
   const setTargetFeatureByIndex = useCallback((featureIndex: number, activationValue: number) => {
     const newFeature: FeatureNode = {
       layer,
@@ -146,15 +143,15 @@ export const FeatureInteractionPage = () => {
     setTargetFeature(newFeature);
   }, [layer, position, componentType]);
 
-  // 移除source feature
+  // Remove source feature
   const removeSourceFeature = useCallback((index: number) => {
     setSourceFeatures(prev => prev.filter((_, i) => i !== index));
   }, []);
 
-  // 运行feature interaction
+  // Run feature interaction
   const runFeatureInteraction = useCallback(async () => {
     if (!fen.trim() || sourceFeatures.length === 0 || !targetFeature || !saeComboId) {
-      alert('请确保已设置FEN、选择至少一个source feature和一个target feature，并选择SAE组合');
+      alert('Please ensure FEN is set, at least one source feature and one target feature are selected, and an SAE combo is selected');
       return;
     }
 
@@ -162,7 +159,7 @@ export const FeatureInteractionPage = () => {
     setInteractResult(null);
 
     try {
-      // 使用第一个source feature作为steering node
+      // Use the first source feature as the steering node
       const sourceFeature = sourceFeatures[0];
 
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/interaction/analyze_node_interaction`, {
@@ -188,7 +185,7 @@ export const FeatureInteractionPage = () => {
       setInteractResult(result);
     } catch (error) {
       console.error('Failed to analyze feature interaction:', error);
-      alert(`分析失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      alert(`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setAnalyzing(false);
     }
@@ -201,7 +198,7 @@ export const FeatureInteractionPage = () => {
         <div className="mb-6">
           <h1 className="text-3xl font-bold">Feature Interaction Analysis</h1>
           <p className="text-gray-600 mt-2">
-            分析两个features之间的交互影响，探索神经网络中的因果关系
+            Analyze the interaction between two features, explore the causal relationships in the neural network
           </p>
         </div>
 
@@ -213,25 +210,25 @@ export const FeatureInteractionPage = () => {
         {/* Loading Status */}
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>全局模型加载状态</CardTitle>
+            <CardTitle>Global Model Loading Status</CardTitle>
           </CardHeader>
           <CardContent>
             {loadingStatus.error ? (
               <div className="text-red-600">
-                加载状态检查失败: {loadingStatus.error}
+                Loading status check failed: {loadingStatus.error}
               </div>
             ) : loadingStatus.loading ? (
               <div className="flex items-center space-x-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>正在加载模型: {loadingStatus.model_name} ({loadingStatus.combo_id})</span>
+                <span>Loading model: {loadingStatus.model_name} ({loadingStatus.combo_id})</span>
               </div>
             ) : loadingStatus.loaded ? (
               <div className="text-green-600">
-                ✅ 模型已加载: {loadingStatus.model_name} ({loadingStatus.combo_id})
+                ✅ Model loaded: {loadingStatus.model_name} ({loadingStatus.combo_id})
               </div>
             ) : (
               <div className="text-gray-500">
-                等待加载状态...
+                Waiting for loading status...
               </div>
             )}
           </CardContent>
@@ -245,7 +242,7 @@ export const FeatureInteractionPage = () => {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
               <div className="space-y-2">
-                <Label htmlFor="fen-input">FEN字符串</Label>
+                <Label htmlFor="fen-input">FEN string</Label>
                 <Input
                   id="fen-input"
                   value={fen}
@@ -255,7 +252,7 @@ export const FeatureInteractionPage = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="layer-input">层 (Layer)</Label>
+                <Label htmlFor="layer-input">Layer (Layer)</Label>
                 <Input
                   id="layer-input"
                   type="number"
@@ -267,7 +264,7 @@ export const FeatureInteractionPage = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="position-input">位置 (Position)</Label>
+                <Label htmlFor="position-input">Position (Position)</Label>
                 <Input
                   id="position-input"
                   type="number"
@@ -279,14 +276,14 @@ export const FeatureInteractionPage = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="component-type">组件类型</Label>
+                <Label htmlFor="component-type">Component Type</Label>
                 <select
                   id="component-type"
                   value={componentType}
                   onChange={(e) => setComponentType(e.target.value as "attn" | "mlp")}
                   className="w-full p-2 border rounded bg-white"
                 >
-                  <option value="attn">Attention (LoRSA)</option>
+                  <option value="attn">Attention (Lorsa)</option>
                   <option value="mlp">MLP (Transcoder)</option>
                 </select>
               </div>
@@ -332,10 +329,10 @@ export const FeatureInteractionPage = () => {
             <CardHeader>
               <CardTitle>Source Features (Steering)</CardTitle>
               <p className="text-sm text-gray-600">
-                已选择 {sourceFeatures.length} 个steering features
+                Selected {sourceFeatures.length} steering features
                 {sourceFeatures.length > 0 && (
                   <span className="text-xs text-gray-500 ml-2">
-                    (将使用第一个feature进行steering)
+                    (The first feature will be used for steering)
                   </span>
                 )}
               </p>
@@ -375,7 +372,7 @@ export const FeatureInteractionPage = () => {
                   </TableBody>
                 </Table>
               ) : (
-                <p className="text-gray-500 text-sm">还未选择source features</p>
+                <p className="text-gray-500 text-sm">No source features selected</p>
               )}
             </CardContent>
           </Card>
@@ -384,7 +381,7 @@ export const FeatureInteractionPage = () => {
           <Card>
             <CardHeader>
               <CardTitle>Target Feature</CardTitle>
-              <p className="text-sm text-gray-600">选择一个target feature来观察激活变化</p>
+              <p className="text-sm text-gray-600">Select a target feature to observe activation changes</p>
             </CardHeader>
             <CardContent>
               {targetFeature ? (
@@ -392,7 +389,7 @@ export const FeatureInteractionPage = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="font-semibold">
-                        {targetFeature.feature_type === 'lorsa' ? 'LoRSA' : 'TC'} Feature #{targetFeature.feature}
+                        {targetFeature.feature_type === 'lorsa' ? 'Lorsa' : 'TC'} Feature #{targetFeature.feature}
                       </div>
                       <div className="text-sm text-gray-600">
                         Layer {targetFeature.layer}, Position {targetFeature.pos}
@@ -413,7 +410,7 @@ export const FeatureInteractionPage = () => {
                   </div>
                 </div>
               ) : (
-                <p className="text-gray-500 text-sm">还未选择target feature</p>
+                <p className="text-gray-500 text-sm">No target feature selected</p>
               )}
             </CardContent>
           </Card>
@@ -422,7 +419,7 @@ export const FeatureInteractionPage = () => {
         {/* Run Analysis */}
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>运行分析</CardTitle>
+            <CardTitle>Run Analysis</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center space-x-4">
@@ -454,10 +451,10 @@ export const FeatureInteractionPage = () => {
                 {analyzing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    分析中...
+                    Analyzing...
                   </>
                 ) : (
-                  '运行Feature Interaction'
+                  'Run Feature Interaction'
                 )}
               </Button>
               <span className="text-sm text-gray-600">
@@ -471,30 +468,30 @@ export const FeatureInteractionPage = () => {
         {interactResult && (
           <Card>
             <CardHeader>
-              <CardTitle>分析结果</CardTitle>
+              <CardTitle>Analysis Results</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 bg-blue-50 rounded border">
-                    <h4 className="font-semibold mb-2">激活值变化</h4>
+                    <h4 className="font-semibold mb-2">Activation Value Change</h4>
                     <div className="space-y-1 text-sm">
-                      <div>原始激活: {interactResult.original_activation?.toFixed(6)}</div>
-                      <div>修改后激活: {interactResult.modified_activation?.toFixed(6)}</div>
+                      <div>Original Activation: {interactResult.original_activation?.toFixed(6)}</div>
+                      <div>Modified Activation: {interactResult.modified_activation?.toFixed(6)}</div>
                       <div className={interactResult.activation_change > 0 ? 'text-green-600' : 'text-red-600'}>
-                        变化: {interactResult.activation_change?.toFixed(6)}
+                        Change: {interactResult.activation_change?.toFixed(6)}
                       </div>
                       <div className={interactResult.activation_ratio > 1 ? 'text-green-600' : interactResult.activation_ratio < 1 ? 'text-red-600' : 'text-gray-600'}>
-                        倍数: {interactResult.activation_ratio === Number.POSITIVE_INFINITY ? '∞' : interactResult.activation_ratio?.toFixed(4) + 'x'}
+                        Ratio: {interactResult.activation_ratio === Number.POSITIVE_INFINITY ? '∞' : interactResult.activation_ratio?.toFixed(4) + 'x'}
                       </div>
                     </div>
                   </div>
                   <div className="p-4 bg-green-50 rounded border">
-                    <h4 className="font-semibold mb-2">Steering信息</h4>
+                    <h4 className="font-semibold mb-2">Steering Information</h4>
                     <div className="space-y-1 text-sm">
                       <div>Scale: {interactResult.steering_scale}</div>
                       <div>Target: {interactResult.target_node}</div>
-                      <div>Steering节点数: {interactResult.steering_details?.length || 0}</div>
+                      <div>Steering Node Count: {interactResult.steering_details?.length || 0}</div>
                     </div>
                   </div>
                 </div>
@@ -502,13 +499,13 @@ export const FeatureInteractionPage = () => {
                 {/* Steering Details */}
                 {interactResult.steering_details && interactResult.steering_details.length > 0 && (
                   <div className="mt-4">
-                    <h4 className="font-semibold mb-2">Steering详情</h4>
+                    <h4 className="font-semibold mb-2">Steering Details</h4>
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>节点</TableHead>
-                          <TableHead>找到</TableHead>
-                          <TableHead>激活值</TableHead>
+                          <TableHead>Node</TableHead>
+                          <TableHead>Found</TableHead>
+                          <TableHead>Activation Value</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>

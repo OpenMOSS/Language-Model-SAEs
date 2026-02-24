@@ -16,11 +16,11 @@ class SaeComboConfig(TypedDict):
     id: str  # 组合 ID，例如 "k_64_e_32"
     label: str  # 前端展示用文案
     tc_base_path: str  # Transcoder SAE 基础路径
-    lorsa_base_path: str  # LoRSA SAE 基础路径
+    lorsa_base_path: str  # Lorsa SAE 基础路径
     tc_sae_name_template: str  # Transcoder SAE 名称模板（用于构建字典名）
-    lorsa_sae_name_template: str  # LoRSA SAE 名称模板（用于构建字典名）
+    lorsa_sae_name_template: str  # Lorsa SAE 名称模板（用于构建字典名）
     tc_analysis_name: str  # Transcoder analysis_name（保存到 JSON 的 metadata 中）
-    lorsa_analysis_name: str  # LoRSA analysis_name（保存到 JSON 的 metadata 中）
+    lorsa_analysis_name: str  # Lorsa analysis_name（保存到 JSON 的 metadata 中）
 
 
 # BT4 模型名称（Leela Chess Zero BT4 棋力模型）

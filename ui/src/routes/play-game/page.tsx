@@ -4,16 +4,15 @@ import { GameVisualization } from '@/components/play-game/game_visualization';
 import { CircuitTracing } from '@/components/circuits/circuit-tracing';
 
 export const PlayGamePage = () => {
-  // Circuit Trace 相关状态
   const [isTracing, setIsTracing] = useState(false);
 
-  // 游戏状态管理（简化版，主要用于Circuit Trace）
+  // Game state management
   const [gameFen, setGameFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
-  const [previousFen, setPreviousFen] = useState<string | null>(null); // 新增：上一个FEN状态
+  const [previousFen, setPreviousFen] = useState<string | null>(null); // Previous FEN state
   const [gameHistory, setGameHistory] = useState<string[]>([]);
-  const [lastMove, setLastMove] = useState<string | null>(null); // 新增：最后一个移动
+  const [lastMove, setLastMove] = useState<string | null>(null); // Last move in UCI form
 
-  // Circuit Trace 回调函数
+  // Circuit Trace callback functions
   const handleCircuitTraceStart = useCallback(() => {
     setIsTracing(true);
   }, []);
@@ -23,18 +22,18 @@ export const PlayGamePage = () => {
   }, []);
 
 
-  // 更新游戏状态的回调函数
+  // Update game state callback function
   const handleGameStateUpdate = useCallback((fen: string, moves: string[]) => {
-    // 保存上一个FEN状态
+    // Save previous FEN state
     setPreviousFen(gameFen);
     
-    // 更新当前FEN
+    // Update current FEN
     setGameFen(fen);
     
-    // 更新移动历史
+    // Update move history
     setGameHistory(moves);
     
-    // 获取最后一个移动
+    // Get last move
     const lastMoveUci = moves.length > 0 ? moves[moves.length - 1] : null;
     setLastMove(lastMoveUci);
   }, [gameFen]);
@@ -43,16 +42,16 @@ export const PlayGamePage = () => {
     <div className="min-h-screen bg-background">
       <AppNavbar />
       <div className="container mx-auto p-4 space-y-6">
-        {/* 游戏可视化组件 */}
+        {/* Game visualization component */}
         <GameVisualization
           onCircuitTraceStart={handleCircuitTraceStart}
           onCircuitTraceEnd={handleCircuitTraceEnd}
           onGameStateUpdate={handleGameStateUpdate}
         />
 
-        {/* Circuit Trace 组件 */}
+        {/* Circuit Trace component */}
         <CircuitTracing
-          gameFen={previousFen || gameFen} // 使用move之前的FEN
+          gameFen={previousFen || gameFen} // use FEN before move
           previousFen={previousFen}
           currentFen={gameFen}
           gameHistory={gameHistory}

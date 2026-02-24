@@ -79,7 +79,7 @@ export interface ZPatternResult {
 }
 
 /**
- * Fetch z_pattern for a LoRSA feature at a specific query position (single-position display).
+ * Fetch z_pattern for a Lorsa feature at a specific query position (single-position display).
  * Calls analyze_fen_all_positions and extracts z_pattern for the given queryPos.
  */
 export const fetchZPatternForPosFromBackend = async (

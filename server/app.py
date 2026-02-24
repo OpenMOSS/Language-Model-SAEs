@@ -224,7 +224,7 @@ _hooked_models: Dict[str, Any] = {}
 _transcoders_cache: Dict[str, Dict[int, SparseAutoEncoder]] = {}
 _lorsas_cache: Dict[str, Any] = {}  # combo_key -> List[LowRankSparseAttention]
 _replacement_models_cache: Dict[str, Any] = {}  # combo_key -> ReplacementModel
-_single_sae_cache: Dict[str, Any] = {}  # cache_key -> SAE (LoRSA or Transcoder)
+_single_sae_cache: Dict[str, Any] = {}  # cache_key -> SAE (Lorsa or Transcoder)
 
 _loading_logs: Dict[str, list] = {}  # combo_key -> [log1, log2, ...]
 
@@ -443,7 +443,7 @@ def get_cached_sae(sae_path: str, is_lorsa: bool, device: str = "cuda"):
         if not HOOKED_TRANSFORMER_AVAILABLE:
             raise ValueError("HookedTransformer不可用，请安装transformer_lens")
         
-        print(f"🔍 正在加载SAE: {sae_path} (类型: {'LoRSA' if is_lorsa else 'Transcoder'})")
+        print(f"🔍 正在加载SAE: {sae_path} (类型: {'Lorsa' if is_lorsa else 'Transcoder'})")
         
         if is_lorsa:
             from lm_saes import LowRankSparseAttention
@@ -1065,18 +1065,18 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
         
         # 根据组合配置加载SAE（使用缓存）
         if is_lorsa_name:
-            # 加载LoRSA
+            # 加载Lorsa
             lorsa_base_path = combo_cfg["lorsa_base_path"]
             lorsa_path = f"{lorsa_base_path}/L{layer}"
             
             if not os.path.exists(lorsa_path):
                 raise HTTPException(
                     status_code=404,
-                    detail=f"LoRSA not found at {lorsa_path} for layer {layer}"
+                    detail=f"Lorsa not found at {lorsa_path} for layer {layer}"
                 )
             
             if not HOOKED_TRANSFORMER_AVAILABLE:
-                raise HTTPException(status_code=503, detail="HookedTransformer不可用，无法加载LoRSA")
+                raise HTTPException(status_code=503, detail="HookedTransformer不可用，无法加载Lorsa")
             
             # 使用缓存加载SAE
             sae = get_cached_sae(lorsa_path, is_lorsa=True, device=device)
@@ -1103,7 +1103,7 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
         with torch.no_grad():
             # 确定要hook的点
             if is_lorsa_name:
-                # LoRSA 使用 hook_attn_in
+                # Lorsa 使用 hook_attn_in
                 hook_name = f"blocks.{layer}.hook_attn_in"
             else:
                 # Transcoder 使用 resid_mid_after_ln
@@ -1145,7 +1145,7 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
             if not hook_exists:
                 # 尝试查找类似的hook点
                 similar_hooks = [k for k in all_hooks if f"blocks.{layer}" in str(k)]
-                # 也尝试查找所有包含"attn"或"resid"的hook点（用于LoRSA和Transcoder）
+                # 也尝试查找所有包含"attn"或"resid"的hook点（用于Lorsa和Transcoder）
                 if is_lorsa_name:
                     attn_hooks = [k for k in all_hooks if f"blocks.{layer}" in str(k) and "attn" in str(k).lower()]
                     print(f"   - 包含'attn'的hook点: {attn_hooks[:10]}")
@@ -1154,7 +1154,7 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
                     print(f"   - 包含'resid'的hook点: {resid_hooks[:10]}")
                 
                 error_detail = (
-                    f"无法找到层 {layer} 的激活值。SAE类型: {'LoRSA' if is_lorsa_name else 'Transcoder'}。"
+                    f"无法找到层 {layer} 的激活值。SAE类型: {'Lorsa' if is_lorsa_name else 'Transcoder'}。"
                     f"期望的hook点: {hook_name}。"
                     f"总hook点数量: {len(all_hooks)}。"
                     f"包含'blocks.{layer}'的hook点: {similar_hooks[:20]}。"
@@ -1165,7 +1165,7 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
             activations = cache[hook_name]  # shape: [batch, seq, ...] 通常是 [1, seq_len, d_model]
             
             # 确保activations有正确的维度
-            # LoRSA 和 Transcoder 的 encode 方法都需要 batch 维度
+            # Lorsa 和 Transcoder 的 encode 方法都需要 batch 维度
             # 如果缺少 batch 维度，添加一个
             if activations.dim() == 1:
                 # [d_model] -> [1, d_model]
@@ -1188,8 +1188,8 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
         is_lorsa = is_lorsa_name or 'LowRankSparseAttention' in sae_type_str
         
         if is_lorsa:
-            # LoRSA编码，获取feature激活值
-            # LoRSA的encode方法期望输入是 [batch, seq_len, d_model] 形状
+            # Lorsa编码，获取feature激活值
+            # Lorsa的encode方法期望输入是 [batch, seq_len, d_model] 形状
             feature_acts = sae.encode(
                 activations,  # 使用带batch维度的activations
                 return_hidden_pre=False,
@@ -1239,7 +1239,7 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
                     activations = activations.to(sae.cfg.device)
                 
                 # 使用 encode_z_pattern_for_head 计算该feature的z_pattern
-                # head_idx 是 feature_index（在LoRSA中，每个feature对应一个head）
+                # head_idx 是 feature_index（在Lorsa中，每个feature对应一个head）
                 head_idx = torch.tensor([feature_index], device=activations.device)
                 z_pattern = sae.encode_z_pattern_for_head(activations, head_idx)
                 # z_pattern shape: [n_active_features, q_pos, k_pos]，这里是 [1, seq_len, seq_len]
@@ -1374,7 +1374,7 @@ def get_features_at_position(request: dict):
     
     Returns:
         字典，包含：
-        - "attn_features": 如果是 attn，返回激活的 LoRSA features（列表）
+        - "attn_features": 如果是 attn，返回激活的 Lorsa features（列表）
         - "mlp_features": 如果是 mlp，返回激活的 Transcoder features（列表）
         每个 feature 包含：
         - "feature_index": feature 索引
@@ -1412,7 +1412,7 @@ def get_features_at_position(request: dict):
         if cached_transcoders is None or cached_lorsas is None:
             raise HTTPException(
                 status_code=503,
-                detail="Transcoders/LoRSAs未加载，请先调用 /circuit/preload_models 预加载"
+                detail="Transcoders/Lorsas未加载，请先调用 /circuit/preload_models 预加载"
             )
         
         if not ACTIVATION_MODULE_AVAILABLE or get_activated_features_at_position is None:
@@ -1504,7 +1504,7 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
             if not os.path.exists(lorsa_path):
                 raise HTTPException(
                     status_code=404,
-                    detail=f"LoRSA not found at {lorsa_path} for layer {layer}"
+                    detail=f"Lorsa not found at {lorsa_path} for layer {layer}"
                 )
             
             # 使用缓存加载SAE
@@ -1541,7 +1541,7 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
                 available_hooks = [k for k in cache.keys() if f"blocks.{layer}" in str(k)]
                 raise HTTPException(
                     status_code=500,
-                    detail=f"无法找到层 {layer} 的激活值。SAE类型: {'LoRSA' if is_lorsa_name else 'Transcoder'}。期望的hook点: {hook_name}。可用的hook点: {available_hooks[:10]}"
+                    detail=f"无法找到层 {layer} 的激活值。SAE类型: {'Lorsa' if is_lorsa_name else 'Transcoder'}。期望的hook点: {hook_name}。可用的hook点: {available_hooks[:10]}"
                 )
             
             activations = cache[hook_name]  # shape: [batch, seq_len, d_model]，通常是 [1, seq_len, d_model]
@@ -1560,7 +1560,7 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
         is_lorsa = is_lorsa_name or 'LowRankSparseAttention' in sae_type_str
         
         if is_lorsa:
-            # LoRSA编码，获取feature激活值
+            # Lorsa编码，获取feature激活值
             feature_acts = sae.encode(
                 activations,  # [1, seq_len, d_model]
                 return_hidden_pre=False,
@@ -1642,7 +1642,7 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
                 "total_positions": len(positions_data),
                 "feature_index": feature_index,
                 "layer": layer,
-                "sae_type": "LoRSA" if is_lorsa else "Transcoder"
+                "sae_type": "Lorsa" if is_lorsa else "Transcoder"
             }
         else:
             # Transcoder编码
@@ -1804,11 +1804,11 @@ def sync_clerps_to_interpretations(request: dict):
         
         print(f"🔄 开始同步clerps到interpretations:")
         print(f"   - 节点数量: {len(nodes)}")
-        print(f"   - LoRSA analysis_name: {lorsa_analysis_name}")
+        print(f"   - Lorsa analysis_name: {lorsa_analysis_name}")
         print(f"   - TC analysis_name: {tc_analysis_name}")
         if combo_cfg:
             print(f"   - 找到组合配置: {combo_cfg.get('id')}")
-            print(f"   - LoRSA模板: {combo_cfg.get('lorsa_sae_name_template')}")
+            print(f"   - Lorsa模板: {combo_cfg.get('lorsa_sae_name_template')}")
             print(f"   - TC模板: {combo_cfg.get('tc_sae_name_template')}")
         
         synced_count = 0
@@ -1935,11 +1935,11 @@ def sync_interpretations_to_clerps(request: dict):
         
         print(f"🔄 开始从interpretations同步到clerps:")
         print(f"   - 节点数量: {len(nodes)}")
-        print(f"   - LoRSA analysis_name: {lorsa_analysis_name}")
+        print(f"   - Lorsa analysis_name: {lorsa_analysis_name}")
         print(f"   - TC analysis_name: {tc_analysis_name}")
         if combo_cfg:
             print(f"   - 找到组合配置: {combo_cfg.get('id')}")
-            print(f"   - LoRSA模板: {combo_cfg.get('lorsa_sae_name_template')}")
+            print(f"   - Lorsa模板: {combo_cfg.get('lorsa_sae_name_template')}")
             print(f"   - TC模板: {combo_cfg.get('tc_sae_name_template')}")
         
         updated_nodes = []
@@ -2799,7 +2799,7 @@ def preload_circuit_models(request: dict):
         cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(decoded_model_name, combo_id)
         if cached_transcoders is not None and cached_lorsas is not None:
             if len(cached_transcoders) == 15 and len(cached_lorsas) == 15:
-                print(f"✅ Transcoders 和 LoRSAs 已经预加载: {decoded_model_name} @ {combo_id}")
+                print(f"✅ Transcoders 和 Lorsas 已经预加载: {decoded_model_name} @ {combo_id}")
                 return {
                     "status": "already_loaded",
                     "message": f"模型 {decoded_model_name} 组合 {combo_id} 的 transcoders 和 lorsas 已经预加载",
@@ -2818,7 +2818,7 @@ def preload_circuit_models(request: dict):
                 cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(decoded_model_name, combo_id)
                 if cached_transcoders is not None and cached_lorsas is not None:
                     if len(cached_transcoders) == 15 and len(cached_lorsas) == 15:
-                        print(f"✅ Transcoders 和 LoRSAs 已经预加载（在锁内检查）: {decoded_model_name} @ {combo_id}")
+                        print(f"✅ Transcoders 和 Lorsas 已经预加载（在锁内检查）: {decoded_model_name} @ {combo_id}")
                         return {
                             "status": "already_loaded",
                             "message": f"模型 {decoded_model_name} 组合 {combo_id} 的 transcoders 和 lorsas 已经预加载",
@@ -2891,7 +2891,7 @@ def preload_circuit_models(request: dict):
 
                     print(f"✅ 预加载完成: {model_name} @ {combo_id}")
                     print(f"   - Transcoders: {len(transcoders)} 层")
-                    print(f"   - LoRSAs: {len(lorsas)} 层")
+                    print(f"   - Lorsas: {len(lorsas)} 层")
 
                     # 添加完成日志
                     if combo_key in _loading_logs:
@@ -2910,7 +2910,7 @@ def preload_circuit_models(request: dict):
                         _loading_logs[combo_key].append(
                             {
                                 "timestamp": time.time(),
-                                "message": f"   - LoRSAs: {len(lorsas)} 层",
+                                "message": f"   - Lorsas: {len(lorsas)} 层",
                             }
                         )
 
@@ -3183,7 +3183,7 @@ def circuit_trace(request: dict):
                              len(cached_transcoders) == 15 and len(cached_lorsas) == 15)
             
             if not cache_complete and is_loading:
-                print(f"⏳ 检测到正在加载TC/LoRSA，等待加载完成（避免重复加载）: {model_name}")
+                print(f"⏳ 检测到正在加载TC/Lorsa，等待加载完成（避免重复加载）: {model_name}")
                 # 获取加载锁（等待加载完成）
                 if model_name not in _loading_locks:
                     _loading_locks[model_name] = threading.Lock()
@@ -3210,7 +3210,7 @@ def circuit_trace(request: dict):
                     time.sleep(wait_interval)
                     elapsed = time.time() - wait_start
                     if int(elapsed) % 10 == 0 and int(elapsed) > 0:  # 每10秒打印一次
-                        print(f"⏳ 仍在等待加载完成... (已等待 {elapsed:.1f}秒, TC: {len(cached_transcoders) if cached_transcoders else 0}, LoRSA: {len(cached_lorsas) if cached_lorsas else 0})")
+                        print(f"⏳ 仍在等待加载完成... (已等待 {elapsed:.1f}秒, TC: {len(cached_transcoders) if cached_transcoders else 0}, Lorsa: {len(cached_lorsas) if cached_lorsas else 0})")
                 
                 if not cache_complete:
                     elapsed = time.time() - wait_start
@@ -3251,14 +3251,14 @@ def circuit_trace(request: dict):
                 if is_still_loading:
                     # 如果仍在加载，继续等待
                     print(f"⏳ 缓存不完整但仍在使用中加载，将继续等待...")
-                    raise HTTPException(status_code=503, detail=f"模型 {model_name} 组合 {normalized_combo_id} 正在加载中，请稍后重试。当前进度: TC {len(cached_transcoders) if cached_transcoders else 0}/15, LoRSA {len(cached_lorsas) if cached_lorsas else 0}/15")
+                    raise HTTPException(status_code=503, detail=f"模型 {model_name} 组合 {normalized_combo_id} 正在加载中，请稍后重试。当前进度: TC {len(cached_transcoders) if cached_transcoders else 0}/15, Lorsa {len(cached_lorsas) if cached_lorsas else 0}/15")
                 elif cached_transcoders is None or cached_lorsas is None:
                     # 完全没有缓存，需要加载
                     print(f"⚠️ 未找到缓存，将重新加载transcoders和lorsas: {model_name} @ {normalized_combo_id}")
                     print("   提示：建议先调用 /circuit/preload_models 进行预加载以加速")
                 else:
                     # 有部分缓存但不完整，也重新加载（这种情况不应该发生，因为应该等待加载完成）
-                    print(f"⚠️ 缓存不完整（TC: {len(cached_transcoders)}, LoRSA: {len(cached_lorsas)}），将重新加载: {model_name} @ {normalized_combo_id}")
+                    print(f"⚠️ 缓存不完整（TC: {len(cached_transcoders)}, Lorsa: {len(cached_lorsas)}），将重新加载: {model_name} @ {normalized_combo_id}")
             
             # 创建trace_key用于日志存储（确保使用解码后的FEN和move_uci）
             # fen和move_uci已经在前面被解码了
@@ -3535,7 +3535,7 @@ def check_dense_features_api(request: dict):
             - nodes: 节点列表
             - threshold: 激活次数阈值（可选，None表示无限大）
             - sae_series: SAE系列名称（可选，默认: BT4-exp128）
-            - lorsa_analysis_name: LoRSA分析名称模板（可选）
+            - lorsa_analysis_name: Lorsa分析名称模板（可选）
             - tc_analysis_name: TC分析名称模板（可选）
     
     Returns:
@@ -3563,7 +3563,7 @@ def check_dense_features_api(request: dict):
         tc_analysis_name = request.get("tc_analysis_name")
         
         print(f"🔍 检查dense features: {len(nodes)} 个节点, 阈值={threshold}")
-        print(f"   - LoRSA模板: {lorsa_analysis_name}")
+        print(f"   - Lorsa模板: {lorsa_analysis_name}")
         print(f"   - TC模板: {tc_analysis_name}")
         
         # 设置MongoDB连接
@@ -4104,7 +4104,7 @@ async def analyze_tactic_features_api(
         model_name: 模型名称
         n_random: 随机FEN数量（兼容旧参数）
         n_fens: FEN数量（新参数，优先使用）
-        top_k_lorsa: 显示top k个LoRSA特征
+        top_k_lorsa: 显示top k个Lorsa特征
         top_k_tc: 显示top k个TC特征
         specific_layer: 指定层号（可选），如果提供则额外返回该层的详细特征
         specific_layer_top_k: 指定层的top k特征数
@@ -4238,7 +4238,7 @@ async def analyze_tactic_features_api(
                         detail=f"Transcoder not found at {tc_path}"
                     )
                 
-                # 加载LoRSA
+                # 加载Lorsa
                 lorsa_path = f"{lorsa_base_path}/L{layer}"
                 if os.path.exists(lorsa_path):
                     lorsas.append(LowRankSparseAttention.from_pretrained(
@@ -4248,7 +4248,7 @@ async def analyze_tactic_features_api(
                 else:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"LoRSA not found at {lorsa_path}"
+                        detail=f"Lorsa not found at {lorsa_path}"
                     )
             
             # 缓存加载的transcoders和lorsas
@@ -4326,7 +4326,7 @@ async def analyze_tactic_features_api(
             # 打印所有特征的总数（用于调试）
             total_lorsa_diffs = len(result["lorsa_diffs"])
             total_tc_diffs = len(result["tc_diffs"])
-            print(f"   - 总LoRSA特征数: {total_lorsa_diffs}")
+            print(f"   - 总Lorsa特征数: {total_lorsa_diffs}")
             print(f"   - 总TC特征数: {total_tc_diffs}")
             
             # 筛选出指定层的特征
@@ -4334,11 +4334,11 @@ async def analyze_tactic_features_api(
             specific_tc = [d for d in result["tc_diffs"] if d[0] == parsed_specific_layer]
             
             print(f"📊 Layer {parsed_specific_layer} 特征统计:")
-            print(f"   - LoRSA特征: {len(specific_lorsa)}个")
+            print(f"   - Lorsa特征: {len(specific_lorsa)}个")
             print(f"   - TC特征: {len(specific_tc)}个")
             
             if len(specific_lorsa) == 0:
-                print(f"   ⚠️ 警告: Layer {parsed_specific_layer} 没有找到任何 LoRSA 特征!")
+                print(f"   ⚠️ 警告: Layer {parsed_specific_layer} 没有找到任何 Lorsa 特征!")
             if len(specific_tc) == 0:
                 print(f"   ⚠️ 警告: Layer {parsed_specific_layer} 没有找到任何 TC 特征!")
             
@@ -4347,12 +4347,12 @@ async def analyze_tactic_features_api(
             specific_tc_sorted = sorted(specific_tc, key=lambda x: x[2], reverse=True)[:specific_layer_top_k]
             
             print(f"   - 排序后取Top {specific_layer_top_k}:")
-            print(f"     * LoRSA: {len(specific_lorsa_sorted)}个")
+            print(f"     * Lorsa: {len(specific_lorsa_sorted)}个")
             print(f"     * TC: {len(specific_tc_sorted)}个")
             
             # 打印前3个特征的详细信息（用于调试）
             if len(specific_lorsa_sorted) > 0:
-                print(f"   - LoRSA Top 3 特征示例:")
+                print(f"   - Lorsa Top 3 特征示例:")
                 for i, feat in enumerate(specific_lorsa_sorted[:3]):
                     print(f"     [{i+1}] Layer={feat[0]}, Feature={feat[1]}, Diff={feat[2]:.6f}")
             
@@ -4378,11 +4378,11 @@ async def analyze_tactic_features_api(
         print("=" * 80)
         print(f"📤 准备返回响应数据:")
         print(f"   - 基础统计: valid_tactic_fens={response_data.get('valid_tactic_fens')}, tactic_fens={response_data.get('tactic_fens')}")
-        print(f"   - Top LoRSA特征: {len(response_data.get('top_lorsa_features', []))}个")
+        print(f"   - Top Lorsa特征: {len(response_data.get('top_lorsa_features', []))}个")
         print(f"   - Top TC特征: {len(response_data.get('top_tc_features', []))}个")
         print(f"   - 指定层: {response_data.get('specific_layer', '未指定')}")
         if response_data.get('specific_layer') is not None:
-            print(f"   - 指定层LoRSA: {len(response_data.get('specific_layer_lorsa', []))}个")
+            print(f"   - 指定层Lorsa: {len(response_data.get('specific_layer_lorsa', []))}个")
             print(f"   - 指定层TC: {len(response_data.get('specific_layer_tc', []))}个")
         print("=" * 80)
         
@@ -4498,22 +4498,22 @@ def compare_fen_activations_api(request: dict):
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    f"Transcoders/LoRSAs for model {model_name} combo {normalized_combo_id} "
+                    f"Transcoders/Lorsas for model {model_name} combo {normalized_combo_id} "
                     f"are still loading. 请等待加载完成或取消后再比较激活差异。"
                 ),
             )
 
         if cache_complete:
             # 正常使用已预加载好的模型与 SAE
-            print(f"✅ 使用预加载的 transcoders/LoRSAs: {model_name} @ {normalized_combo_id}")
+            print(f"✅ 使用预加载的 transcoders/Lorsas: {model_name} @ {normalized_combo_id}")
             replacement_model = cached_replacement_model
             transcoders = cached_transcoders
             lorsas = cached_lorsas
         else:
-            # 【严格模式】完全禁止在 compare 接口里主动加载 LoRSA / TC
+            # 【严格模式】完全禁止在 compare 接口里主动加载 Lorsa / TC
             # 要求调用方必须先通过 /circuit/preload_models 预加载相应组合
             msg = (
-                f"No cached transcoders/LoRSAs for model {model_name} combo {normalized_combo_id}. "
+                f"No cached transcoders/Lorsas for model {model_name} combo {normalized_combo_id}. "
                 "请先调用 /circuit/preload_models 预加载该组合后再比较激活差异。"
             )
             print(f"❌ {msg}")
@@ -4667,7 +4667,7 @@ def get_global_weight(
             # 使用解码后的 model_name 生成缓存键
             cache_key = _make_combo_cache_key(decoded_model_name, normalized_combo_id)
             error_detail = (
-                f"Transcoders/LoRSAs未加载，请先调用 /circuit/preload_models 预加载。"
+                f"Transcoders/Lorsas未加载，请先调用 /circuit/preload_models 预加载。"
                 f"请求的组合ID: {normalized_combo_id}, "
                 f"缓存键: {cache_key}, "
                 f"当前服务器端组合ID: {CURRENT_BT4_SAE_COMBO_ID}"
@@ -4734,7 +4734,7 @@ def get_global_weight(
                     detail=f"feature_idx必须在0-{cached_lorsas[layer_idx].cfg.d_sae-1}之间"
                 )
             
-            # 计算LoRSA的全局权重
+            # 计算Lorsa的全局权重
             features_in = lorsa_global_weight_in(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
                 tc_acts, lorsa_acts, k=k, layer_filter=features_in_layer_filter_parsed

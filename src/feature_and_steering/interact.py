@@ -178,7 +178,7 @@ def analyze_node_activation_impact(
                 f"  Target node:   layer={t_node.layer}, type={t_node.feature_type}\n"
                 f"Rules:\n"
                 f"  - Cross-layer: steering.layer < target.layer\n"
-                f"  - Same-layer: LoRSA -> Transcoder only"
+                f"  - Same-layer: Lorsa -> Transcoder only"
             )
     
     # Function to extract activation value from sparse tensor
@@ -438,7 +438,7 @@ def analyze_node_interaction(
     lorsa_activations: List[torch.Tensor] = []
     model_device = next(model.parameters()).device
     for layer in range(15):
-        # Get LoRSA activations
+        # Get Lorsa activations
         lorsa_input = cache[f'blocks.{layer}.hook_attn_in']
         if lorsas is not None and layer < len(lorsas) and lorsas[layer] is not None:
             lorsa_dense_activation = lorsas[layer].encode(lorsa_input)
@@ -478,7 +478,7 @@ def analyze_node_interaction(
         else:
             tc_WDs.append(None)
 
-        # Extract LoRSA weights
+        # Extract Lorsa weights
         if lorsas is not None and layer < len(lorsas) and lorsas[layer] is not None:
             lorsa_WDs.append(lorsas[layer].W_O.detach().to(model_device))
         else:

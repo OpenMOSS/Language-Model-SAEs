@@ -867,7 +867,7 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
               <div>
                 <h3 className="font-semibold">Steering (multiple features, multiple positions)</h3>
                 <p className="text-xs text-gray-600 mt-1">
-                  Component: {componentType === "attn" ? "Attention (LoRSA)" : "MLP (Transcoder)"}, Layer: {layer}
+                  Component: {componentType === "attn" ? "Attention (Lorsa)" : "MLP (Transcoder)"}, Layer: {layer}
                 </p>
               </div>
               <div className="flex items-center gap-2">

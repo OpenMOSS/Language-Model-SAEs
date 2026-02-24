@@ -1833,7 +1833,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
     @override
     @torch.no_grad()
     def compute_activation_frequency_scores(self, feature_acts: torch.Tensor) -> torch.Tensor:
-        """Compute activation frequency scores for LoRSA (mean over batch)."""
+        """Compute activation frequency scores for Lorsa (mean over batch)."""
         return (feature_acts > 0).float().sum(0).mean(0)
 
     @override
@@ -1843,7 +1843,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         log_info: dict[str, torch.Tensor],
         label: torch.Tensor,
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
-        """Prepare logging data by flattening dimensions for LoRSA."""
+        """Prepare logging data by flattening dimensions for Lorsa."""
         log_info = log_info.copy()
         log_info["reconstructed"] = log_info["reconstructed"].flatten(0, 1)
         label = label.flatten(0, 1)

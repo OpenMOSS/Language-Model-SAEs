@@ -74,7 +74,7 @@ const generateFileCombinationColors = (fileCount: number): Map<string, string> =
   return colorMap;
 };
 
-// 颜色转换辅助函数
+// Color conversion helper functions
 const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
   const h = hex.trim().replace("#", "");
   if (h.length !== 6) return null;
@@ -139,7 +139,7 @@ const hslToRgb = (hsl: { h: number; s: number; l: number }): { r: number; g: num
   return { r: (rp + m) * 255, g: (gp + m) * 255, b: (bp + m) * 255 };
 };
 
-// 混色函数（供 generateFileCombinationColors 和 mergeCsvGraphs 使用）
+// Color mixing function (used by generateFileCombinationColors and mergeCsvGraphs)
 const mixHexColorsVivid = (hexColors: string[]): string | null => {
   const rgbs = hexColors.map(hexToRgb).filter(Boolean) as { r: number; g: number; b: number }[];
   if (rgbs.length === 0) return null;
@@ -188,16 +188,16 @@ export const InteractionCircuitPage = () => {
   const [customFen, setCustomFen] = useState<string>('');
   const [useCustomFenMode, setUseCustomFenMode] = useState<boolean>(false);
 
-  // 解析 CSV 文件（支持带引号的字段）
+  // Parse CSV file (supports quoted fields)
   const parseCsvFile = useCallback(async (file: File): Promise<LinkGraphData> => {
     const text = await file.text();
     const lines = text.split('\n').filter(line => line.trim());
     
     if (lines.length < 2) {
-      throw new Error('CSV 文件格式错误：至少需要包含表头和数据行');
+      throw new Error('Invalid CSV format: at least header and one data row are required');
     }
 
-    // 简单的 CSV 解析函数（处理引号）
+    // simple CSV parsing function (handles quotes)
     const parseCsvLine = (line: string): string[] => {
       const result: string[] = [];
       let current = '';
@@ -726,7 +726,7 @@ export const InteractionCircuitPage = () => {
     }
   }, []);
 
-  // Helper function: normalize Z Pattern data
+  // Helper function: normalize Z-pattern data
   const normalizeZPattern = useCallback(
     (
       zPatternIndicesRaw: unknown,
@@ -850,12 +850,11 @@ export const InteractionCircuitPage = () => {
       }
     }
 
-    // 按最大激活值排序并取前8个
     const topSamples = chessSamples
       .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
       .slice(0, 8);
 
-    console.log('✅ 获取到 Top Activation 数据:', {
+    console.log('Top Activation data:', {
       totalChessSamples: chessSamples.length,
       topSamplesCount: topSamples.length
     });
@@ -863,7 +862,7 @@ export const InteractionCircuitPage = () => {
     return topSamples;
   }, [normalizeZPattern]);
 
-  // 获取 Top Activations
+  // Fetch Top Activations for a node
   const fetchTopActivations = useCallback(async (nodeId: string) => {
     if (!nodeId || !linkGraphData) return;
 
@@ -871,22 +870,22 @@ export const InteractionCircuitPage = () => {
     try {
       const node = linkGraphData.nodes.find(n => n.nodeId === nodeId);
       if (!node) {
-        console.error('❌ 未找到节点:', nodeId);
+        console.error('❌ Node not found:', nodeId);
         setTopActivations([]);
         return;
       }
 
-      // 从 nodeId 中提取原始 layer 和 feature（nodeId 格式: {layer}_{pos}_{feature}）
-      // 注意：node.layerIdx 现在是 Y 轴位置，不是原始 layer 值
+      // Extract original layer and feature from nodeId (format: {layer}_{pos}_{feature})
+      // Note: node.layerIdx is the Y-axis position, not the original layer
       const parts = nodeId.split('_');
-      const layer = parseInt(parts[0]) || 0; // 从 nodeId 中提取原始 layer
+      const layer = parseInt(parts[0]) || 0; // Extract original layer from nodeId
       const featureIndex = node.featureIndex !== undefined ? node.featureIndex : (parseInt(node.featureId) || (parts.length >= 3 ? parseInt(parts[2]) : 0));
 
       const isLorsa = node.feature_type?.toLowerCase() === 'lorsa';
 
       const dictionary = getDictionaryName(layer, isLorsa);
 
-      console.log('🔍 获取 Top Activation 数据:', {
+      console.log('🔍 Fetch Top Activation data:', {
         nodeId,
         layer,
         featureIndex,
@@ -924,21 +923,21 @@ export const InteractionCircuitPage = () => {
       const topSamples = parseTopActivationData(camelData);
       setTopActivations(topSamples);
 
-      console.log('✅ 获取到 Top Activation 数据:', {
+      console.log('✅ Top Activation data loaded:', {
         topSamplesCount: topSamples.length,
       });
     } catch (err) {
-      console.error('❌ 获取 Top Activation 数据失败:', err);
+      console.error('❌ Failed to fetch Top Activation data:', err);
       setTopActivations([]);
     } finally {
       setLoadingTopActivations(false);
     }
   }, [linkGraphData, getDictionaryName, parseTopActivationData]);
 
-  // 处理节点点击
+  // Handle node click
   const handleNodeClick = useCallback(async (node: Node, isMetaKey: boolean) => {
     if (isMetaKey) {
-      // Meta/Ctrl 键：切换固定状态
+      // Meta/Ctrl key: toggle pinned state
       setPinnedIds(prev => {
         if (prev.includes(node.nodeId)) {
           return prev.filter(id => id !== node.nodeId);
@@ -947,7 +946,7 @@ export const InteractionCircuitPage = () => {
         }
       });
       } else {
-        // 普通点击：切换选中状态
+        // Normal click: toggle selection
         if (clickedId === node.nodeId) {
           setClickedId(null);
           setSelectedFeature(null);
@@ -955,16 +954,16 @@ export const InteractionCircuitPage = () => {
           setCurrentFen('');
           setFenActivationData(null);
         } else {
-          // 切换节点时，先清空旧数据
+          // When switching nodes, clear previous data first
           setTopActivations([]);
           setCurrentFen('');
           setFenActivationData(null);
           setClickedId(node.nodeId);
           
-          // 获取 feature 信息（从 nodeId 中提取原始 layer，因为 node.layerIdx 现在是 Y 轴位置）
+          // Fetch feature info (extract original layer from nodeId, since node.layerIdx is Y-axis position)
           const nodeType = node.feature_type?.toLowerCase();
           if ((nodeType === 'transcoder' || nodeType === 'lorsa' || nodeType === 'cross layer transcoder') && linkGraphData) {
-            // 从 nodeId 中提取原始 layer（nodeId 格式: {layer}_{pos}_{feature}）
+            // Extract original layer from nodeId (nodeId format: {layer}_{pos}_{feature})
             const nodeIdParts = node.nodeId.split('_');
             const layer = parseInt(nodeIdParts[0]) || 0;
             const featureIndex = node.featureIndex !== undefined ? node.featureIndex : (parseInt(node.featureId) || 0);
@@ -972,36 +971,36 @@ export const InteractionCircuitPage = () => {
             
             try {
               const dictionary = getDictionaryName(layer, isLorsa);
-              console.log('🔍 获取 feature 信息:', { layer, featureIndex, dictionary, isLorsa, nodeType });
+              console.log('🔍 Fetch feature info:', { layer, featureIndex, dictionary, isLorsa, nodeType });
               
               const { fetchFeature } = await import('@/utils/api');
               const feature = await fetchFeature(dictionary, layer, featureIndex);
               if (feature) {
                 setSelectedFeature(feature);
-                console.log('✅ 成功获取 feature 信息');
+                console.log('✅ Feature info loaded');
               } else {
-                console.warn('⚠️ 未找到 feature 信息');
+                console.warn('⚠️ Feature not found');
                 setSelectedFeature(null);
               }
             } catch (err) {
-              console.error('❌ 获取 feature 信息失败:', err);
+              console.error('❌ Failed to fetch feature info:', err);
               setSelectedFeature(null);
             }
           } else {
-            console.log('⚠️ 不支持的节点类型:', nodeType);
+            console.log('⚠️ Unsupported node type:', nodeType);
             setSelectedFeature(null);
           }
           
-          // 获取 Top Activations
+          // Fetch Top Activations
           fetchTopActivations(node.nodeId);
           
-          // 如果有 Top Activations，使用第一个作为默认 FEN
-          // 这将在 fetchTopActivations 完成后通过 useEffect 处理
+          // If there are Top Activations, use the first one as default FEN
+          // This will be handled by useEffect after fetchTopActivations completes
         }
       }
   }, [clickedId, fetchTopActivations, linkGraphData, getDictionaryName]);
 
-  // 当点击节点改变时，清空 FEN 相关状态
+  // When the clicked node changes, clear FEN-related state
   useEffect(() => {
     if (!clickedId) {
       setCurrentFen('');
@@ -1009,7 +1008,7 @@ export const InteractionCircuitPage = () => {
     }
   }, [clickedId]);
 
-  // 获取当前选中节点的 FEN 激活数据
+  // Fetch FEN activation data for the currently selected node
   const fetchFenActivation = useCallback(async (fen: string) => {
     if (!clickedId || !linkGraphData || !fen.trim()) return;
 
@@ -1017,18 +1016,18 @@ export const InteractionCircuitPage = () => {
     try {
       const node = linkGraphData.nodes.find(n => n.nodeId === clickedId);
       if (!node) {
-        console.error('❌ 未找到节点:', clickedId);
+        console.error('❌ Node not found:', clickedId);
         return;
       }
 
-      // 从 nodeId 中提取原始 layer（nodeId 格式: {layer}_{pos}_{feature}）
+      // Extract original layer from nodeId (format: {layer}_{pos}_{feature})
       const nodeIdParts = clickedId.split('_');
       const layer = parseInt(nodeIdParts[0]) || 0;
       const featureIndex = node.featureIndex !== undefined ? node.featureIndex : (parseInt(node.featureId) || 0);
       const isLorsa = node.feature_type?.toLowerCase() === 'lorsa';
       const dictionary = getDictionaryName(layer, isLorsa);
 
-      console.log('🔍 获取 FEN 激活数据:', { clickedId, fen, dictionary, layer, featureIndex });
+      console.log('🔍 Fetch FEN activation data:', { clickedId, fen, dictionary, layer, featureIndex });
 
       const response = await fetch(
         `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/analyze_fen`,
@@ -1048,7 +1047,7 @@ export const InteractionCircuitPage = () => {
 
       const data = await response.json();
 
-      // 解析激活数据
+      // Parse activation data
       let activations: number[] | undefined = undefined;
       if (data.feature_acts_indices && data.feature_acts_values) {
         activations = new Array(64).fill(0);
@@ -1064,7 +1063,7 @@ export const InteractionCircuitPage = () => {
         }
       }
 
-      // 处理 z pattern 数据
+      // Parse z-pattern data
       let zPatternIndices: number[][] | undefined = undefined;
       let zPatternValues: number[] | undefined = undefined;
       if (data.z_pattern_indices && data.z_pattern_values) {
@@ -1079,26 +1078,26 @@ export const InteractionCircuitPage = () => {
         zPatternValues,
       });
 
-      console.log('✅ 获取到 FEN 激活数据:', {
+      console.log('✅ FEN activation data loaded:', {
         hasActivations: !!activations,
         activationsLength: activations?.length,
         hasZPattern: !!zPatternIndices && !!zPatternValues,
       });
     } catch (err) {
-      console.error('❌ 获取 FEN 激活数据失败:', err);
+      console.error('❌ Failed to fetch FEN activation data:', err);
       setFenActivationData(null);
     } finally {
       setLoadingFenActivation(false);
     }
   }, [clickedId, linkGraphData, getDictionaryName]);
 
-  // 当 Top Activations 更新时，设置默认 FEN（仅在非自定义FEN模式下）
+  // When Top Activations update, set a default FEN (only in non-custom-FEN mode)
   useEffect(() => {
     if (topActivations.length > 0 && clickedId && !useCustomFenMode) {
-      // 切换节点时，总是使用第一个Top Activation作为默认FEN
+      // When switching nodes, always use the first Top Activation as default FEN
       const firstSample = topActivations[0];
       setCurrentFen(firstSample.fen);
-      // 如果有激活数据，也设置
+      // If activation data is present, use it directly
       if (firstSample.activations || firstSample.zPatternIndices) {
         setFenActivationData({
           activations: firstSample.activations,
@@ -1106,32 +1105,32 @@ export const InteractionCircuitPage = () => {
           zPatternValues: firstSample.zPatternValues,
         });
       } else {
-        // 如果没有激活数据，从后端获取
+        // If activation data is missing, fetch from backend
         fetchFenActivation(firstSample.fen);
       }
     }
   }, [topActivations, clickedId, fetchFenActivation, useCustomFenMode]);
 
-  // 当切换节点且使用自定义FEN模式时，重新获取激活数据
+  // When switching nodes under custom-FEN mode, refetch activation data
   useEffect(() => {
     if (clickedId && useCustomFenMode && customFen.trim()) {
-      // 使用自定义FEN重新获取当前节点的激活数据
+      // use custom FEN to re-fetch activation data for the current node
       fetchFenActivation(customFen);
       setCurrentFen(customFen);
     }
   }, [clickedId, useCustomFenMode, customFen, fetchFenActivation]);
 
-  // 处理连接的 feature 选择
+  // Handle connected feature selection (kept for API compatibility)
   const handleConnectedFeaturesSelect = useCallback((_features: Feature[]) => {
-    // 保留回调函数以保持接口兼容性
-    // 连接的 feature 信息由 NodeConnections 组件内部管理
+    // keep callback function for API compatibility
+    // connected feature information is managed internally by NodeConnections component
   }, []);
 
   const handleConnectedFeaturesLoading = useCallback((_loading: boolean) => {
-    // 保留回调函数以保持接口兼容性
+    // Kept for API compatibility
   }, []);
 
-  // 处理节点悬停 - 参考 circuit-visualization.tsx 的实现
+  // Handle node hover (same semantics as circuit-visualization.tsx)
   // Only update if the hovered ID has actually changed
   // This prevents unnecessary re-renders and keeps hoveredId stable
   const handleNodeHover = useCallback((nodeId: string | null) => {
@@ -1144,17 +1143,17 @@ export const InteractionCircuitPage = () => {
     <div className="min-h-screen bg-background">
       <AppNavbar />
       <div className="container mx-auto p-4">
-        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
+        {/* Global BT4 SAE combo selection (Lorsa / Transcoder) */}
         <SaeComboLoader />
         
         <div className="mb-6">
           <h1 className="text-3xl font-bold">Interaction Circuit Visualization</h1>
           <p className="text-gray-600 mt-2">
-            上传包含 feature interaction 数据的 CSV 文件（支持1-4个文件），点击节点查看详细的 feature 信息。
+            Upload 1–4 CSV files containing feature interaction data, then click on nodes to inspect detailed feature information.
           </p>
         </div>
 
-        {/* 文件上传区域 */}
+        {/* File upload area */}
         <div className="mb-6">
           <div
             onDragOver={handleDragOver}
@@ -1171,13 +1170,13 @@ export const InteractionCircuitPage = () => {
               className="hidden"
             />
             <p className="text-gray-600">
-              拖拽 CSV 文件到这里（支持1-4个文件），或点击选择文件
+              Drag and drop CSV files here (1–4 files supported), or click to select files
             </p>
             {csvFiles.length > 0 && (
               <div className="mt-4 space-y-1">
                 {csvFiles.map((file, idx) => (
                   <p key={idx} className="text-sm text-gray-500">
-                    已加载 #{idx + 1}: {file.name}
+                    Loaded #{idx + 1}: {file.name}
                   </p>
                 ))}
               </div>
@@ -1185,24 +1184,24 @@ export const InteractionCircuitPage = () => {
           </div>
         </div>
 
-        {/* 错误提示 */}
+        {/* Error message */}
         {error && (
           <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
             {error}
           </div>
         )}
 
-        {/* 加载状态 */}
+        {/* Loading state */}
         {isLoading && (
           <div className="mb-6 p-4 bg-blue-100 border border-blue-400 text-blue-700 rounded">
-            正在解析 CSV 文件...
+            Parsing CSV files...
           </div>
         )}
 
-        {/* 图可视化 */}
+        {/* Graph visualization */}
         {linkGraphData && !isLoading && (
           <div className="space-y-6">
-            {/* 多文件颜色图例 */}
+            {/* Multi-file color legend */}
             {linkGraphData.metadata?.sourceFileNames && 
              Array.isArray(linkGraphData.metadata.sourceFileNames) && 
              linkGraphData.metadata.sourceFileNames.length > 1 && (() => {
@@ -1210,10 +1209,10 @@ export const InteractionCircuitPage = () => {
               const fileCount = fileNames.length;
               const combinationColors = generateFileCombinationColors(fileCount);
               
-              // 生成所有组合的显示列表
+              // Build display list for all file combinations
               const combinations: Array<{ indices: number[]; label: string; color: string }> = [];
               
-              // 按组合大小和索引排序：先单文件，再两文件组合，再三文件组合...
+              // Iterate combinations by size and indices: single-file, then two-file, then three-file, ...
               for (let size = 1; size <= fileCount; size++) {
                 for (let mask = 1; mask < (1 << fileCount); mask++) {
                   const combo: number[] = [];
@@ -1226,7 +1225,7 @@ export const InteractionCircuitPage = () => {
                     const sorted = combo.sort((a, b) => a - b);
                     const key = sorted.join("-");
                     const color = combinationColors.get(key) || "#95a5a6";
-                    const label = sorted.map(i => `文件${i + 1}`).join(" + ");
+                    const label = sorted.map(i => `File ${i + 1}`).join(" + ");
                     combinations.push({ indices: sorted, label, color });
                   }
                 }
@@ -1234,11 +1233,11 @@ export const InteractionCircuitPage = () => {
               
               return (
                 <div className="bg-white rounded-lg shadow p-4">
-                  <h3 className="text-lg font-semibold mb-3">文件组合颜色图例</h3>
+                  <h3 className="text-lg font-semibold mb-3">File Combination Color Legend</h3>
                   <div className="space-y-3">
-                    {/* 基础文件颜色 */}
+                    {/* Base file colors */}
                     <div>
-                      <h4 className="text-sm font-medium text-gray-700 mb-2">基础文件颜色：</h4>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Base file colors:</h4>
                       <div className="flex flex-wrap items-center gap-3">
                         {fileNames.map((name: string, idx: number) => (
                           <div key={idx} className="flex items-center space-x-2">
@@ -1251,15 +1250,15 @@ export const InteractionCircuitPage = () => {
                               }}
                               title={name}
                             />
-                            <span className="text-sm text-gray-700">文件{idx + 1}: {name}</span>
+                            <span className="text-sm text-gray-700">File {idx + 1}: {name}</span>
                           </div>
                         ))}
                       </div>
                     </div>
                     
-                    {/* 所有组合颜色 */}
+                    {/* All combination colors */}
                     <div>
-                      <h4 className="text-sm font-medium text-gray-700 mb-2">文件组合颜色：</h4>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">File combinations:</h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                         {combinations.map((combo, idx) => (
                           <div key={idx} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
@@ -1273,18 +1272,18 @@ export const InteractionCircuitPage = () => {
                             />
                             <span className="text-sm text-gray-700 flex-1">{combo.label}</span>
                             {combo.indices.length === fileCount && (
-                              <span className="text-xs text-gray-500">(所有文件共有)</span>
+                              <span className="text-xs text-gray-500">(shared by all files)</span>
                             )}
                           </div>
                         ))}
                       </div>
                     </div>
                     
-                    {/* 说明 */}
+                    {/* Explanation */}
                     <div className="mt-3 pt-3 border-t border-gray-200">
                       <p className="text-xs text-gray-600">
-                        <span className="font-medium">说明：</span> 节点和边的颜色表示它们出现在哪些文件中。
-                        单文件独有的使用基础颜色，多文件共有的使用混色，所有文件共有的使用灰色。
+                        <span className="font-medium">Notes:</span> Node and edge colors indicate which files they appear in.
+                        Colors from a single base file mean “unique to that file”, mixed colors mean “shared by several files”, and gray means “shared by all files”.
                       </p>
                     </div>
                   </div>
@@ -1292,7 +1291,7 @@ export const InteractionCircuitPage = () => {
               );
             })()}
 
-            {/* 主图区域 */}
+            {/* Main graph area */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
                 <div className="bg-white rounded-lg shadow p-4" style={{ height: '800px' }}>
@@ -1311,7 +1310,7 @@ export const InteractionCircuitPage = () => {
                 </div>
               </div>
 
-              {/* 右侧面板：连接的 Feature */}
+              {/* Right panel: connected features */}
               <div className="space-y-4">
                 <div className="bg-white rounded-lg shadow p-4" style={{ height: '800px', overflowY: 'auto' }}>
                   <FeatureConnections
@@ -1326,28 +1325,28 @@ export const InteractionCircuitPage = () => {
               </div>
             </div>
 
-            {/* Feature 信息区域 - 显示在下方 */}
+            {/* Feature info area - shown below */}
             {selectedFeature && clickedId && linkGraphData && (
               <div className="space-y-6">
-                {/* 激活棋盘显示 */}
+                {/* Activation board display */}
                 <div className="bg-white rounded-lg shadow p-4">
-                  <h3 className="text-lg font-semibold mb-4">Feature 激活棋盘</h3>
+                  <h3 className="text-lg font-semibold mb-4">Feature activation board</h3>
                   {(() => {
                     const node = linkGraphData.nodes.find(n => n.nodeId === clickedId);
                     if (!node) return null;
 
-                    // 从 node 对象中获取 featureIndex 和 isLorsa
-                    // 注意：这些值在 ChessBoard 的 analysisName 中会被使用
+                    // Get featureIndex and isLorsa from the node
+                    // Note: these values are used in ChessBoard's analysisName
                     const featureIndex = node.featureIndex !== undefined ? node.featureIndex : (parseInt(node.featureId) || 0);
                     const isLorsa = node.feature_type?.toLowerCase() === 'lorsa';
 
                     return (
                       <div className="space-y-4">
-                        {/* 自定义FEN输入区域 */}
+                        {/* Custom FEN input section */}
                         <div className="bg-white rounded-lg border shadow-sm p-4 mb-4">
                           <div className="flex items-center justify-between mb-4">
                             <h3 className="text-lg font-semibold text-center flex-1">
-                              自定义FEN分析
+                              Custom FEN analysis
                             </h3>
                           </div>
                           
@@ -1360,7 +1359,6 @@ export const InteractionCircuitPage = () => {
                                 onChange={(e) => {
                                   setUseCustomFenMode(e.target.checked);
                                   if (!e.target.checked) {
-                                    // 关闭自定义FEN模式时，恢复使用Top Activation
                                     if (topActivations.length > 0) {
                                       const firstSample = topActivations[0];
                                       setCurrentFen(firstSample.fen);
@@ -1375,7 +1373,6 @@ export const InteractionCircuitPage = () => {
                                       }
                                     }
                                   } else if (customFen.trim()) {
-                                    // 开启自定义FEN模式时，使用自定义FEN
                                     fetchFenActivation(customFen);
                                     setCurrentFen(customFen);
                                   }
@@ -1383,13 +1380,13 @@ export const InteractionCircuitPage = () => {
                                 className="w-4 h-4"
                               />
                               <label htmlFor="use-custom-fen" className="text-sm font-medium text-gray-700">
-                                使用自定义FEN（切换节点时保持棋盘不变）
+                                Use custom FEN (keep the board fixed when switching nodes)
                               </label>
                             </div>
                             
                             <input
                               type="text"
-                              placeholder="输入FEN字符串，例如: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                              placeholder="Enter a FEN string, e.g. rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
                               value={customFen}
                               onChange={(e) => setCustomFen(e.target.value)}
                               onKeyDown={(e) => {
@@ -1417,28 +1414,28 @@ export const InteractionCircuitPage = () => {
                               disabled={loadingFenActivation || !customFen.trim()}
                               className="w-full px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
-                              {loadingFenActivation ? "分析中..." : "分析FEN"}
+                              {loadingFenActivation ? "Analyzing..." : "Analyze FEN"}
                             </button>
                           </div>
                           
                           {useCustomFenMode && customFen.trim() && (
                             <div className="text-sm text-gray-600 bg-blue-50 p-2 rounded">
-                              ✓ 已启用自定义FEN模式。切换节点时，棋盘将保持为: <code className="bg-white px-1 rounded">{customFen}</code>
+                              ✓ Custom FEN mode is enabled. When switching nodes, the board will remain at: <code className="bg-white px-1 rounded">{customFen}</code>
                             </div>
                           )}
                         </div>
 
-                        {/* 加载状态 */}
+                        {/* Loading state */}
                         {loadingFenActivation && (
                           <div className="text-center py-4">
                             <div className="flex items-center justify-center space-x-2">
                               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                              <span className="text-sm text-gray-600">正在加载激活数据...</span>
+                              <span className="text-sm text-gray-600">Loading activation data...</span>
                             </div>
                           </div>
                         )}
 
-                        {/* 如果已经加载了激活数据，显示棋盘 */}
+                        {/* If activation data is loaded, show the board */}
                         {currentFen && fenActivationData && !loadingFenActivation && (
                           <div className="flex justify-center">
                             <div className="space-y-2">
@@ -1454,23 +1451,23 @@ export const InteractionCircuitPage = () => {
                                 zPatternValues={fenActivationData.zPatternValues}
                                 flip_activation={currentFen.includes(' b ')}
                                 autoFlipWhenBlack={true}
-                                analysisName={`Feature #${featureIndex} ${isLorsa ? 'LoRSA' : 'TC'}`}
+                                analysisName={`Feature #${featureIndex} ${isLorsa ? 'Lorsa' : 'TC'}`}
                               />
                             </div>
                           </div>
                         )}
 
-                        {/* Top Activations 选择 */}
+                        {/* Top Activations selection */}
                         {loadingTopActivations ? (
                           <div className="mt-4 text-center py-4">
                             <div className="flex items-center justify-center space-x-2">
                               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                              <span className="text-sm text-gray-600">正在加载 Top Activations...</span>
+                              <span className="text-sm text-gray-600">Loading Top Activations...</span>
                             </div>
                           </div>
                         ) : topActivations.length > 0 ? (
                           <div className="mt-4">
-                            <h4 className="text-md font-semibold mb-2">Top Activations (点击选择 FEN)</h4>
+                            <h4 className="text-md font-semibold mb-2">Top Activations (click to select FEN)</h4>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                               {topActivations.map((sample, idx) => (
                                 <div
@@ -1481,7 +1478,7 @@ export const InteractionCircuitPage = () => {
                                       : 'border-gray-300 hover:border-gray-400'
                                   }`}
                                   onClick={() => {
-                                    // 点击Top Activation时，关闭自定义FEN模式
+                                    // When clicking a Top Activation, turn off custom-FEN mode
                                     setUseCustomFenMode(false);
                                     setCurrentFen(sample.fen);
                                     if (sample.activations) {
@@ -1491,7 +1488,7 @@ export const InteractionCircuitPage = () => {
                                         zPatternValues: sample.zPatternValues,
                                       });
                                     } else {
-                                      // 如果没有激活数据，从后端获取
+                                      // If activation data is missing, fetch from backend
                                       fetchFenActivation(sample.fen);
                                     }
                                   }}
@@ -1499,7 +1496,7 @@ export const InteractionCircuitPage = () => {
                                   <div className="text-center mb-2">
                                     <div className="text-xs font-medium text-gray-700">Top #{idx + 1}</div>
                                     <div className="text-xs text-gray-500">
-                                      激活: {sample.activationStrength.toFixed(3)}
+                                      Activation: {sample.activationStrength.toFixed(3)}
                                     </div>
                                   </div>
                                   <ChessBoard
@@ -1526,15 +1523,15 @@ export const InteractionCircuitPage = () => {
           </div>
         )}
 
-        {/* 统计信息 */}
+        {/* Graph statistics */}
         {linkGraphData && !isLoading && (() => {
-          // 计算孤立节点
+          // Compute isolated nodes
           const isolatedNodes = linkGraphData.nodes.filter(n => 
             (!n.sourceLinks || n.sourceLinks.length === 0) && 
             (!n.targetLinks || n.targetLinks.length === 0)
           );
           
-          // 计算连通分量
+          // Compute connected components
           const visited = new Set<string>();
           const components: string[][] = [];
           
@@ -1576,37 +1573,37 @@ export const InteractionCircuitPage = () => {
             <div className="mt-6 p-4 bg-gray-100 rounded">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
-                  <p className="text-sm font-semibold text-gray-700">总节点数</p>
+                  <p className="text-sm font-semibold text-gray-700">Total nodes</p>
                   <p className="text-lg text-gray-900">{linkGraphData.nodes.length}</p>
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-gray-700">总边数</p>
+                  <p className="text-sm font-semibold text-gray-700">Total edges</p>
                   <p className="text-lg text-gray-900">{linkGraphData.links.length}</p>
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-gray-700">孤立节点数</p>
+                  <p className="text-sm font-semibold text-gray-700">Isolated nodes</p>
                   <p className="text-lg text-gray-900">{isolatedNodes.length}</p>
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-gray-700">连通分量数</p>
+                  <p className="text-sm font-semibold text-gray-700">Connected components</p>
                   <p className="text-lg text-gray-900">{components.length}</p>
                 </div>
               </div>
               {componentSizes.length > 0 && (
                 <div className="mt-4">
-                  <p className="text-sm font-semibold text-gray-700 mb-2">连通分量大小（降序）:</p>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Component sizes (descending):</p>
                   <p className="text-sm text-gray-600">
                     {componentSizes.slice(0, 10).join(', ')}
-                    {componentSizes.length > 10 && ` ... (共 ${componentSizes.length} 个)`}
+                    {componentSizes.length > 10 && ` ... (total ${componentSizes.length})`}
                   </p>
                 </div>
               )}
               {isolatedNodes.length > 0 && (
                 <div className="mt-4">
-                  <p className="text-sm font-semibold text-gray-700 mb-2">注意:</p>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Note:</p>
                   <p className="text-sm text-gray-600">
-                    检测到 {isolatedNodes.length} 个孤立节点（没有连接的节点）。
-                    {isolatedNodes.length > 0 && '这些节点应该会在图中显示，但可能因为布局原因不够明显。'}
+                    Detected {isolatedNodes.length} isolated nodes (nodes without any connections).
+                    {isolatedNodes.length > 0 && ' These nodes are still rendered in the graph, but may be less obvious due to layout.'}
                   </p>
                 </div>
               )}

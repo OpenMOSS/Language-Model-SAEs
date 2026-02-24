@@ -313,7 +313,7 @@ def nested_activation_steering_effect(
     Args:
         model: HookedTransformer模型
         transcoders: 字典，layer -> Transcoder SAE
-        lorsas: LoRSA模型列表（按layer顺序）
+        lorsas: Lorsa模型列表（按layer顺序）
         first_steering: 第一次steering的参数字典，包含:
             - feature_type: str ('transcoder' 或 'lorsa')
             - layer: int
@@ -492,7 +492,7 @@ def analyze_features_after_first_steering(
     Args:
         model: HookedTransformer模型
         transcoders: 字典，layer -> Transcoder SAE
-        lorsas: LoRSA模型列表（按layer顺序）
+        lorsas: Lorsa模型列表（按layer顺序）
         first_steering: 第一次steering的参数字典
         second_position_name: 要分析的第二个位置名称
         pos_dict: 位置名称到索引的字典
@@ -805,7 +805,7 @@ def multi_feature_steering_effect(
     Args:
         model: HookedTransformer模型
         transcoders: 字典，layer -> Transcoder SAE
-        lorsas: LoRSA模型列表（按layer顺序）
+        lorsas: Lorsa模型列表（按layer顺序）
         steering_configs: steering配置列表，每个配置是tuple:
             (layer: int, pos: int, feature_id: int, feature_type: str, steering_scale: float)
             feature_type 必须是 'transcoder' 或 'lorsa'

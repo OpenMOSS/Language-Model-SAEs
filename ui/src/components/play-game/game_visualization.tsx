@@ -23,9 +23,9 @@ interface GameState {
 }
 
 interface TimerState {
-  whiteTime: number; // 剩余时间（秒）
+  whiteTime: number; // remaining time (seconds)
   blackTime: number;
-  whiteIncrement: number; // 每步增加时间（秒）
+  whiteIncrement: number; // per-move increment (seconds)
   blackIncrement: number;
   isRunning: boolean;
   currentPlayer: 'w' | 'b';
@@ -91,15 +91,15 @@ interface GameVisualizationProps {
 }
 
 const OPENING_POSITIONS = [
-  { name: "起始局面", fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
-  { name: "意大利开局", fen: "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4" },
-  { name: "西班牙开局", fen: "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 3" },
-  { name: "西西里防御", fen: "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2" },
-  { name: "法兰西防御", fen: "rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2" },
-  { name: "斯堪的纳维亚防御", fen: "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2" },
-  { name: "卡罗-卡恩防御", fen: "rnbqkbnr/pp1ppppp/2p5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2" },
-  { name: "古印度防御", fen: "rnbqkb1r/pppppp1p/5np1/8/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3" },
-  { name: "英式开局", fen: "rnbqkbnr/pppppppp/8/8/2P5/8/PP1PPPPP/RNBQKBNR b KQkq c3 0 1" },
+  { name: "Starting Position", fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+  { name: "Italian Opening", fen: "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4" },
+  { name: "Spanish Opening", fen: "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 3" },
+  { name: "Sicilian Defense", fen: "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2" },
+  { name: "French Defense", fen: "rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2" },
+  { name: "Scandinavian Defense", fen: "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2" },
+  { name: "Caro-Kann Defense", fen: "rnbqkbnr/pp1ppppp/2p5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2" },
+  { name: "Indian Defense", fen: "rnbqkb1r/pppppp1p/5np1/8/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3" },
+  { name: "English Opening", fen: "rnbqkbnr/pppppppp/8/8/2P5/8/PP1PPPPP/RNBQKBNR b KQkq c3 0 1" },
 ];
 
 export const GameVisualization: React.FC<GameVisualizationProps> = ({
@@ -115,21 +115,18 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     gameEndReason: null,
   });
 
-  // 计时器状态
   const [timer, setTimer] = useState<TimerState>({
-    whiteTime: 180 * 60, // 3小时 = 180分钟 = 180*60秒
+    whiteTime: 180 * 60, // 3h = 180min = 180*60s
     blackTime: 180 * 60,
-    whiteIncrement: 60, // 1分钟
+    whiteIncrement: 60, // 1min = 60s
     blackIncrement: 60,
     isRunning: false,
     currentPlayer: 'w',
     lastMoveTime: Date.now(),
   });
 
-  // 移动历史（包含时间信息）
   const [moveHistory, setMoveHistory] = useState<MoveWithTime[]>([]);
 
-  // PGN保存对话框状态
   const [showPgnDialog, setShowPgnDialog] = useState(false);
   const [pgnHeaders, setPgnHeaders] = useState<PgnHeaders>({
     Event: new Date().toLocaleString('en-US', { 
@@ -158,7 +155,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     Variant: 'Standard',
   });
 
-  // 认输/和棋对话框状态（已移除，现在直接调用 endGame）
   const [selectedOpening, setSelectedOpening] = useState(OPENING_POSITIONS[0]);
   const [customFen, setCustomFen] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -169,33 +165,25 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   const [isAutoPlay, setIsAutoPlay] = useState(false);
   const [autoPlayInterval, setAutoPlayInterval] = useState<NodeJS.Timeout | null>(null);
   
-  // 翻转棋盘设置
   const [autoFlipWhenBlack, setAutoFlipWhenBlack] = useState<boolean>(false);
   
-  // 新增：对战模式与人类方
   const [matchMode, setMatchMode] = useState<'human-human' | 'human-model' | 'model-model'>('human-model');
   const [humanPlays, setHumanPlays] = useState<'w' | 'b'>('w');
 
-  // 新增：手动输入走法的状态
   const [manualMove, setManualMove] = useState('');
   const [moveError, setMoveError] = useState('');
   
-  // 已移除：加载日志现在由 SaeComboLoader 组件统一管理
-
-  // 新增：用于强制更新组件（由于 Chess 实例是可变的）
   const [, setDummy] = useState(0);
 
-  // 新增：Circuit Trace状态
   const [isTracing] = useState(false);
 
-  // 新增：MCTS 搜索设置
   const [useSearch, setUseSearch] = useState(false);
   const [searchParams, setSearchParams] = useState({
     max_playouts: 100,
     target_minibatch_size: 8,
     cpuct: 3.0,
     max_depth: 10,
-    // 低Q值探索增强参数（用于发现弃后连杀等隐藏走法）
+    // a lower q value exploration bonus is used to find hidden good moves
     low_q_exploration_enabled: false,
     low_q_threshold: 0.3,
     low_q_exploration_bonus: 0.1,
@@ -208,9 +196,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   } | null>(null);
   const [saveMctsTrace, setSaveMctsTrace] = useState(false);
 
-  // 移除：不在初始化或任何自动时机触发模型走棋，改为仅按按钮触发
-
-  // 根据模式与当前局面导出当前是否人类/模型回合
   const isWhiteToMove = game.turn() === 'w';
   const isHumanTurn = (
     (matchMode === 'human-human') ||
@@ -221,9 +206,8 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     (matchMode === 'human-model' && !isHumanTurn)
   ) && !gameState.isGameOver;
 
-  // 格式化时间为MM:SS或HH:MM:SS格式
   const formatTime = (seconds: number): string => {
-    const totalSeconds = Math.floor(seconds); // 只取整数秒
+    const totalSeconds = Math.floor(seconds);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const secs = totalSeconds % 60;
@@ -236,7 +220,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
   };
 
 
-  // 计时器更新
   useEffect(() => {
     if (!timer.isRunning || gameState.isGameOver) {
       return;
@@ -250,7 +233,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         if (prev.currentPlayer === 'w') {
           const newWhiteTime = Math.max(0, prev.whiteTime - elapsed);
           if (newWhiteTime <= 0) {
-            // 白方超时
             endGame('resignation', 'Black');
             return { ...prev, whiteTime: 0, isRunning: false };
           }
@@ -258,7 +240,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         } else {
           const newBlackTime = Math.max(0, prev.blackTime - elapsed);
           if (newBlackTime <= 0) {
-            // 黑方超时
             endGame('resignation', 'White');
             return { ...prev, blackTime: 0, isRunning: false };
           }
@@ -270,7 +251,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     return () => clearInterval(interval);
   }, [timer.isRunning, gameState.isGameOver]);
 
-  // 结束游戏
   const endGame = useCallback((reason: 'checkmate' | 'resignation' | 'draw', winner?: string | null) => {
     setGameState(prev => ({
       ...prev,
@@ -281,7 +261,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     
     setTimer(prev => ({ ...prev, isRunning: false }));
     
-    // 更新PGN头信息
     let result = '*';
     if (reason === 'checkmate') {
       result = winner === 'White' ? '1-0' : '0-1';
@@ -298,13 +277,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       BlackClock: formatTime(timer.blackTime),
     }));
     
-    // 显示PGN保存对话框
     setTimeout(() => {
       setShowPgnDialog(true);
     }, 1000);
   }, [timer.whiteTime, timer.blackTime, formatTime]);
 
-  // 更新游戏状态
   const updateGameState = useCallback((newGame: Chess, moveNotation?: string) => {
     const historyVerbose = newGame.history({ verbose: true });
     const moves = historyVerbose.map(m => m.from + m.to + (m.promotion ? m.promotion : ''));
@@ -322,7 +299,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       }
     }
 
-    // 更新计时器
     setTimer(prev => {
       const now = Date.now();
       const elapsed = (now - prev.lastMoveTime) / 1000;
@@ -351,7 +327,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       };
     });
 
-    // 记录移动历史
     if (moveNotation && !isGameOver) {
       const now = Date.now();
       const timeUsed = timer.currentPlayer === 'w' ? 
@@ -376,21 +351,17 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       gameEndReason,
     });
 
-    // 如果游戏结束，调用endGame
     if (isGameOver && gameEndReason) {
       endGame(gameEndReason, winner);
     }
 
-    // 通知父组件游戏状态更新
     onGameStateUpdate?.(newGame.fen(), moves);
   }, [onGameStateUpdate, timer, formatTime, endGame]);
 
-  // 开始新游戏
   const startNewGame = useCallback((fen?: string) => {
     const newGame = new Chess(fen || selectedOpening.fen);
     setGame(newGame);
     
-    // 重置计时器
     setTimer(prev => ({
       ...prev,
       whiteTime: 180 * 60,
@@ -400,7 +371,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       lastMoveTime: Date.now(),
     }));
     
-    // 重置移动历史
     setMoveHistory([]);
     
     updateGameState(newGame);
@@ -414,14 +384,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     }
   }, [selectedOpening.fen, updateGameState, autoPlayInterval]);
 
-  // 使用自定义FEN开始游戏
   const startWithCustomFen = useCallback(() => {
     if (customFen.trim()) {
     try {
-      // 直接用自定义fen新建Chess实例
       const newGame = new Chess(customFen.trim());
       setGame(newGame);
-      // 直接同步设置当前游戏state
       setGameState({
         fen: newGame.fen(),
         moves: [],
@@ -430,28 +397,23 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         isPlayerTurn: newGame.turn() === 'w',
         gameEndReason: null,
       });
-      // 同步通知外部（如 Circuit Tracing）当前FEN与空历史，用于立刻更新“分析FEN(移动前)”与“当前FEN”
       onGameStateUpdate?.(newGame.fen(), []);
-      // 额外：写入本地缓存，供 Circuit Tracing 直接读取
       try {
         localStorage.setItem('circuit_game_fen', newGame.fen());
       } catch {}
-      // 重置计时/分析状态
       setTimer(prev => ({ ...prev, whiteTime: 180 * 60, blackTime: 180 * 60, isRunning: false, currentPlayer: 'w', lastMoveTime: Date.now() }));
       setMoveHistory([]);
-      setAnalysis(null); // 清空旧分析
+      setAnalysis(null);
       setIsAutoPlay(false);
       setShowPgnDialog(false);
       if (autoPlayInterval) { clearInterval(autoPlayInterval); setAutoPlayInterval(null); }
-      // 刷新分析（如有需要，可注释掉）
-      // getStockfishAnalysis(newGame.fen()); // 如果你希望用“分析模式”自动刷新分析结果，请取消注释
     } catch (error) {
-      alert('无效的FEN字符串');
+      alert('Invalid FEN');
     }
     }
   }, [customFen, autoPlayInterval]);
 
-  // 获取Stockfish分析（固定使用BT4模型）
+  // get stockfish analysis
   const getStockfishAnalysis = useCallback(async (fen: string) => {
     try {
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
@@ -465,9 +427,9 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       if (response.ok) {
         const data = await response.json();
         setAnalysis({
-          bestMove: 'N/A', // 模型分析不提供最佳移动
-          evaluation: data.evaluation[0] - data.evaluation[2], // 胜率差值
-          depth: 0, // 模型分析没有深度概念
+          bestMove: 'N/A',
+          evaluation: data.evaluation[0] - data.evaluation[2],
+          depth: 0,
           wdl: {
             winProb: data.evaluation[0],
             drawProb: data.evaluation[1],
@@ -476,20 +438,19 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         });
         return data;
       } else {
-        console.error('模型分析失败:', response.status, response.statusText);
+        console.error('Stockfish analysis failed:', response.status, response.statusText);
         const errorText = await response.text();
-        console.error('错误详情:', errorText);
+        console.error('Error details:', errorText);
       }
     } catch (error) {
-      console.error('获取模型分析失败:', error);
+      console.error('Get stockfish analysis failed:', error);
     }
     return null;
   }, []);
 
-  // 获取模型建议的移动（固定使用BT4模型，支持可选搜索）
+  // get model move
   const getModelMove = useCallback(async (fen: string): Promise<ModelMoveResponse | null> => {
     try {
-      // 根据是否启用搜索选择不同的 API 端点
       const endpoint = useSearch 
         ? `${import.meta.env.VITE_BACKEND_URL}/play_game_with_search`
         : `${import.meta.env.VITE_BACKEND_URL}/play_game`;
@@ -499,11 +460,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             fen, 
             ...searchParams, 
             save_trace: saveMctsTrace,
-            trace_max_edges: saveMctsTrace ? 0 : 1000  // 0 表示保存完整搜索树，不限制边数
+            trace_max_edges: saveMctsTrace ? 0 : 1000
           }
         : { fen };
       
-      console.log(`🎯 请求模型移动: ${useSearch ? 'MCTS搜索' : '直接推理'}, playouts=${searchParams.max_playouts}`);
+      console.log(`🎯 Request model move: ${useSearch ? 'MCTS search' : 'Direct inference'}, playouts=${searchParams.max_playouts}`);
       
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -516,26 +477,25 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       if (response.ok) {
         const data = await response.json();
         
-        // 如果使用了搜索，保存搜索信息
         if (useSearch && data.search_info) {
           setLastSearchInfo({
             total_playouts: data.search_info.total_playouts,
             max_depth_reached: data.search_info.max_depth_reached,
             max_depth_limit: data.search_info.max_depth_limit,
           });
-          console.log(`✅ MCTS搜索完成: playouts=${data.search_info.total_playouts}, depth=${data.search_info.max_depth_reached}`);
+          console.log(`✅ MCTS search completed: playouts=${data.search_info.total_playouts}, depth=${data.search_info.max_depth_reached}`);
         } else {
           setLastSearchInfo(null);
         }
         
         return data as ModelMoveResponse;
       } else {
-        console.error('API调用失败:', response.status, response.statusText);
+        console.error('API call failed:', response.status, response.statusText);
         const errorText = await response.text();
-        console.error('错误详情:', errorText);
+        console.error('Error details:', errorText);
       }
     } catch (error) {
-      console.error('获取模型移动失败:', error);
+      console.error('Get model move failed:', error);
     }
     return null;
   }, [useSearch, searchParams, saveMctsTrace]);
@@ -546,7 +506,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       const response = await fetch(url);
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('下载MCTS搜索文件失败:', errorText);
+        console.error('Download MCTS search file failed:', errorText);
         return;
       }
       const blob = await response.blob();
@@ -559,11 +519,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       document.body.removeChild(anchor);
       URL.revokeObjectURL(downloadUrl);
     } catch (error) {
-      console.error('下载MCTS搜索文件失败:', error);
+      console.error('Download MCTS search file failed:', error);
     }
   }, []);
 
-  // 将UCI字符串转换为chess.js可接受的move对象
+  // convert UCI string to chess.js move object
   const toChessJsMove = useCallback((move: string) => {
     const m = (move || '').trim();
     const uciMatch = m.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/i);
@@ -574,10 +534,10 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         promotion: uciMatch[3] ? uciMatch[3].toLowerCase() : undefined,
       } as any;
     }
-    return m; // 兼容SAN等其他格式
+    return m;
   }, []);
 
-  // 执行移动
+  // make move
   const makeMove = useCallback((move: any) => {
     try {
       const prevFenBefore = game.fen();
@@ -588,7 +548,6 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         promotion: parsed0.promotion ? String(parsed0.promotion).toLowerCase() : undefined,
       } as any;
 
-      // 若是字符串（如SAN），直接尝试；否则先用合法走法校验
       if (typeof parsed === 'string') {
         const result = game.move(parsed as any);
         if (!result) return false;
@@ -600,14 +559,13 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         if (!result) return false;
       }
 
-      // 在替换实例前，先从当前game提取完整历史与状态
       const historyVerbose = game.history({ verbose: true }) as any[];
       const movesUci = historyVerbose.map(m => m.from + m.to + (m.promotion ? m.promotion : ''));
 
-      // 用PGN重建以保留历史，避免FEN丢失undo栈
+      // use PGN to rebuild the game to keep the history, avoid FEN loss of undo stack
       const pgn = game.pgn();
       const replaced = new Chess();
-      // 新版chess.js使用 loadPgn，旧版为 load_pgn，这里两者都尝试
+      // new version of chess.js uses loadPgn, old version uses load_pgn, both are tried here
       if (typeof (replaced as any).loadPgn === 'function') {
         (replaced as any).loadPgn(pgn);
       } else if (typeof (replaced as any).load_pgn === 'function') {
@@ -615,27 +573,26 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       }
       setGame(replaced);
 
-      // 记录本步前的FEN，供评测使用
+      // record the FEN before this move, for evaluation
       setLastFenBeforeMove(prevFenBefore);
 
-      // 使用updateGameState来更新状态（包含计时器更新）
+      // use updateGameState to update the state (including timer update)
       updateGameState(replaced, movesUci[movesUci.length - 1]);
 
-      setDummy(prev => prev + 1); // 强制触发刷新
+      setDummy(prev => prev + 1); // force refresh
       return true;
     } catch (error) {
-      console.error('移动失败:', error);
+      console.error('Make move failed:', error);
     }
     return false;
   }, [game, toChessJsMove, updateGameState]);
 
-  // 处理玩家移动：仅在人类回合允许
+  // handle player move: only allowed in human turn
   const handlePlayerMove = useCallback((move: string) => {
     if (!isHumanTurn) {
       return false;
     }
 
-    // ChessBoard组件现在已经正确处理了翻转逻辑，直接使用返回的UCI
     const uci = move;
 
     const ok = makeMove(uci);
@@ -650,7 +607,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     return false;
   }, [isHumanTurn, makeMove, gameMode, getStockfishAnalysis, game]);
 
-  // 处理模型移动：仅在模型回合触发
+  // handle model move: only triggered in model turn
   const handleModelMove = useCallback(async () => {
     if (isModelTurn && !isLoading && !isTracing) {
       setIsLoading(true);
@@ -658,22 +615,22 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         const moveResponse = await getModelMove(game.fen());
         const modelMove = moveResponse?.move;
         if (!modelMove) {
-          console.warn('模型未返回走法或返回为空');
-          alert('模型未返回走法，请检查后端或当前局面');
+          console.warn('Model did not return a move or returned empty');
+          alert('Model did not return a move or returned empty');
           return;
         }
         if (modelMove && makeMove(modelMove)) {
           if (useSearch && saveMctsTrace && moveResponse?.trace_filename) {
             await downloadTraceFile(moveResponse.trace_filename);
           }
-          // 获取新局面的分析
+          // get the analysis of the new position
           if (gameMode === 'analysis') {
             setTimeout(() => {
               getStockfishAnalysis(game.fen());
             }, 100);
           }
         } else {
-          alert('模型给出的走法无效或不合法');
+          alert('The move given by the model is invalid or illegal');
         }
       } finally {
         setIsLoading(false);
@@ -681,10 +638,10 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     }
   }, [isModelTurn, isLoading, isTracing, getModelMove, game, makeMove, gameMode, getStockfishAnalysis, useSearch, saveMctsTrace, downloadTraceFile]);
 
-  // 自动对局：
-  // - human-human: 自动无意义，保持现状（只控制随机玩家步原逻辑保留）
-  // - human-model: 人类回合不自动；模型回合自动调用模型
-  // - model-model: 双方都用模型
+  // auto play:
+  // - human-human: auto play is meaningless, keep the current state (only keep the original logic of controlling the random player)
+  // - human-model: human turn does not auto play; model turn auto call model
+  // - model-model: both sides use model
   const toggleAutoPlay = useCallback(() => {
     if (isAutoPlay) {
       if (autoPlayInterval) {
@@ -701,7 +658,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
           } else if (matchMode === 'human-model') {
             if (isModelTurn) handleModelMove();
           } else {
-            // human-human: 不自动
+            // human-human: do not auto play
           }
         } else {
           setIsAutoPlay(false);
@@ -715,7 +672,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     }
   }, [isAutoPlay, autoPlayInterval, gameState.isGameOver, matchMode, isModelTurn, handleModelMove]);
 
-  // 清理定时器
+  // clear timer
   useEffect(() => {
     return () => {
       if (autoPlayInterval) {
@@ -724,16 +681,16 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     };
   }, [autoPlayInterval]);
 
-  // 获取当前局面的分析
+  // get the analysis of the current position
   const getCurrentAnalysis = useCallback(async () => {
     await getStockfishAnalysis(game.fen());
   }, [game, getStockfishAnalysis]);
 
-  // 退回上一步，直接在现有 game 实例上撤销移动（保留历史）
+  // undo the last move, directly undo the move on the current game instance (keep the history)
   const undoLastMove = useCallback(() => {
     try {
       const last = game.undo();
-      if (!last) return; // 无可撤销
+      if (!last) return; // no more undo
 
       const historyVerbose = game.history({ verbose: true }) as any[];
       const movesUci = historyVerbose.map(m => m.from + m.to + (m.promotion ? m.promotion : ''));
@@ -749,7 +706,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       }
       const isPlayerTurn = game.turn() === 'w';
 
-      // 用PGN重建以保留历史
+      // use PGN to rebuild the game to keep the history
       const pgn = game.pgn();
       const replaced = new Chess();
       if (typeof (replaced as any).loadPgn === 'function') {
@@ -768,7 +725,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         gameEndReason: null,
       });
 
-      // 通知父组件游戏状态更新
+      // notify the parent component the game state update
       onGameStateUpdate?.(nextFen, movesUci);
 
       setDummy(prev => prev + 1);
@@ -776,22 +733,22 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         setTimeout(() => { getStockfishAnalysis(nextFen); }, 100);
       }
     } catch (error) {
-      console.error('撤销失败:', error);
+      console.error('Undo failed:', error);
     }
   }, [game, gameMode, getStockfishAnalysis, onGameStateUpdate]);
 
-  // 修改手动输入为兼容UCI
+  // modify manual input to be compatible with UCI
   const handleManualMove = useCallback(() => {
     if (!manualMove.trim()) {
-      setMoveError('请输入走法');
+      setMoveError('Please input a move');
       return;
     }
     if (!isHumanTurn) {
-      setMoveError('现在不是人类回合');
+      setMoveError('Now is not human turn');
       return;
     }
     if (gameState.isGameOver) {
-      setMoveError('游戏已结束');
+      setMoveError('Game is over');
       return;
     }
     try {
@@ -813,19 +770,19 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
           }, 100);
         }
       } else {
-        setMoveError('无效的走法');
+        setMoveError('Invalid move');
       }
     } catch (error) {
-      setMoveError('无效的走法格式');
+      setMoveError('Invalid move format');
     }
   }, [manualMove, isHumanTurn, gameState.isGameOver, game, updateGameState, gameMode, getStockfishAnalysis, toChessJsMove]);
 
-  // 调用后端进行走法评测（基于上一步之前的FEN与上一步UCI）
+  // call the backend to evaluate the move (based on the FEN before the last move and the last move UCI)
   const evaluateLastMove = useCallback(async () => {
     try {
       const lastMove = gameState.moves[gameState.moves.length - 1];
       if (!lastMove || !lastFenBeforeMove) {
-        alert('没有可评测的上一步或缺少前一FEN');
+        alert('No previous move to evaluate or missing previous FEN');
         return;
       }
       const resp = await fetch(`${import.meta.env.VITE_BACKEND_URL}/evaluate_move`, {
@@ -835,28 +792,28 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       });
       if (!resp.ok) {
         const t = await resp.text();
-        throw new Error(t || '评测失败');
+        throw new Error(t || 'Evaluation failed');
       }
       const data = await resp.json();
       setLastMoveEval(data);
     } catch (e) {
-      console.error('评测失败:', e);
-      alert('评测失败，请查看控制台日志');
+      console.error('Evaluation failed:', e);
+      alert('Evaluation failed, please check the console log');
     }
   }, [gameState.moves, lastFenBeforeMove]);
 
-  // 生成PGN字符串
+  // generate PGN string
   const generatePgn = useCallback(() => {
     let pgn = '';
     
-    // 添加头部信息
+    // add header information
     Object.entries(pgnHeaders).forEach(([key, value]) => {
       pgn += `[${key} "${value}"]\n`;
     });
     
     pgn += '\n';
     
-    // 添加移动历史
+    // add move history
     const moves = game.history();
     for (let i = 0; i < moves.length; i++) {
       const moveNum = Math.floor(i / 2) + 1;
@@ -868,7 +825,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       
       pgn += `${moves[i]} `;
       
-      // 添加时间信息
+      // add time information
       if (moveHistory[i]) {
         const timeUsed = Math.round(moveHistory[i].time);
         const minutes = Math.floor(timeUsed / 60);
@@ -886,7 +843,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     return pgn;
   }, [pgnHeaders, game, moveHistory]);
 
-  // 保存PGN文件
+  // save PGN file
   const savePgnFile = useCallback(() => {
     const pgn = generatePgn();
     const blob = new Blob([pgn], { type: 'text/plain' });
@@ -900,38 +857,30 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
     URL.revokeObjectURL(url);
   }, [generatePgn, pgnHeaders]);
 
-  // 处理认输
+  // handle resignation
   const handleResign = useCallback((player: 'White' | 'Black') => {
     endGame('resignation', player === 'White' ? 'Black' : 'White');
   }, [endGame]);
 
-  // 处理和棋
+  // Handle draw offer / agreement
   const handleDraw = useCallback(() => {
     endGame('draw');
   }, [endGame]);
 
-  // 开始计时器
+  // Start the game timer
   const startTimer = useCallback(() => {
     setTimer(prev => ({ ...prev, isRunning: true, lastMoveTime: Date.now() }));
   }, []);
 
-
-  // 已移除：加载日志和预加载逻辑现在由 SaeComboLoader 组件统一管理
-
-  // 已移除自动加载逻辑：现在通过页面顶部的 SaeComboLoader 组件手动加载
-
-  // 不自动触发模型走棋，用户需点击"让模型走棋"按钮
-
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
       <SaeComboLoader />
 
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">与模型对局</h1>
+        <h1 className="text-3xl font-bold">Play with model</h1>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-sm">
-            <span>黑方回合自动翻转</span>
+            <span>Black turn auto flip</span>
             <Switch checked={autoFlipWhenBlack} onCheckedChange={setAutoFlipWhenBlack} />
           </div>
         <div className="flex gap-2">
@@ -941,7 +890,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             size="sm"
           >
             <RotateCcw className="w-4 h-4 mr-2" />
-            新游戏
+            New game
           </Button>
             <Button
               onClick={undoLastMove}
@@ -950,7 +899,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               disabled={game.history().length === 0}
             >
               <Undo2 className="w-4 h-4 mr-2" />
-              退回一步
+              Undo last move
           </Button>
           <Button
             onClick={toggleAutoPlay}
@@ -960,12 +909,12 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             {isAutoPlay ? (
               <>
                 <Square className="w-4 h-4 mr-2" />
-                停止自动
+                Stop auto play
               </>
             ) : (
               <>
                 <Play className="w-4 h-4 mr-2" />
-                自动对局
+                Auto play
               </>
             )}
           </Button>
@@ -974,29 +923,29 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 棋盘区域 */}
+        {/* Board area */}
         <div className="lg:col-span-2">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
-                <span>棋盘</span>
+                <span>Board</span>
                 <div className="flex gap-2">
                   <Badge variant={isHumanTurn ? "default" : "secondary"}>
-                    {isHumanTurn ? "人类回合" : "模型回合"}
+                    {isHumanTurn ? "Human turn" : "Model turn"}
                   </Badge>
                   {gameState.isGameOver && (
                     <Badge variant="destructive">
-                      {gameState.winner ? `游戏结束: ${gameState.winner} 获胜` : "平局"}
+                      {gameState.winner ? `Game over: ${gameState.winner} wins` : "Draw"}
                     </Badge>
                   )}
                 </div>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {/* 计时器显示 */}
+              {/* timer display */}
               <div className="mb-4 flex justify-center gap-8">
                 <div className={`text-center p-3 rounded-lg ${game.turn() === 'w' ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-100'}`}>
-                  <div className="text-sm font-medium text-gray-600">白方</div>
+                  <div className="text-sm font-medium text-gray-600">White</div>
                   <div className={`text-2xl font-mono font-bold ${timer.whiteTime < 60 ? 'text-red-600' : 'text-gray-900'}`}>
                     {formatTime(timer.whiteTime)}
                   </div>
@@ -1007,11 +956,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                     variant={timer.isRunning ? "destructive" : "default"}
                     size="sm"
                   >
-                    {timer.isRunning ? '暂停' : '开始'}
+                    {timer.isRunning ? 'Pause' : 'Start'}
                   </Button>
                 </div>
                 <div className={`text-center p-3 rounded-lg ${game.turn() === 'b' ? 'bg-blue-100 border-2 border-blue-500' : 'bg-gray-100'}`}>
-                  <div className="text-sm font-medium text-gray-600">黑方</div>
+                  <div className="text-sm font-medium text-gray-600">Black</div>
                   <div className={`text-2xl font-mono font-bold ${timer.blackTime < 60 ? 'text-red-600' : 'text-gray-900'}`}>
                     {formatTime(timer.blackTime)}
                   </div>
@@ -1025,65 +974,65 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   showCoordinates={true}
                   onMove={(uci) => handlePlayerMove(uci)}
                   onSquareClick={(square) => {
-                    console.log('点击格子:', square);
+                    console.log('Click square:', square);
                   }}
-                  // 禁用交互如果不是人类回合或者正在trace
+                  // disable interaction if not human turn or tracing
                   isInteractive={isHumanTurn && !isTracing}
                   autoFlipWhenBlack={autoFlipWhenBlack}
-                  analysisName="对局棋盘"
+                  analysisName="Game board"
                   showSelfPlay={false}
                 />
               </div>
               
-              {/* 移动历史 */}
+              {/* move history */}
               <div className="mt-4">
-                <h3 className="text-sm font-medium mb-2">移动历史</h3>
+                <h3 className="text-sm font-medium mb-2">Move history</h3>
                 <div className="bg-gray-50 p-3 rounded max-h-32 overflow-y-auto">
                   <div className="text-sm font-mono">
-                    {gameState.moves.length > 0 ? gameState.moves.join(' ') : '暂无移动'}
+                    {gameState.moves.length > 0 ? gameState.moves.join(' ') : 'No moves yet'}
                   </div>
                 </div>
               </div>
               
-              {/* 加载日志已迁移到页面顶部的 SaeComboLoader 组件 */}
+              {/* load logs has been migrated to the SaeComboLoader component at the top of the page */}
             </CardContent>
           </Card>
         </div>
 
-        {/* 控制面板 */}
+        {/* control panel */}
         <div className="space-y-4">
 
-          {/* 模式与人类方选择 */}
+          {/* game mode and human side selection */}
           <Card>
             <CardHeader>
-              <CardTitle>对战设置</CardTitle>
+              <CardTitle>Game settings</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 gap-3">
                 <div>
-                  <label className="text-sm font-medium">对战模式</label>
+                  <label className="text-sm font-medium">Game mode</label>
                   <Select value={matchMode} onValueChange={(v: 'human-human' | 'human-model' | 'model-model') => setMatchMode(v)}>
                     <SelectTrigger className="mt-1">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="human-human">人类 vs 人类</SelectItem>
-                      <SelectItem value="human-model">人类 vs 模型</SelectItem>
-                      <SelectItem value="model-model">模型 vs 模型</SelectItem>
+                      <SelectItem value="human-human">Human vs Human</SelectItem>
+                      <SelectItem value="human-model">Human vs Model</SelectItem>
+                      <SelectItem value="model-model">Model vs Model</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 {matchMode === 'human-model' && (
                   <div>
-                    <label className="text-sm font-medium">人类执子</label>
+                    <label className="text-sm font-medium">Human side</label>
                     <Select value={humanPlays} onValueChange={(v: 'w' | 'b') => setHumanPlays(v)}>
                       <SelectTrigger className="mt-1">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="w">白方</SelectItem>
-                        <SelectItem value="b">黑方</SelectItem>
+                        <SelectItem value="w">White</SelectItem>
+                        <SelectItem value="b">Black</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1092,28 +1041,28 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             </CardContent>
           </Card>
 
-          {/* MCTS 搜索设置 */}
+          {/* MCTS search settings */}
           <Card>
             <CardHeader>
-              <CardTitle>搜索设置</CardTitle>
+              <CardTitle>Search settings</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">启用 MCTS 搜索</label>
+                <label className="text-sm font-medium">Enable MCTS search</label>
                 <Switch checked={useSearch} onCheckedChange={setUseSearch} />
               </div>
               
               {useSearch && (
                 <div className="space-y-3 pt-2 border-t">
                   <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium">保存MCTS搜索JSON</label>
+                    <label className="text-sm font-medium">Save MCTS search JSON</label>
                     <Switch checked={saveMctsTrace} onCheckedChange={setSaveMctsTrace} />
                   </div>
                   <p className="text-xs text-gray-500">
-                    启用后，每次搜索完成并落子时会自动下载对应FEN的搜索trace（默认文件名包含当前FEN）。
+                    After enabled, the search trace of the corresponding FEN will be automatically downloaded when the search is completed and the move is made (the default file name contains the current FEN).
                   </p>
                   <div>
-                    <label className="text-sm font-medium">最大模拟次数</label>
+                    <label className="text-sm font-medium">Maximum playouts</label>
                     <Input
                       type="number"
                       value={searchParams.max_playouts}
@@ -1128,7 +1077,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   </div>
                   
                   <div>
-                    <label className="text-sm font-medium">最大搜索深度</label>
+                    <label className="text-sm font-medium">Maximum search depth</label>
                     <Input
                       type="number"
                       value={searchParams.max_depth}
@@ -1143,7 +1092,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   </div>
                   
                   <div>
-                    <label className="text-sm font-medium">UCT 探索系数 (cpuct)</label>
+                    <label className="text-sm font-medium">UCT exploration coefficient (cpuct)</label>
                     <Input
                       type="number"
                       step="0.1"
@@ -1159,7 +1108,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   </div>
                   
                   <div>
-                    <label className="text-sm font-medium">批处理大小</label>
+                    <label className="text-sm font-medium">Batch size</label>
                     <Input
                       type="number"
                       value={searchParams.target_minibatch_size}
@@ -1173,7 +1122,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                     />
                   </div>
                   
-                  {/* 低Q值探索增强参数 */}
+                  {/* low Q value exploration enhancement parameters */}
                   <div className="border-t pt-3 mt-3">
                     <div className="flex items-center gap-2 mb-2">
                       <input
@@ -1187,18 +1136,18 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                         className="w-4 h-4"
                       />
                       <label htmlFor="low_q_exploration_enabled" className="text-sm font-medium">
-                        启用低Q值探索增强（用于发现弃后连杀等隐藏走法）
+                        Enable low Q value exploration enhancement (used to find hidden good moves like dropping pieces)
                       </label>
                     </div>
                     
                     {searchParams.low_q_exploration_enabled && (
                       <div className="space-y-3 ml-6 mt-3 bg-blue-50 p-3 rounded">
                         <p className="text-xs text-gray-600 mb-2">
-                          对Q值低于阈值且访问次数较少的走法给予额外探索奖励，有助于发现模型先验评估不高但实际可能是好走法的情况（如弃后连杀）。
+                          Give extra exploration reward to moves with Q value below the threshold and fewer visits. This helps discover moves that the model initially evaluates poorly but that may actually be strong.
                         </p>
                         <div className="space-y-2">
                           <div>
-                            <label className="text-xs font-medium text-gray-700">Q值阈值</label>
+                            <label className="text-xs font-medium text-gray-700">Q threshold</label>
                             <Input
                               type="number"
                               step="0.1"
@@ -1212,11 +1161,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                               className="mt-1 text-xs"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                              低于此Q值的走法会被增强探索（默认0.3，可为负数）
+                              Moves with Q value below this threshold will be enhanced exploration (default 0.3, can be negative)
                             </p>
                           </div>
                           <div>
-                            <label className="text-xs font-medium text-gray-700">探索奖励</label>
+                            <label className="text-xs font-medium text-gray-700">Exploration bonus</label>
                             <Input
                               type="number"
                               step="0.01"
@@ -1230,11 +1179,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                               className="mt-1 text-xs"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                              奖励的基础值，越大则对低Q值走法的探索越积极（默认0.1）
+                              The base value of the reward, the greater the value, the more actively the exploration of low Q value moves will be (default 0.1)
                             </p>
                           </div>
                           <div>
-                            <label className="text-xs font-medium text-gray-700">访问次数阈值</label>
+                            <label className="text-xs font-medium text-gray-700">Visit threshold</label>
                             <Input
                               type="number"
                               value={searchParams.low_q_visit_threshold}
@@ -1247,7 +1196,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                               className="mt-1 text-xs"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                              访问次数低于此值的走法才会获得奖励（默认5）
+                              Moves with visits below this value will be rewarded (default 5)
                             </p>
                           </div>
                         </div>
@@ -1255,12 +1204,12 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                     )}
                   </div>
                   
-                  {/* 显示上次搜索信息 */}
+                  {/* display last search information */}
                   {lastSearchInfo && (
                     <div className="bg-gray-50 p-2 rounded text-xs space-y-1">
-                      <div><strong>上次搜索:</strong></div>
-                      <div>总模拟次数: {lastSearchInfo.total_playouts}</div>
-                      <div>达到深度: {lastSearchInfo.max_depth_reached}</div>
+                      <div><strong>Last search:</strong></div>
+                      <div>Total playouts: {lastSearchInfo.total_playouts}</div>
+                      <div>Reached depth: {lastSearchInfo.max_depth_reached}</div>
                     </div>
                   )}
                 </div>
@@ -1268,18 +1217,18 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             </CardContent>
           </Card>
 
-          {/* 新增：手动输入走法 */}
+          {/* new: manually input move */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Move className="w-4 h-4" />
-                手动走棋
+                Manually input move
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Input
-                  placeholder="输入走法 (如: e2e4, Nf3, O-O)"
+                  placeholder="Input move (e.g. e2e4, Nf3, O-O)"
                   value={manualMove}
                   onChange={(e) => {
                     setManualMove(e.target.value);
@@ -1300,13 +1249,13 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   disabled={!isHumanTurn || !manualMove.trim()}
                   className="w-full"
                 >
-                  执行走法
+                  Execute move
                 </Button>
               </div>
               
-              {/* 显示合法走法 */}
+              {/* display legal moves */}
               <div className="space-y-2">
-                <div className="text-sm font-medium">合法走法:</div>
+                <div className="text-sm font-medium">Legal moves:</div>
                 <div className="bg-gray-50 p-2 rounded max-h-24 overflow-y-auto">
                   <div className="text-xs font-mono">
                     {game.moves().slice(0, 20).join(', ')}
@@ -1314,11 +1263,11 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   </div>
                 </div>
                 <div className="text-xs text-gray-500">
-                  共 {game.moves().length} 种合法走法
+                  Total {game.moves().length} legal moves
                 </div>
               </div>
 
-              {/* 模型移动控制：移动到手动走棋下方 */}
+              {/* model move control: move below manually input move */}
               <div className="border-t pt-4">
                 <Button
                   onClick={handleModelMove}
@@ -1328,10 +1277,10 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   {isLoading ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      思考中...
+                      Thinking...
                     </>
                   ) : (
-                    '让模型走棋'
+                    'Let the model move'
                   )}
                 </Button>
                 
@@ -1341,28 +1290,28 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                     variant="outline"
                     className="w-full mt-2"
                   >
-                    获取分析
+                    Get analysis
                   </Button>
                 )}
 
-                {/* 评测上一步 */}
+                {/* evaluate last move */}
                 <Button
                   onClick={evaluateLastMove}
                   variant="outline"
                   className="w-full mt-2"
                   disabled={!lastFenBeforeMove || gameState.moves.length === 0}
                 >
-                  评测上一步
+                  Evaluate last move
                 </Button>
               </div>
             </CardContent>
           </Card>
 
 
-          {/* 游戏模式（保留原分析模式切换，与上方对战设置不同维度） */}
+          {/* game mode (keep the original analysis mode switch, different from the above game settings) */}
           <Card>
             <CardHeader>
-              <CardTitle>游戏模式</CardTitle>
+              <CardTitle>Game mode</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <Select
@@ -1373,17 +1322,17 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="player-vs-model">玩家 vs 模型</SelectItem>
-                  <SelectItem value="analysis">分析模式</SelectItem>
+                  <SelectItem value="player-vs-model">Player vs Model</SelectItem>
+                  <SelectItem value="analysis">Analysis mode</SelectItem>
                 </SelectContent>
               </Select>
             </CardContent>
           </Card>
 
-          {/* 开局选择 */}
+          {/* opening selection */}
           <Card>
             <CardHeader>
-              <CardTitle>选择开局</CardTitle>
+              <CardTitle>Select opening</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <Select
@@ -1410,19 +1359,19 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                 className="w-full"
                 variant="outline"
               >
-                使用此开局
+                Use this opening
               </Button>
             </CardContent>
           </Card>
 
-          {/* 自定义FEN */}
+          {/* custom FEN */}
           <Card>
             <CardHeader>
-              <CardTitle>自定义局面</CardTitle>
+              <CardTitle>Custom FEN</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <Textarea
-                placeholder="输入FEN字符串..."
+                placeholder="Input FEN string..."
                 value={customFen}
                 onChange={(e) => setCustomFen(e.target.value)}
                 rows={3}
@@ -1433,41 +1382,41 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                 variant="outline"
                 disabled={!customFen.trim()}
               >
-                使用自定义FEN
+                Use custom FEN
               </Button>
             </CardContent>
           </Card>
 
-          {/* 分析结果 */}
+          {/* analysis result */}
           {analysis && (
             <Card>
               <CardHeader>
-                <CardTitle>分析结果</CardTitle>
+                <CardTitle>Analysis result</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="text-sm">
-                  <strong>最佳移动:</strong> {analysis.bestMove}
+                  <strong>Best move:</strong> {analysis.bestMove}
                 </div>
                 <div className="text-sm">
-                  <strong>评估:</strong> {analysis.evaluation ? analysis.evaluation.toFixed(2) : 'N/A'}
+                  <strong>Evaluation:</strong> {analysis.evaluation ? analysis.evaluation.toFixed(2) : 'N/A'}
                 </div>
                 <div className="text-sm">
-                  <strong>深度:</strong> {analysis.depth || 'N/A'}
+                  <strong>Depth:</strong> {analysis.depth || 'N/A'}
                 </div>
                 {analysis.wdl && (
                   <div className="text-sm">
-                    <strong>胜率:</strong> 
+                    <strong>Win rate:</strong> 
                     <div className="mt-1 space-y-1">
                       <div className="flex justify-between">
-                        <span>白胜:</span>
+                        <span>White win:</span>
                         <span>{(analysis.wdl.winProb * 100).toFixed(1)}%</span>
                       </div>
                       <div className="flex justify-between">
-                        <span>平局:</span>
+                        <span>Draw:</span>
                         <span>{(analysis.wdl.drawProb * 100).toFixed(1)}%</span>
                       </div>
                       <div className="flex justify-between">
-                        <span>黑胜:</span>
+                        <span>Black win:</span>
                         <span>{(analysis.wdl.lossProb * 100).toFixed(1)}%</span>
                       </div>
                     </div>
@@ -1477,44 +1426,44 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
             </Card>
           )}
 
-          {/* 上一步评测结果展示 */}
+          {/* display last move evaluation result */}
           {lastMoveEval && (
             <Card>
               <CardHeader>
-                <CardTitle>上一步评测结果</CardTitle>
+                <CardTitle>Last move evaluation result</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <div><strong>我的走法:</strong> {lastMoveEval.my_move}</div>
-                <div><strong>最佳走法:</strong> {lastMoveEval.best_move || 'N/A'}</div>
-                <div><strong>评分(0-100):</strong> {typeof lastMoveEval.score_100 === 'number' ? lastMoveEval.score_100.toFixed(1) : 'N/A'}</div>
-                <div><strong>CP损失:</strong> {lastMoveEval.cp_loss !== null && lastMoveEval.cp_loss !== undefined ? lastMoveEval.cp_loss.toFixed(1) : 'N/A'}</div>
-                <div><strong>根局面CP:</strong> {lastMoveEval.root_cp !== null && lastMoveEval.root_cp !== undefined ? lastMoveEval.root_cp.toFixed(1) : 'N/A'}</div>
-                <div><strong>最佳后CP:</strong> {lastMoveEval.best_cp !== null && lastMoveEval.best_cp !== undefined ? lastMoveEval.best_cp.toFixed(1) : 'N/A'}</div>
-                <div><strong>我的后CP:</strong> {lastMoveEval.my_cp !== null && lastMoveEval.my_cp !== undefined ? lastMoveEval.my_cp.toFixed(1) : 'N/A'}</div>
+                <div><strong>My move:</strong> {lastMoveEval.my_move}</div>
+                <div><strong>Best move:</strong> {lastMoveEval.best_move || 'N/A'}</div>
+                <div><strong>Score(0-100):</strong> {typeof lastMoveEval.score_100 === 'number' ? lastMoveEval.score_100.toFixed(1) : 'N/A'}</div>
+                <div><strong>CP loss:</strong> {lastMoveEval.cp_loss !== null && lastMoveEval.cp_loss !== undefined ? lastMoveEval.cp_loss.toFixed(1) : 'N/A'}</div>
+                <div><strong>Root CP:</strong> {lastMoveEval.root_cp !== null && lastMoveEval.root_cp !== undefined ? lastMoveEval.root_cp.toFixed(1) : 'N/A'}</div>
+                <div><strong>Best after CP:</strong> {lastMoveEval.best_cp !== null && lastMoveEval.best_cp !== undefined ? lastMoveEval.best_cp.toFixed(1) : 'N/A'}</div>
+                <div><strong>My after CP:</strong> {lastMoveEval.my_cp !== null && lastMoveEval.my_cp !== undefined ? lastMoveEval.my_cp.toFixed(1) : 'N/A'}</div>
                 {lastMoveEval.root_wdl && (
                   <div>
-                    <strong>根局面WDL:</strong> 白胜 {(lastMoveEval.root_wdl[0]*100).toFixed(1)}% / 和棋 {(lastMoveEval.root_wdl[1]*100).toFixed(1)}% / 黑胜 {(lastMoveEval.root_wdl[2]*100).toFixed(1)}%
+                    <strong>Root WDL:</strong> White win {(lastMoveEval.root_wdl[0]*100).toFixed(1)}% / Draw {(lastMoveEval.root_wdl[1]*100).toFixed(1)}% / Black win {(lastMoveEval.root_wdl[2]*100).toFixed(1)}%
                   </div>
                 )}
                 {lastMoveEval.best_wdl && (
                   <div>
-                    <strong>最佳后WDL:</strong> 白胜 {(lastMoveEval.best_wdl[0]*100).toFixed(1)}% / 和棋 {(lastMoveEval.best_wdl[1]*100).toFixed(1)}% / 黑胜 {(lastMoveEval.best_wdl[2]*100).toFixed(1)}%
+                    <strong>Best after WDL:</strong> White win {(lastMoveEval.best_wdl[0]*100).toFixed(1)}% / Draw {(lastMoveEval.best_wdl[1]*100).toFixed(1)}% / Black win {(lastMoveEval.best_wdl[2]*100).toFixed(1)}%
                   </div>
                 )}
                 {lastMoveEval.my_wdl && (
                   <div>
-                    <strong>我的后WDL:</strong> 白胜 {(lastMoveEval.my_wdl[0]*100).toFixed(1)}% / 和棋 {(lastMoveEval.my_wdl[1]*100).toFixed(1)}% / 黑胜 {(lastMoveEval.my_wdl[2]*100).toFixed(1)}%
+                    <strong>My after WDL:</strong> White win {(lastMoveEval.my_wdl[0]*100).toFixed(1)}% / Draw {(lastMoveEval.my_wdl[1]*100).toFixed(1)}% / Black win {(lastMoveEval.my_wdl[2]*100).toFixed(1)}%
                   </div>
                 )}
               </CardContent>
             </Card>
           )}
 
-          {/* 游戏结束控制 */}
+          {/* game end control */}
           {!gameState.isGameOver && (
             <Card>
               <CardHeader>
-                <CardTitle>结束游戏</CardTitle>
+                <CardTitle>End game</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-2">
@@ -1524,7 +1473,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                     size="sm"
                     className="text-red-600 hover:text-red-700"
                   >
-                    白方认输
+                    White resign
                   </Button>
                   <Button
                     onClick={() => handleResign('Black')}
@@ -1532,7 +1481,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                     size="sm"
                     className="text-red-600 hover:text-red-700"
                   >
-                    黑方认输
+                    Black resign
                   </Button>
                 </div>
                 <Button
@@ -1541,16 +1490,16 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
                   size="sm"
                   className="w-full text-blue-600 hover:text-blue-700"
                 >
-                  提议和棋
+                  Propose draw
                 </Button>
               </CardContent>
             </Card>
           )}
 
-          {/* 游戏状态 */}
+          {/* game state */}
           <Card>
             <CardHeader>
-              <CardTitle>游戏状态</CardTitle>
+              <CardTitle>Game state</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               <div className="text-sm">
@@ -1561,24 +1510,24 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               </div>
               {lastFenBeforeMove && (
                 <div className="text-sm">
-                  <strong>上一步前FEN:</strong>
+                  <strong>Last FEN before move:</strong>
                   <div className="font-mono text-xs bg-gray-100 p-2 rounded mt-1 break-all">
                     {lastFenBeforeMove}
                   </div>
                 </div>
               )}
               <div className="text-sm">
-                <strong>移动数:</strong> {gameState.moves.length}
+                <strong>Move count:</strong> {gameState.moves.length}
               </div>
               <div className="text-sm">
-                <strong>当前回合:</strong> {game.turn() === 'w' ? '白方' : '黑方'}
+                <strong>Current turn:</strong> {game.turn() === 'w' ? 'White' : 'Black'}
               </div>
               {gameState.isGameOver && (
                 <div className="text-sm">
-                  <strong>游戏结束原因:</strong> {
-                    gameState.gameEndReason === 'checkmate' ? '将死' :
-                    gameState.gameEndReason === 'resignation' ? '认输' :
-                    gameState.gameEndReason === 'draw' ? '和棋' : '未知'
+                  <strong>Game end reason:</strong> {
+                    gameState.gameEndReason === 'checkmate' ? 'Checkmate' :
+                    gameState.gameEndReason === 'resignation' ? 'Resignation' :
+                    gameState.gameEndReason === 'draw' ? 'Draw' : 'Unknown'
                   }
                 </div>
               )}
@@ -1587,19 +1536,19 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
         </div>
       </div>
 
-      {/* PGN保存对话框 */}
+      {/* PGN save dialog */}
       <Dialog open={showPgnDialog} onOpenChange={setShowPgnDialog}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Download className="w-5 h-5" />
-              保存对局为PGN文件
+              Save game as PGN file
             </DialogTitle>
           </DialogHeader>
           
           <div className="space-y-4">
             <div className="text-sm text-gray-600">
-              游戏已结束！请确认以下信息后保存对局。
+              Game is over! Please confirm the following information and save the game.
             </div>
             
             <div className="grid grid-cols-2 gap-4">
@@ -1743,9 +1692,9 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               </div>
             </div>
             
-            {/* 显示PGN预览 */}
+            {/* display PGN preview */}
             <div className="space-y-2">
-              <Label>PGN预览</Label>
+              <Label>PGN preview</Label>
               <Textarea
                 value={generatePgn()}
                 readOnly
@@ -1760,7 +1709,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               variant="outline"
               onClick={() => setShowPgnDialog(false)}
             >
-              取消
+              Cancel
             </Button>
             <Button
               onClick={() => {
@@ -1770,7 +1719,7 @@ export const GameVisualization: React.FC<GameVisualizationProps> = ({
               className="flex items-center gap-2"
             >
               <Download className="w-4 h-4" />
-              保存PGN文件
+              Save PGN file
             </Button>
           </DialogFooter>
         </DialogContent>

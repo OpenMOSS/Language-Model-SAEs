@@ -49,16 +49,14 @@ export const TacticFeaturesVisualization: React.FC = () => {
   const [specificLayer, setSpecificLayer] = useState<string>('');
   const [specificLayerTopK, setSpecificLayerTopK] = useState<number>(20);
 
-  // 构建dictionary名称（固定使用BT4模型）
   const buildDictionaryName = useCallback((layer: number, kind: string): string => {
-    if (kind === 'LoRSA') {
+    if (kind === 'Lorsa') {
       return `BT4_lorsa_L${layer}A`;
     } else { // TC
       return `BT4_tc_L${layer}M`;
     }
   }, []);
 
-  // 处理文件选择
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -66,16 +64,15 @@ export const TacticFeaturesVisualization: React.FC = () => {
         setSelectedFile(file);
         setError(null);
       } else {
-        setError('请上传.txt文件');
+        setError('Please upload a .txt file');
         setSelectedFile(null);
       }
     }
   }, []);
 
-  // 运行分析
   const runAnalysis = useCallback(async () => {
     if (!selectedFile) {
-      setError('请先选择文件');
+      setError('Please select a file first');
       return;
     }
 
@@ -86,19 +83,17 @@ export const TacticFeaturesVisualization: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
-      // 不传递model_name，后端会固定使用BT4模型
       formData.append('n_random', nFens.toString());
       formData.append('n_fens', nFens.toString());
       formData.append('top_k_lorsa', topKLorsa.toString());
       formData.append('top_k_tc', topKTC.toString());
       
-      // 添加指定层参数
       if (specificLayer && !isNaN(parseInt(specificLayer))) {
         formData.append('specific_layer', specificLayer);
         formData.append('specific_layer_top_k', specificLayerTopK.toString());
       }
       
-      console.log('🔍 发送分析请求（固定使用BT4模型）:', {
+      console.log('🔍 Sending analysis request (fixed using BT4 model):', {
         n_fens: nFens,
         top_k_lorsa: topKLorsa,
         top_k_tc: topKTC,
@@ -113,8 +108,8 @@ export const TacticFeaturesVisualization: React.FC = () => {
 
       if (response.ok) {
         const data = await response.json();
-        console.log('✅ 收到分析结果:', data);
-        console.log('🔍 指定层数据检查:', {
+        console.log('✅ Received analysis result:', data);
+        console.log('🔍 Specific layer data check:', {
           specific_layer: data.specific_layer,
           has_specific_layer_lorsa: !!data.specific_layer_lorsa,
           specific_layer_lorsa_length: data.specific_layer_lorsa?.length || 0,
@@ -124,11 +119,11 @@ export const TacticFeaturesVisualization: React.FC = () => {
         setAnalysisResult(data);
       } else {
         const errorText = await response.text();
-        setError(`分析失败: ${errorText}`);
+        setError(`Analysis failed: ${errorText}`);
       }
     } catch (error) {
-      console.error('运行分析失败:', error);
-      setError('运行分析失败，请检查后端服务');
+      console.error('Analysis failed:', error);
+      setError('Analysis failed, please check the backend server');
     } finally {
       setIsLoading(false);
     }
@@ -136,28 +131,28 @@ export const TacticFeaturesVisualization: React.FC = () => {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+      {/* Global BT4 SAE combo selection (Lorsa / Transcoder), shares backend cache and loading logs */}
       <SaeComboLoader />
 
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold flex items-center gap-2">
           <FileText className="w-8 h-8" />
-          战术特征分析
+          Tactic Features Analysis
         </h1>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 左侧：配置 */}
+        {/* Left: Configuration */}
         <div className="space-y-4">
 
-          {/* 文件上传 */}
+          {/* File upload */}
           <Card>
             <CardHeader>
-              <CardTitle>上传FEN文件</CardTitle>
+              <CardTitle>Upload FEN File</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium">选择文件 (.txt)</label>
+                <label className="text-sm font-medium">Select file (.txt)</label>
                 <div className="mt-2 flex items-center gap-2">
                   <Input
                     type="file"
@@ -168,7 +163,7 @@ export const TacticFeaturesVisualization: React.FC = () => {
                 </div>
                 {selectedFile && (
                   <div className="mt-2 text-sm text-gray-600">
-                    已选择: {selectedFile.name}
+                    Selected: {selectedFile.name}
                   </div>
                 )}
                 {error && (
@@ -178,14 +173,14 @@ export const TacticFeaturesVisualization: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* 参数配置 */}
+          {/* Parameter configuration */}
           <Card>
             <CardHeader>
-              <CardTitle>分析参数</CardTitle>
+              <CardTitle>Analysis Parameters</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium">FEN数量</label>
+                <label className="text-sm font-medium">Number of FENs</label>
                 <Input
                   type="number"
                   min="1"
@@ -195,11 +190,11 @@ export const TacticFeaturesVisualization: React.FC = () => {
                   className="mt-1"
                 />
                 <div className="text-xs text-gray-500 mt-1">
-                  从txt文件和随机FEN中各取这么多条（如果文件中FEN少于此数量则全部使用）
+                  Take this many from txt file and random FENs (if the file has less FENs than this number, use all of them)
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium">显示Top K LoRSA特征</label>
+                <label className="text-sm font-medium">Display Top K Lorsa Features</label>
                 <Input
                   type="number"
                   min="1"
@@ -210,7 +205,7 @@ export const TacticFeaturesVisualization: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">显示Top K TC特征</label>
+                <label className="text-sm font-medium">Display Top K TC Features</label>
                 <Input
                   type="number"
                   min="1"
@@ -221,22 +216,22 @@ export const TacticFeaturesVisualization: React.FC = () => {
                 />
               </div>
               <div className="border-t pt-4">
-                <label className="text-sm font-medium">指定层分析（可选）</label>
+                <label className="text-sm font-medium">Specific Layer Analysis (optional)</label>
                 <Input
                   type="number"
                   min="0"
                   max="14"
                   value={specificLayer}
                   onChange={(e) => setSpecificLayer(e.target.value)}
-                  placeholder="留空则不分析特定层"
+                  placeholder="Leave empty to not analyze specific layers"
                   className="mt-1"
                 />
                 <div className="text-xs text-gray-500 mt-1">
-                  输入层号（0-14）以获取该层的详细特征
+                  Input layer number (0-14) to get detailed features of that layer
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium">指定层Top K特征数</label>
+                <label className="text-sm font-medium">Number of Top K Features for Specific Layer</label>
                 <Input
                   type="number"
                   min="1"
@@ -249,7 +244,7 @@ export const TacticFeaturesVisualization: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* 运行按钮 */}
+          {/* Run button */}
           <Button
             onClick={runAnalysis}
             disabled={isLoading || !selectedFile}
@@ -258,48 +253,48 @@ export const TacticFeaturesVisualization: React.FC = () => {
             {isLoading ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                分析中...
+                Analyzing...
               </>
             ) : (
               <>
                 <Upload className="w-4 h-4 mr-2" />
-                开始分析
+                Start Analysis
               </>
             )}
           </Button>
         </div>
 
-        {/* 右侧：结果展示 */}
+        {/* Right: Result display */}
         <div className="lg:col-span-2 space-y-4">
           {analysisResult ? (
             <>
-              {/* 统计信息 */}
+              {/* Statistics */}
               <Card>
                 <CardHeader>
-                  <CardTitle>分析统计</CardTitle>
+                  <CardTitle>Analysis Statistics</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <div className="text-sm text-gray-600">有效战术FEN</div>
+                      <div className="text-sm text-gray-600">Valid Tactic FENs</div>
                       <div className="text-2xl font-bold">{analysisResult.valid_tactic_fens}</div>
                     </div>
                     <div>
-                      <div className="text-sm text-gray-600">无效FEN</div>
+                      <div className="text-sm text-gray-600">Invalid Tactic FENs</div>
                       <div className="text-2xl font-bold text-red-600">{analysisResult.invalid_tactic_fens}</div>
                     </div>
                     <div>
-                      <div className="text-sm text-gray-600">随机FEN</div>
+                      <div className="text-sm text-gray-600">Random FENs</div>
                       <div className="text-2xl font-bold">{analysisResult.random_fens}</div>
                     </div>
                     <div>
-                      <div className="text-sm text-gray-600">处理的战术FEN</div>
+                      <div className="text-sm text-gray-600">Processed Tactic FENs</div>
                       <div className="text-2xl font-bold">{analysisResult.tactic_fens}</div>
                     </div>
                   </div>
                   {analysisResult.invalid_fens_sample.length > 0 && (
                     <div className="mt-4">
-                      <div className="text-sm text-gray-600">无效FEN示例:</div>
+                      <div className="text-sm text-gray-600">Invalid FEN Examples:</div>
                       <div className="text-xs font-mono bg-gray-100 p-2 rounded mt-1">
                         {analysisResult.invalid_fens_sample.slice(0, 5).join(', ')}
                       </div>
@@ -308,27 +303,27 @@ export const TacticFeaturesVisualization: React.FC = () => {
                 </CardContent>
               </Card>
 
-              {/* LoRSA特征 */}
+              {/* Lorsa Features */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Top {topKLorsa} LoRSA特征 (差异最大)</CardTitle>
+                  <CardTitle>Top {topKLorsa} Lorsa Features (largest difference)</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>排名</TableHead>
-                        <TableHead>层级</TableHead>
-                        <TableHead>特征索引</TableHead>
-                        <TableHead>差异 (p_tactic - p_random)</TableHead>
+                        <TableHead>Rank</TableHead>
+                        <TableHead>Layer</TableHead>
+                        <TableHead>Feature Index</TableHead>
+                        <TableHead>Difference (p_tactic - p_random)</TableHead>
                         <TableHead>p_random</TableHead>
                         <TableHead>p_tactic</TableHead>
-                        <TableHead>操作</TableHead>
+                        <TableHead>Operation</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {analysisResult.top_lorsa_features.map((feat, idx) => {
-                        const dictionary = buildDictionaryName(feat.layer, 'LoRSA');
+                        const dictionary = buildDictionaryName(feat.layer, 'Lorsa');
                         const featureUrl = `/features?dictionary=${encodeURIComponent(dictionary)}&featureIndex=${feat.feature}`;
                         return (
                           <TableRow key={idx}>
@@ -346,10 +341,10 @@ export const TacticFeaturesVisualization: React.FC = () => {
                               <Link
                                 to={featureUrl}
                                 className="inline-flex items-center px-2 py-1 bg-blue-500 text-white text-xs font-medium rounded hover:bg-blue-600 transition-colors"
-                                title={`查看Layer ${feat.layer} LoRSA Feature #${feat.feature}`}
+                                title={`View Layer ${feat.layer} Lorsa Feature #${feat.feature}`}
                               >
                                 <ExternalLink className="w-3 h-3 mr-1" />
-                                查看
+                                View
                               </Link>
                             </TableCell>
                           </TableRow>
@@ -360,22 +355,22 @@ export const TacticFeaturesVisualization: React.FC = () => {
                 </CardContent>
               </Card>
 
-              {/* TC特征 */}
+              {/* TC Features */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Top {topKTC} TC特征 (差异最大)</CardTitle>
+                  <CardTitle>Top {topKTC} TC Features (largest difference)</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>排名</TableHead>
-                        <TableHead>层级</TableHead>
-                        <TableHead>特征索引</TableHead>
-                        <TableHead>差异 (p_tactic - p_random)</TableHead>
+                        <TableHead>Rank</TableHead>
+                        <TableHead>Layer</TableHead>
+                        <TableHead>Feature Index</TableHead>
+                        <TableHead>Difference (p_tactic - p_random)</TableHead>
                         <TableHead>p_random</TableHead>
                         <TableHead>p_tactic</TableHead>
-                        <TableHead>操作</TableHead>
+                        <TableHead>Operation</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -398,10 +393,10 @@ export const TacticFeaturesVisualization: React.FC = () => {
                               <Link
                                 to={featureUrl}
                                 className="inline-flex items-center px-2 py-1 bg-blue-500 text-white text-xs font-medium rounded hover:bg-blue-600 transition-colors"
-                                title={`查看Layer ${feat.layer} TC Feature #${feat.feature}`}
+                                title={`View Layer ${feat.layer} TC Feature #${feat.feature}`}
                               >
                                 <ExternalLink className="w-3 h-3 mr-1" />
-                                查看
+                                View
                               </Link>
                             </TableCell>
                           </TableRow>
@@ -412,28 +407,28 @@ export const TacticFeaturesVisualization: React.FC = () => {
                 </CardContent>
               </Card>
 
-              {/* 指定层的LoRSA特征 */}
+              {/* Specific Layer Lorsa Features */}
               {analysisResult.specific_layer !== undefined && analysisResult.specific_layer !== null && (
                 <Card className="border-2 border-purple-200">
                   <CardHeader className="bg-purple-50">
-                    <CardTitle>Layer {analysisResult.specific_layer} - Top {specificLayerTopK} LoRSA特征</CardTitle>
+                    <CardTitle>Layer {analysisResult.specific_layer} - Top {specificLayerTopK} Lorsa Features</CardTitle>
                   </CardHeader>
                   <CardContent>
                     {analysisResult.specific_layer_lorsa && analysisResult.specific_layer_lorsa.length > 0 ? (
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>排名</TableHead>
-                            <TableHead>特征索引</TableHead>
-                            <TableHead>差异 (p_tactic - p_random)</TableHead>
+                            <TableHead>Rank</TableHead>
+                            <TableHead>Feature Index</TableHead>
+                            <TableHead>Difference (p_tactic - p_random)</TableHead>
                             <TableHead>p_random</TableHead>
                             <TableHead>p_tactic</TableHead>
-                            <TableHead>操作</TableHead>
+                            <TableHead>Operation</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {analysisResult.specific_layer_lorsa.map((feat, idx) => {
-                          const dictionary = buildDictionaryName(feat.layer, 'LoRSA');
+                          const dictionary = buildDictionaryName(feat.layer, 'Lorsa');
                           const featureUrl = `/features?dictionary=${encodeURIComponent(dictionary)}&featureIndex=${feat.feature}`;
                           return (
                             <TableRow key={idx}>
@@ -450,10 +445,10 @@ export const TacticFeaturesVisualization: React.FC = () => {
                                 <Link
                                   to={featureUrl}
                                   className="inline-flex items-center px-2 py-1 bg-blue-500 text-white text-xs font-medium rounded hover:bg-blue-600 transition-colors"
-                                  title={`查看Layer ${feat.layer} LoRSA Feature #${feat.feature}`}
+                                  title={`View Layer ${feat.layer} Lorsa Feature #${feat.feature}`}
                                 >
                                   <ExternalLink className="w-3 h-3 mr-1" />
-                                  查看
+                                  View
                                 </Link>
                               </TableCell>
                             </TableRow>
@@ -463,30 +458,30 @@ export const TacticFeaturesVisualization: React.FC = () => {
                       </Table>
                     ) : (
                       <div className="text-center py-8 text-gray-500">
-                        <p>Layer {analysisResult.specific_layer} 没有找到 LoRSA 特征</p>
+                        <p>Layer {analysisResult.specific_layer} did not find any Lorsa features</p>
                       </div>
                     )}
                   </CardContent>
                 </Card>
               )}
 
-              {/* 指定层的TC特征 */}
+              {/* Specific Layer TC Features */}
               {analysisResult.specific_layer !== undefined && analysisResult.specific_layer !== null && (
                 <Card className="border-2 border-purple-200">
                   <CardHeader className="bg-purple-50">
-                    <CardTitle>Layer {analysisResult.specific_layer} - Top {specificLayerTopK} TC特征</CardTitle>
+                    <CardTitle>Layer {analysisResult.specific_layer} - Top {specificLayerTopK} TC Features</CardTitle>
                   </CardHeader>
                   <CardContent>
                     {analysisResult.specific_layer_tc && analysisResult.specific_layer_tc.length > 0 ? (
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>排名</TableHead>
-                            <TableHead>特征索引</TableHead>
-                            <TableHead>差异 (p_tactic - p_random)</TableHead>
+                            <TableHead>Rank</TableHead>
+                            <TableHead>Feature Index</TableHead>
+                            <TableHead>Difference (p_tactic - p_random)</TableHead>
                             <TableHead>p_random</TableHead>
                             <TableHead>p_tactic</TableHead>
-                            <TableHead>操作</TableHead>
+                            <TableHead>Operation</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -508,10 +503,10 @@ export const TacticFeaturesVisualization: React.FC = () => {
                                 <Link
                                   to={featureUrl}
                                   className="inline-flex items-center px-2 py-1 bg-blue-500 text-white text-xs font-medium rounded hover:bg-blue-600 transition-colors"
-                                  title={`查看Layer ${feat.layer} TC Feature #${feat.feature}`}
+                                  title={`View Layer ${feat.layer} TC Feature #${feat.feature}`}
                                 >
                                   <ExternalLink className="w-3 h-3 mr-1" />
-                                  查看
+                                  View
                                 </Link>
                               </TableCell>
                             </TableRow>
@@ -521,7 +516,7 @@ export const TacticFeaturesVisualization: React.FC = () => {
                       </Table>
                     ) : (
                       <div className="text-center py-8 text-gray-500">
-                        <p>Layer {analysisResult.specific_layer} 没有找到 TC 特征</p>
+                        <p>Layer {analysisResult.specific_layer} did not find any TC features</p>
                       </div>
                     )}
                   </CardContent>
@@ -533,8 +528,8 @@ export const TacticFeaturesVisualization: React.FC = () => {
               <CardContent className="py-12">
                 <div className="text-center text-gray-500">
                   <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>上传FEN文件并点击"开始分析"开始战术特征分析</p>
-                  <p className="text-xs mt-2">文件应为.txt格式，每行一个FEN字符串</p>
+                  <p>Upload FEN file and click "Start Analysis" to start tactic features analysis</p>
+                  <p className="text-xs mt-2">The file should be in .txt format, one FEN string per line</p>
                 </div>
               </CardContent>
             </Card>

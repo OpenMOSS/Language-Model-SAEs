@@ -51,6 +51,6 @@ def get_feature_encoder_vector(
         return sae.W_E.T[feature_id]
     if feature_type == "lorsa":
         lorsa = lorsas[layer]
-        # LoRSA 的 encoder，这里沿用 W_V[row]
+        # Lorsa 的 encoder，这里沿用 W_V[row]
         return lorsa.W_V[feature_id]
     raise ValueError(f"Invalid feature type: {feature_type}")

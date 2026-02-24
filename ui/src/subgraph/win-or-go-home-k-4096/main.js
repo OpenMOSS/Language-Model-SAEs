@@ -286,7 +286,7 @@ const PIECE_SYMBOLS = {
           
           // store the final display coordinates
         //   squareCenterCoords.set(d, { x: transforms.display.X, y: transforms.display.Y });
-        //   console.log(`Square ${d} 显示坐标: x=${transforms.display.X.toFixed(1)}, y=${transforms.display.Y.toFixed(1)}`);
+      //   console.log(`Square ${d} display coordinates: x=${transforms.display.X.toFixed(1)}, y=${transforms.display.Y.toFixed(1)}`);
           
           // keep the original board rendering logic
           return `translate(${col * SQUARE_SIZE}, ${displayRow * SQUARE_SIZE})`;
@@ -461,7 +461,7 @@ const PIECE_SYMBOLS = {
   // create layer mapping first
   createLayerMapping(graph);
   
-  // create a completely independent container,不受棋盘 svg 的 transform 影响
+  // Create a completely independent container, not affected by the chessboard SVG transform
   const container = d3.select('#visualization');
   
   // use the global offset
@@ -603,7 +603,7 @@ const PIECE_SYMBOLS = {
       y2 = tgtRect.bottomY;
     }
 
-    // 根据边的类型设置不同的样式
+    // Set different styles based on edge type
     const isVirtual = edge.isVirtual;
     const lineElement = edgeLayer.append('line')
       .attr('x1', x1)
@@ -615,7 +615,7 @@ const PIECE_SYMBOLS = {
       .style('stroke-width', 3)
       .style('stroke-linecap', 'round');
 
-    // 如果是虚拟边，设置为虚线
+    // If this is a virtual edge, render it as dashed
     if (isVirtual && SHOW_VIRTUAL_EDGES) {
       lineElement.style('stroke-dasharray', '5,5');
     }
@@ -776,11 +776,11 @@ const PIECE_SYMBOLS = {
   }
   
   /**
-  * 初始化并渲染 graph 节点与边，不受棋盘 skew 变化影响，
-  * 节点矩形显示在对应棋盘格上方（矩形下边与该格上边对齐），
-  * 同时在中央显示 clerp 文本，子节点在棋盘格中心以圆形显示。
+  * Initialize and render graph nodes and edges, independent of chessboard skew,
+  * placing node rectangles above the corresponding chessboard squares (rectangle bottom aligned to square top),
+  * with clerp text centered inside, and child nodes shown as circles at the center of the squares.
   *
-  * @param {Object} graph - 全局图对象，包含 nodes 与 edges
+  * @param {Object} graph - Global graph object that contains nodes and edges
   */
   function initializeGraph(graph) {
   // get the created svg object from the current page

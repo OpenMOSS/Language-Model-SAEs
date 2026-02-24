@@ -27,7 +27,7 @@ interface LoadingLogsResponse {
   sae_combo_id: string;
   logs: { timestamp: number; message: string }[];
   total_count: number;
-  is_loaded?: boolean;  // 新增：后端实际缓存检查结果
+  is_loaded?: boolean;  // Added: backend-actual cache check result
 }
 
 const LOCAL_STORAGE_KEY = "bt4_sae_combo_id";
@@ -41,12 +41,12 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
   const [isLoading, setIsLoading] = useState(false);
   const [logs, setLogs] = useState<{ timestamp: number; message: string }[]>([]);
 
-  // 前端展示的日志条数上限（只保留最近 N 条，避免面板无限增长）
+  // Max number of logs to display on the frontend (keep only the latest N)
   const MAX_VISIBLE_LOGS = 200;
 
   const backendBase = import.meta.env.VITE_BACKEND_URL ?? "";
 
-  // 拉取可用组合信息
+  // Fetch available combo information
   useEffect(() => {
     const fetchCombos = async () => {
       try {
@@ -68,8 +68,8 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
           (backendCombos.length > 0 ? backendCombos[0].id : null);
 
         setSelectedId(initialId);
-        
-        // 立即获取该组合的历史日志（跨页面共享），并验证是否真的已加载
+
+        // Fetch historical logs for this combo (shared across pages) and verify whether it's really loaded
         if (initialId) {
           try {
             const logParams = new URLSearchParams({
@@ -82,35 +82,35 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
               const allLogs = logData.logs ?? [];
               const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
               setLogs(sliced);
-              
-              // 同步加载状态
+
+              // Sync loading state
               if (logData.is_loading) {
                 setIsLoading(true);
               } else {
                 setIsLoading(false);
               }
-              
-              // 使用后端返回的 is_loaded 字段来判断是否真的已加载（实际缓存检查）
-              // 这是最可靠的判断方式，因为后端会实际检查缓存是否存在
+
+              // Use the backend's is_loaded field to judge whether the combo is really loaded (actual cache check)
+              // This is the most reliable way, because the backend checks whether the cache exists
               if (logData.is_loaded === true && !logData.is_loading) {
-                // 确认已加载，设置 loadedId
+                // Confirm loaded, set loadedId
                 setLoadedId(initialId);
-                console.log('✅ 确认 SAE 组合已加载（缓存验证）:', initialId);
+                console.log('✅ Confirmed SAE combo is loaded (cache verified):', initialId);
               } else {
-                // 未加载或状态不明确，不设置 loadedId
+                // Not loaded or state unclear, do not set loadedId
                 setLoadedId(null);
-                console.log('⚠️ SAE 组合未加载或状态不明确:', initialId, {
+                console.log('⚠️ SAE combo not loaded or state unclear:', initialId, {
                   is_loaded: logData.is_loaded,
                   is_loading: logData.is_loading
                 });
               }
             } else {
-              // 如果获取日志失败，不设置 loadedId
+              // If fetching logs fails, do not set loadedId
               setLoadedId(null);
             }
           } catch (logErr) {
             console.warn("Failed to fetch initial loading logs:", logErr);
-            // 获取日志失败时，不设置 loadedId
+            // If getting logs fails, do not set loadedId
             setLoadedId(null);
           }
         } else {
@@ -123,7 +123,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
     fetchCombos();
   }, [backendBase]);
 
-  // 轮询日志（即使不在加载中也要轮询，以便显示历史日志和实时更新）
+  // Poll logs (poll even when not loading, to show historical logs and real-time updates)
   useEffect(() => {
     if (!selectedId) return;
 
@@ -140,23 +140,23 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
         const data: LoadingLogsResponse & { is_loading?: boolean } = await res.json();
         if (!cancelled) {
           const allLogs = data.logs ?? [];
-          // 只保留最近 MAX_VISIBLE_LOGS 条
+          // Keep only the latest MAX_VISIBLE_LOGS entries
           const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
           setLogs(sliced);
-          // 如果后端显示正在加载，但前端状态不是，更新前端状态
+          // If the backend reports loading is in progress, but the frontend state is not, update frontend state
           if (data.is_loading && !isLoading) {
             setIsLoading(true);
           } else if (!data.is_loading && isLoading) {
             setIsLoading(false);
           }
-          // 同步 loadedId 状态（基于实际缓存检查）
+          // Sync loadedId state (based on actual cache check)
           if (data.is_loaded === true && !data.is_loading) {
-            // 确认已加载，设置 loadedId
+            // Confirm loaded, set loadedId
             if (selectedId && selectedId !== loadedId) {
               setLoadedId(selectedId);
             }
           } else if (data.is_loaded === false) {
-            // 如果缓存不存在，且当前选中的组合被认为是已加载的，清除 loadedId
+            // If the cache does not exist, and the currently selected combo is considered loaded, clear loadedId
             if (loadedId === selectedId) {
               setLoadedId(null);
             }
@@ -167,7 +167,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       }
     };
 
-    // 立即执行一次，然后开始轮询（这样切换页面时能立即看到日志）
+    // Execute once immediately, then start polling (so logs appear right away when switching pages)
     poll();
     const timer = window.setInterval(poll, 1000);
     return () => {
@@ -196,8 +196,8 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
 
   const handleReload = useCallback(async () => {
     if (!selectedId) return;
-    
-    // 如果当前有其他组合正在加载，先中断它
+
+    // If another combo is currently loading, cancel it first
     if (loadedId && loadedId !== selectedId && isLoading) {
       try {
         await fetch(`${backendBase}/circuit/cancel_loading`, {
@@ -210,17 +210,17 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
             sae_combo_id: loadedId,
           }),
         });
-        // 等待一小段时间让中断生效
+        // Wait a short time for the cancellation to take effect
         await new Promise((resolve) => setTimeout(resolve, 500));
       } catch (err) {
         console.warn("Failed to cancel previous loading:", err);
       }
     }
-    
-    // 每次重新加载前清空本地日志缓存，避免遗留旧组合的日志
+
+    // Clear local log cache before each reload to avoid old combo's logs sticking around
     setLogs([]);
     setIsLoading(true);
-    
+
     try {
       const body = {
         model_name: "lc0/BT4-1024x15x32h",
@@ -240,19 +240,14 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       const data: PreloadResponse = await res.json();
       setCurrentServerId(data.sae_combo_id);
       window.localStorage.setItem(LOCAL_STORAGE_KEY, data.sae_combo_id);
-      // 注意：不在这里直接设置 loadedId 和 isLoading
-      // 让轮询机制通过检查后端的 is_loading 和 is_loaded 字段来更新状态
-      // 这样可以确保只有在实际缓存存在时才显示"已加载"
     } catch (err) {
       console.error("Failed to preload SAE models:", err);
-      // 加载失败时，清除状态
+      // Clear state when loading fails
       setIsLoading(false);
       if (loadedId === selectedId) {
         setLoadedId(null);
       }
     }
-    // 注意：不在 finally 中设置 isLoading = false
-    // 因为加载是异步的，轮询机制会根据后端的 is_loading 字段来更新状态
   }, [selectedId, loadedId, isLoading, backendBase]);
 
   const canReload = selectedId != null && selectedId !== loadedId && !isLoading;
@@ -268,12 +263,12 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-1">
           <div className="font-semibold">
-            {title ?? "BT4 SAE 组合选择（LoRSA / Transcoder）"}
+            {title ?? "BT4 SAE Combo Selection (LoRSA / Transcoder)"}
           </div>
           <div className="text-xs text-blue-800">
-            当前服务端组合：
+            Current server combo:{" "}
             <span className="font-mono">
-              {currentServerId ?? defaultId ?? loadedId ?? selectedId ?? "未知"}
+              {currentServerId ?? defaultId ?? loadedId ?? selectedId ?? "Unknown"}
             </span>
           </div>
         </div>
@@ -282,7 +277,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
             value={selectedId ?? undefined}
             onValueChange={async (value) => {
               setSelectedId(value);
-              // 切换组合时立即获取该组合的日志
+              // When switching combo, immediately fetch logs for the new combo
               try {
                 const params = new URLSearchParams({
                   model_name: "lc0/BT4-1024x15x32h",
@@ -299,7 +294,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
                   } else {
                     setIsLoading(false);
                   }
-                  // 同步 loadedId 状态（基于实际缓存检查）
+                  // Sync loadedId state (based on actual cache check)
                   if (data.is_loaded === true && !data.is_loading) {
                     setLoadedId(value);
                   } else {
@@ -312,13 +307,13 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
             }}
           >
             <SelectTrigger className="w-56 bg-white">
-              <SelectValue placeholder="选择 SAE 组合" />
+              <SelectValue placeholder="Select SAE combo" />
             </SelectTrigger>
             <SelectContent>
               {combos.map((c) => (
                 <SelectItem key={c.id} value={c.id}>
                   {c.label}{" "}
-                  {c.id === defaultId ? "(默认)" : undefined}
+                  {c.id === defaultId ? "(default)" : undefined}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -331,10 +326,10 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
             className="whitespace-nowrap"
           >
             {isLoading
-              ? "加载中..."
+              ? "Loading..."
               : loadedId === selectedId
-              ? "已加载"
-              : "加载 / 重新加载"}
+              ? "Loaded"
+              : "Load / Reload"}
           </Button>
           {isLoading && (
             <Button
@@ -344,7 +339,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
               onClick={handleCancel}
               className="whitespace-nowrap"
             >
-              中断加载
+              Cancel loading
             </Button>
           )}
         </div>
@@ -352,7 +347,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       <div className="mt-2 max-h-40 overflow-y-auto rounded bg-blue-100 p-2 text-xs font-mono leading-relaxed">
         {logs.length === 0 ? (
           <div className="text-blue-700 opacity={0.8}">
-            暂无加载日志。请选择组合并点击“加载 / 重新加载”开始加载 LoRSA / Transcoder。
+            No loading logs yet. Select a combo and click "Load / Reload" to start loading LoRSA / Transcoder.
           </div>
         ) : (
           logs.map((log, idx) => (

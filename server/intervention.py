@@ -55,7 +55,7 @@ class PatchingAnalyzer:
         return cache
 
     def _get_lorsa_sparse_acts(self, cache: dict, layer: int) -> torch.Tensor:
-        """获取指定层的 LoRSA sparse activations: [batch,pos,feature] 的 sparse_coo 形式。"""
+        """获取指定层的 Lorsa sparse activations: [batch,pos,feature] 的 sparse_coo 形式。"""
         lorsa_hook = f"blocks.{layer}.hook_attn_in"
         if lorsa_hook not in cache:
             available_hooks = [k for k in cache.keys() if f"blocks.{layer}" in str(k)]

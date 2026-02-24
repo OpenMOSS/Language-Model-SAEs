@@ -272,7 +272,7 @@ class AttributionContext:
             tc_error_vectors,
             tc_decoder_vecs,
             mlp_output_hook,
-            lorsa_offset=lorsa_activation_matrix._nnz()  # TC 从 LoRSA 结束位置开始
+            lorsa_offset=lorsa_activation_matrix._nnz()  # TC 从 Lorsa 结束位置开始
         )
 
     def _make_attribution_hooks_lorsa(
@@ -1651,7 +1651,7 @@ def select_scaled_decoder_vecs_lorsa(
     activation_matrix: torch.Tensor,
     lorsas: LowRankSparseAttention
 ) -> torch.Tensor:
-    """Return decoder rows for active LoRSA heads, scaled by activations."""
+    """Return decoder rows for active Lorsa heads, scaled by activations."""
     decoder_rows: List[torch.Tensor] = []
     sparse_rows: List[torch.sparse.Tensor] = []
     for layer, row in enumerate(activation_matrix):
@@ -1750,11 +1750,11 @@ def select_encoder_bias_lorsa(
     lorsas: LowRankSparseAttention,
 ) -> torch.Tensor:
     """
-    Return encoder bias terms for LoRSA active features only.
+    Return encoder bias terms for Lorsa active features only.
 
     For each layer, gather the bias vector entries corresponding to the
     active heads (same indexing as select_encoder_rows_lorsa). If the
-    LoRSA layer has no encoder bias attribute (e.g., b_V), return zeros
+    Lorsa layer has no encoder bias attribute (e.g., b_V), return zeros
     for that layer's active heads to keep alignment with rows.
     """
     rows: List[torch.Tensor] = []
@@ -2385,7 +2385,7 @@ def _run_attribution(
             )
             matches = mask.nonzero(as_tuple=True)[0]
             if matches.numel() == 0:
-                logger.warning(f"[feature-trace] LoRSA feature not found for spec: {spec}")
+                logger.warning(f"[feature-trace] Lorsa feature not found for spec: {spec}")
                 return None
             return int(matches[0].item())
         mask = (
@@ -2474,7 +2474,7 @@ def _run_attribution(
             # Apply demean only to TC features
             layers = torch.where(
                 is_lorsa.to(tc_feat_layer.device),
-                torch.zeros_like(tc_feat_layer[0]),  # dummy for LoRSA
+                torch.zeros_like(tc_feat_layer[0]),  # dummy for Lorsa
                 tc_feat_layer[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
             ).to(torch.long)     # [B]
             means = layer_means.index_select(0, layers)    # [B, d_model]
@@ -2673,7 +2673,7 @@ def _run_attribution(
             for gid in selected_features:
                 gid = gid.item()
                 if gid < lorsa_activation_matrix._nnz():
-                    # LoRSA feature
+                    # Lorsa feature
                     layer = lorsa_feat_layer[gid].item()
                     feat_idx = lorsa_feat_idx[gid].item()
                     act_times = get_act_times_cached(layer, feat_idx, 'lorsa')
@@ -3005,9 +3005,9 @@ def _collect_activation_info_after_forward(
     """在前向传播完成后收集激活信息，包括真正的z_patterns
     
     Args:
-        lorsa_activation_matrix: LoRSA特征激活矩阵 [n_layers, n_pos, n_features]
+        lorsa_activation_matrix: Lorsa特征激活矩阵 [n_layers, n_pos, n_features]
         tc_activation_matrix: TC特征激活矩阵 [n_layers, n_pos, n_features] 
-        lorsa_attention_pattern: LoRSA注意力模式 [n_layers, n_qk_heads, n_pos, n_pos]
+        lorsa_attention_pattern: Lorsa注意力模式 [n_layers, n_qk_heads, n_pos, n_pos]
         model: 模型实例
         input_ids: 输入token ids
         n_layers: 层数
@@ -3018,7 +3018,7 @@ def _collect_activation_info_after_forward(
     Returns:
         包含每个selected feature激活信息的字典，格式与前端UI兼容
     """
-    # ========== 处理LoRSA Features 激活信息 ==========
+    # ========== 处理Lorsa Features 激活信息 ==========
     lorsa_indices = lorsa_activation_matrix.indices()  # [3, nnz] - (layer, pos, head_idx)
     lorsa_values = lorsa_activation_matrix.values()    # [nnz]
     
@@ -3028,9 +3028,9 @@ def _collect_activation_info_after_forward(
     # 将selected_features转换为CPU上的set以便快速查找
     selected_features_set = set(selected_features.cpu().numpy().tolist())
     
-    # 处理每个LoRSA feature，只处理selected的
+    # 处理每个Lorsa feature，只处理selected的
     for i in range(lorsa_activation_matrix._nnz()):
-        # LoRSA features的全局ID就是i
+        # Lorsa features的全局ID就是i
         if i not in selected_features_set:
             continue
             
@@ -3048,9 +3048,9 @@ def _collect_activation_info_after_forward(
         feature_z_pattern_indices = [[], []]  # [q_positions, k_positions]
         feature_z_pattern_values = []
         
-        # ========== 计算该LoRSA feature的z_pattern ==========
+        # ========== 计算该Lorsa feature的z_pattern ==========
         try:
-            # 获取对应的LoRSA SAE
+            # 获取对应的Lorsa SAE
             lorsa_sae = model.lorsas[layer]
             
             # 从缓存的激活中获取该层的激活
@@ -3093,7 +3093,7 @@ def _collect_activation_info_after_forward(
                 print(f"Warning: No cached activation for layer {layer}")
                         
         except Exception as e:
-            print(f"Warning: Failed to compute z_pattern for LoRSA layer {layer}, head {head_idx}: {e}")
+            print(f"Warning: Failed to compute z_pattern for Lorsa layer {layer}, head {head_idx}: {e}")
             # 回退到使用attention_pattern的简化版本
             try:
                 qk_head_idx = head_idx // (model.lorsas[layer].cfg.n_ov_heads // model.lorsas[layer].cfg.n_qk_heads)
@@ -3122,9 +3122,9 @@ def _collect_activation_info_after_forward(
             except Exception as e2:
                 print(f"Warning: Also failed fallback computation for layer {layer}, head {head_idx}: {e2}")
         
-        # 为当前LoRSA feature创建完整的激活信息
+        # 为当前Lorsa feature创建完整的激活信息
         feature_info = {
-            "featureId": i,  # LoRSA features的全局ID从0开始
+            "featureId": i,  # Lorsa features的全局ID从0开始
             "type": "lorsa",
             "layer": layer,
             "position": pos,
@@ -3140,7 +3140,7 @@ def _collect_activation_info_after_forward(
     tc_indices = tc_activation_matrix.indices()  # [3, nnz] - (layer, pos, feature_idx)
     tc_values = tc_activation_matrix.values()    # [nnz]
     
-    # TC features的ID从LoRSA features之后开始
+    # TC features的ID从Lorsa features之后开始
     tc_id_offset = lorsa_activation_matrix._nnz()
     
     for i in range(tc_activation_matrix._nnz()):
@@ -3194,7 +3194,7 @@ def _collect_activation_info_after_forward(
         }
     }
     
-    print(f"Collected activation info for {len(features_activation_info)} features: {lorsa_activation_matrix._nnz()} LoRSA + {tc_activation_matrix._nnz()} TC")
+    print(f"Collected activation info for {len(features_activation_info)} features: {lorsa_activation_matrix._nnz()} Lorsa + {tc_activation_matrix._nnz()} TC")
     lorsa_z_patterns = sum(len(f["zPatternValues"]) for f in features_activation_info if f["type"] == "lorsa")
     print(f"Total z_pattern entries: {lorsa_z_patterns}")
     

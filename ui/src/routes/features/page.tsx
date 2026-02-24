@@ -212,12 +212,6 @@ export const FeaturesPage = () => {
     },
   ].filter((section) => (currentFeature && currentFeature.logits != null) || section.id !== "Logits"), [currentFeature]);
 
-  // 渲染棋盘示例（已迁移到组件，返回空）
-  const renderChessBoardExample = () => {
-    return null;
-  };
-
-
   return (
     <div id="Top">
       <AppNavbar />
@@ -231,9 +225,9 @@ export const FeaturesPage = () => {
               setSelectedDictionary(value);
             }}
             options={dictionaryOptions}
-            placeholder="选择字典..."
-            commandPlaceholder="搜索字典..."
-            emptyIndicator="未找到匹配的字典"
+            placeholder="Select dictionary..."
+            commandPlaceholder="Search dictionary..."
+            emptyIndicator="No matching dictionary found"
             className="w-full"
           />
           <Button
@@ -298,7 +292,7 @@ export const FeaturesPage = () => {
           </Button>
                     </div>
 
-        {/* 自定义FEN分析区域 */}
+        {/* Custom FEN analysis area */}
         <div className="container w-full max-w-6xl mx-auto mb-8">
           <CustomFenInput
             dictionary={selectedDictionary}
@@ -315,13 +309,12 @@ export const FeaturesPage = () => {
         {featureLoading && loadingRandomFeature && <div>Loading Random Living Feature...</div>}
         {featureError && <div className="text-red-500 font-bold">Error: {featureError}</div>}
         
-            {/* 检查是否包含象棋相关数据 */}
         {!featureLoading && currentFeature && (() => {
           const feature = currentFeature;
           
-          console.log('🎯 Feature #' + feature.featureIndex + ' (激活次数: ' + feature.actTimes + ')');
+          console.log('Feature #' + feature.featureIndex + ' (Activation times: ' + feature.actTimes + ')');
           
-          // 检查可能的样本数据字段
+          // Check possible sample data fields
           const possibleSampleFields = ['sampleGroups', 'samples', 'sample_groups', 'sample_groups_', 'samples_'];
           let actualSampleGroups: any[] = [];
           
@@ -334,12 +327,12 @@ export const FeaturesPage = () => {
             }
           }
           
-          // 如果没有找到样本组，尝试直接查找samples字段
+          // If no sample groups are found, try to directly find the samples field
           if (!actualSampleGroups.length && feature.samples) {
             actualSampleGroups = [{ samples: feature.samples }];
           }
           
-          // 收集所有包含FEN的样本及其信息
+          // Collect all samples containing FEN and their information
           interface ChessSample {
             fen: string;
             sample: any;
@@ -361,9 +354,9 @@ export const FeaturesPage = () => {
           let samplesWithActivations = 0;
           let debugInfo: string[] = [];
           
-          // 遍历所有样本组，收集包含FEN的样本
+          // Iterate through all sample groups, collect samples containing FEN
           for (const [groupIndex, group] of actualSampleGroups.entries()) {
-            console.log(`🔍 检查样本组 ${groupIndex}:`, {
+            console.log(`Check sample group ${groupIndex}:`, {
               analysisName: group.analysisName,
               samplesCount: group.samples?.length || 0
             });
@@ -373,17 +366,17 @@ export const FeaturesPage = () => {
             for (const [sampleIndex, sample] of (group.samples || []).entries()) {
               if (sample.text) samplesWithText++;
               
-              // 检查是否有激活值数据
+              // Check if there is activation value data
               const hasActivations = (sample as any).featureActsIndices && (sample as any).featureActsValues && 
                                     (sample as any).featureActsIndices.length > 0 && (sample as any).featureActsValues.length > 0;
               if (hasActivations) samplesWithActivations++;
               
-              // 详细调试信息
-              if (sampleIndex < 3) { // 只显示前3个样本的详细信息
-                console.log(`🔍 样本 ${sampleIndex} 详细信息:`, {
+              // Detailed debug information
+              if (sampleIndex < 3) { // Only show detailed information for the first 3 samples
+                console.log(`Sample ${sampleIndex} detailed information:`, {
                   hasText: !!sample.text,
                   textLength: sample.text?.length || 0,
-                  textPreview: sample.text?.substring(0, 100) || '无文本',
+                  textPreview: sample.text?.substring(0, 100) || 'No text',
                   hasFeatureActsIndices: !!(sample as any).featureActsIndices,
                   featureActsIndicesLength: (sample as any).featureActsIndices?.length || 0,
                   hasFeatureActsValues: !!(sample as any).featureActsValues,
@@ -401,8 +394,7 @@ export const FeaturesPage = () => {
                 for (const [lineIndex, line] of lines.entries()) {
                   const trimmed = line.trim();
                   
-                  // 检查是否包含FEN格式 - 更宽松的检测
-                  // 只要包含8个斜杠分隔的部分，且每部分都是有效的棋子或数字组合
+                  // Just contains 8 parts separated by slashes, and each part is a valid combination of chess pieces or numbers
                   if (trimmed.includes('/')) {
                     const parts = trimmed.split(/\s+/);
                     
@@ -414,14 +406,14 @@ export const FeaturesPage = () => {
                         let isValidBoard = true;
                         let totalSquares = 0;
                         
-                        // 检查每一行是否符合FEN格式
+                        // Check if each row matches FEN format
                         for (const row of boardRows) {
                           if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
                             isValidBoard = false;
                             break;
                           }
                           
-                          // 计算每行的格子数
+                          // Calculate the number of squares in each row
                           let rowSquares = 0;
                           for (const char of row) {
                             if (/\d/.test(char)) {
@@ -433,13 +425,13 @@ export const FeaturesPage = () => {
                           totalSquares += rowSquares;
                         }
                         
-                        // 验证总格子数为64，且行棋方有效
+                        // Validate that the total number of squares is 64, and the active color is valid
                         if (isValidBoard && totalSquares === 64 && /^[wb]$/.test(activeColor)) {
-                          console.log(`✅ 找到有效的FEN字符串: "${trimmed}"`);
-                          console.log(`棋盘行:`, boardRows);
-                          console.log(`总格子数:`, totalSquares);
+                          console.log(`Found valid FEN string: "${trimmed}"`);
+                          console.log(`Board rows:`, boardRows);
+                          console.log(`Total squares:`, totalSquares);
                           
-                          // 构建激活值数组并计算最大激活值
+                          // Build activation value array and calculate maximum activation value
                           let activationsArray: number[] | undefined = undefined;
                           let maxActivation = 0;
                           
@@ -453,17 +445,17 @@ export const FeaturesPage = () => {
                               const value = values[i];
                               if (index >= 0 && index < 64) {
                                 activationsArray[index] = value;
-                                // 计算最大激活值（绝对值）
+                                // Calculate maximum activation value (absolute value)
                                 if (Math.abs(value) > Math.abs(maxActivation)) {
                                   maxActivation = value;
                                 }
                               }
                             }
                             
-                            console.log(`🎯 构建激活值数组: ${activationsArray.filter(v => v !== 0).length} 个非零值, 最大激活值: ${maxActivation}`);
+                            console.log(`Build activation value array: ${activationsArray.filter(v => v !== 0).length} non-zero values, maximum activation value: ${maxActivation}`);
                           }
 
-                          // 构建Z Pattern数组并打印调试信息
+                          // Build Z Pattern array and print debug information
                           let zPatternIndices: number[][] | undefined = undefined;
                           let zPatternValues: number[] | undefined = undefined;
                           if ((sample as any).zPatternIndices && (sample as any).zPatternValues) {
@@ -474,10 +466,10 @@ export const FeaturesPage = () => {
                             try {
                               const len = zPatternValues?.length || 0;
                               console.log(`z_pattern_values shape: (${len},)`);
-                              // 打印全部索引和值
+                              // Print all indices and values
                               console.log('z all idx:', zPatternIndices);
                               console.log('z all val:', zPatternValues);
-                              // 识别格式并打印全部 pairs
+                              // Identify format and print all pairs
                               const looksLikePairList = Array.isArray(zPatternIndices?.[0]) && (zPatternIndices?.[0] as number[]).length === 2;
                               if (looksLikePairList) {
                                 const pairsAll = (zPatternIndices || []).map((p, i) => ([p, (zPatternValues || [])[i]]));
@@ -491,14 +483,14 @@ export const FeaturesPage = () => {
                                     pairs.push([[s, t], v]);
                                   }
                                 }
-                                console.log('z pairs (all 展开为[source,target]):', pairs);
+                                console.log('z pairs (all expanded to [source,target]):', pairs);
                               }
                             } catch (e) {
-                              console.warn('打印z_pattern调试信息时出错:', e);
+                              console.warn('Error printing z_pattern debug information:', e);
                             }
                           }
 
-                          // 收集样本信息
+                          // Collect sample information
                           chessSamples.push({
                             fen: trimmed,
                             sample,
@@ -514,15 +506,15 @@ export const FeaturesPage = () => {
                             activeColor
                           });
                           
-                          break; // 找到一个有效FEN就跳出行循环
+                          break; // Found a valid FEN, jump out of the loop
                         } else {
-                          debugInfo.push(`FEN验证失败: ${trimmed.substring(0, 30)}...`);
+                          debugInfo.push(`FEN validation failed: ${trimmed.substring(0, 30)}...`);
                         }
                       } else {
-                        debugInfo.push(`行数错误: ${boardRows.length}行`);
+                        debugInfo.push(`Number of rows error: ${boardRows.length} rows`);
                       }
                     } else {
-                      debugInfo.push(`部分不足: ${parts.length}个`);
+                      debugInfo.push(`Part missing: ${parts.length} parts`);
                     }
                   }
                 }

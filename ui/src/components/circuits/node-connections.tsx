@@ -64,7 +64,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
       clickedNode.sourceLinks.some(link => link.target === node.nodeId)
     );
 
-    // 辅助：构建“节点-链接-来源文件”条目
+    // Helper: build (node-link-sourceFile) entries
     type PerFileEntry = { node: Node; fileIndex: number; weight: number; pctInput: number };
     const toPerFileEntries = (nodes: Node[], dir: 'input' | 'output'): PerFileEntry[] => {
       const entries: PerFileEntry[] = [];
@@ -73,7 +73,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
           ? n.sourceLinks?.find(l => l.target === clickedNode.nodeId)
           : clickedNode.sourceLinks?.find(l => l.target === n.nodeId);
         if (!link) continue;
-        // 优先使用每文件值；若不存在则回退到总体值
+        // Prefer per-file values; fall back to aggregate when unavailable
         if (link.sources && link.weightsBySource && link.pctBySource) {
           for (const fi of link.sources) {
             const w = link.weightsBySource[fi];
@@ -92,35 +92,35 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     const outputEntries = toPerFileEntries(outputNodes, 'output');
 
     const buildSections = (entries: PerFileEntry[]) => ['Positive', 'Negative'].map(title => {
-      // 先筛选正负
+      // Filter by sign first
       const filtered = entries.filter(e => (title === 'Positive' ? e.weight > 0 : e.weight < 0));
 
-      // 合并相同位置的 error 节点（同 nodeId 只保留一个，取绝对值更大的权重）
+      // Merge error nodes at the same position (same nodeId) – keep only the entry with largest |weight|
       const mergedErrorByNodeId = new Map<string, PerFileEntry>();
       for (const e of filtered) {
         const isError = typeof e.node.feature_type === 'string' && e.node.feature_type.toLowerCase().includes('error');
         if (!isError) continue;
-        const key = e.node.nodeId; // nodeId 唯一标识同层同位置同feature
+        const key = e.node.nodeId; // nodeId uniquely identifies same layer/position/feature
         const prev = mergedErrorByNodeId.get(key);
         if (!prev || Math.abs(e.weight) > Math.abs(prev.weight)) {
-          // 仅保留一个代表条目（移除文件索引以强调合并）
+          // Keep a single representative entry (drop file index to emphasize merge)
           mergedErrorByNodeId.set(key, { node: e.node, fileIndex: -1, weight: e.weight, pctInput: e.pctInput });
         }
       }
 
-      // 非 error 的条目保持原条目
+      // Keep non-error entries as-is
       const nonError = filtered.filter(e => {
         const isError = typeof e.node.feature_type === 'string' && e.node.feature_type.toLowerCase().includes('error');
         return !isError;
       });
 
-      // 重新组成列表：非 error + 合并后的 error
+      // Rebuild list: non-error entries + merged error entries
       const normalized: PerFileEntry[] = [
         ...nonError,
         ...Array.from(mergedErrorByNodeId.values()),
       ];
 
-      // 自定义排序：同层同位置，shared 优先；其次各文件按文件索引升序；再按绝对权重降序；error 放最后
+      // Custom sort: for same layer/position, shared first; then by file index; then by |weight| desc; errors last
       normalized.sort((a, b) => {
         const aLayer = a.node.layerIdx;
         const bLayer = b.node.layerIdx;
@@ -130,27 +130,27 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         if (samePos) {
           const aIsError = typeof a.node.feature_type === 'string' && a.node.feature_type.toLowerCase().includes('error');
           const bIsError = typeof b.node.feature_type === 'string' && b.node.feature_type.toLowerCase().includes('error');
-          if (aIsError !== bIsError) return aIsError ? 1 : -1; // error 最后
+          if (aIsError !== bIsError) return aIsError ? 1 : -1; // error rows go last
 
           const aShared = (a.node.sourceIndices && a.node.sourceIndices.length > 1) ? 1 : 0;
           const bShared = (b.node.sourceIndices && b.node.sourceIndices.length > 1) ? 1 : 0;
-          if (aShared !== bShared) return bShared - aShared; // 共有优先
+          if (aShared !== bShared) return bShared - aShared; // shared entries first
 
-          // 都是 per-file 的情况：按文件顺序
+          // If both are per-file entries, sort by file order
           if (aShared === 0 && bShared === 0 && !aIsError && !bIsError) {
             const aFile = a.fileIndex;
             const bFile = b.fileIndex;
-            if (aFile !== bFile) return aFile - bFile; // 文件索引升序
+            if (aFile !== bFile) return aFile - bFile; // file index ascending
           }
 
-          // 次序相同则按绝对权重降序
+          // When equal priority, sort by |weight| descending
           return Math.abs(b.weight) - Math.abs(a.weight);
         }
-        // 不同位置，按绝对权重降序
+        // Different positions: sort by |weight| descending
         return Math.abs(b.weight) - Math.abs(a.weight);
       });
 
-      // 映射到渲染节点（保留 per-file 的文件索引；合并后的 error fileIndex 为 -1，不影响灰点）
+      // Map into render nodes (keep per-file fileIndex; merged error entries get fileIndex -1 and use neutral dot color)
       const sectionNodes = normalized.map(e => ({
         ...e.node,
         // @ts-ignore
@@ -240,13 +240,13 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   const renderFeatureRow = useMemo(() => (node: Node, type: 'input' | 'output') => {
     if (!clickedNode) return null;
     
-    // 从节点的临时字段读取该行对应文件与权重
+    // Read per-row file index and weight from temporary fields on node
     const anyNode = node as any;
     const rowFileIndex: number | undefined = anyNode.__fileIndex;
     const rowWeight: number | undefined = anyNode.__weight;
     const rowPct: number | undefined = anyNode.__pct;
 
-    // 找到链接（用于回退）
+    // Find link (for fallback when per-file info is missing)
     const link = type === 'input' 
       ? node.sourceLinks?.find(link => link.target === clickedNode.nodeId)
       : clickedNode.sourceLinks?.find(link => link.target === node.nodeId);
@@ -260,11 +260,11 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     const isHovered = node.nodeId === hoveredId;
     const isClicked = node.nodeId === clickedId;
 
-    // 文件颜色与名称（优先使用该行绑定的文件索引）
+    // File color and label (prefer row-specific file index when present)
     const chosenIndex = (rowFileIndex !== undefined) ? rowFileIndex : (node.sourceIndex ?? (node.sourceIndices?.[0] ?? 0));
     const sourceFileNames = data.metadata.sourceFileNames || [];
     const colorByIndex = (i: number) => {
-      const palette = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 与可视化一致
+      const palette = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // consistent with visualization
       return palette[i % palette.length];
     };
     const sourceTitle = sourceFileNames[chosenIndex] || `#${(chosenIndex ?? 0) + 1}`;
@@ -324,21 +324,21 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     [pinnedIds, clickedNode?.nodeId]
   );
 
-  // 解析节点信息用于跳转到 global weight 页面（必须在早期返回之前调用）
+  // Parse clicked node info for linking to the global weight page (must run before early return)
   const globalWeightParams = useMemo(() => {
     if (!clickedNode) return null;
     
-    // 从 nodeId 解析 layer 和 feature
+    // Parse layer and feature from nodeId
     const parts = clickedNode.nodeId.split('_');
     if (parts.length < 2) return null;
     
     const rawLayer = parseInt(parts[0]) || 0;
-    const layerIdx = Math.floor(rawLayer / 2); // 除以2得到实际模型层数
+    const layerIdx = Math.floor(rawLayer / 2); // divide by 2 to get actual model layer
     const featureIdx = parseInt(parts[1]) || 0;
     const isLorsa = clickedNode.feature_type?.toLowerCase() === 'lorsa';
     const featureType = isLorsa ? 'lorsa' : 'tc';
     
-    // 从 localStorage 读取 sae_combo_id
+    // Read sae_combo_id from localStorage
     const saeComboId = typeof window !== 'undefined' 
       ? window.localStorage.getItem('bt4_sae_combo_id') 
       : null;
@@ -383,23 +383,23 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
 
       {/* Connections */}
       <div className="connections flex-1 flex flex-col gap-3 min-h-0">
-        {/* Global Weight 跳转按钮 - 显示在 Input Features 和 Output Features 上方 */}
+        {/* Global weight link button – shown above Input/Output sections */}
         {globalWeightParams && (
           <div className="w-full flex-shrink-0">
             <Link
               to={`/global-weight?${globalWeightParams}`}
               className="inline-flex items-center justify-center w-full px-3 py-2 bg-purple-500 text-white text-sm font-medium rounded-md hover:bg-purple-600 transition-colors"
-              title="查看该特征的全局权重分析"
+              title="View global weight analysis for this feature"
             >
               <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
-              查看全局权重
+              View Global Weight
             </Link>
           </div>
         )}
         
-        {/* Input Features 和 Output Features */}
+        {/* Input Features and Output Features */}
         <div className="flex-1 flex gap-5 min-h-0">
           {connectionTypes.map(type => (
             <div

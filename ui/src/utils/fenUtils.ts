@@ -60,7 +60,9 @@ export const extractMoveFromData = (data: {
     : String(data.metadata.prompt_tokens);
 
   const movePatterns = [
-    /(?:Output|Move|下一步|移动)[:：]\s*([a-h][1-8][a-h][1-8])/i,
+    // Match explicit "Output:" or "Move:" annotations before a UCI move
+    /(?:Output|Move)[:：]\s*([a-h][1-8][a-h][1-8])/i,
+    // Fallback: any standalone UCI move token
     /\b([a-h][1-8][a-h][1-8])\b/g
   ];
 

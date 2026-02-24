@@ -6,7 +6,6 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { forceSimulation, forceManyBody, forceCenter, forceCollide } from 'd3-force';
 
-// 图数据接口定义
 interface GraphNode {
   node_id: string;
   feature?: number;
@@ -54,7 +53,7 @@ interface ProcessedGraph {
   id: number;
 }
 
-// 颜色配置
+// Color configuration for different graphs
 const GRAPH_COLORS = [
   '#ff6b6b',
   '#4ecdc4',
@@ -93,7 +92,7 @@ export default function ThreeDVisualPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // 控制面板状态
+  // Control panel state
   const [showUniqueNodes, setShowUniqueNodes] = useState(true);
   const [nodeSize, setNodeSize] = useState(1.0);
   const [edgeThickness, setEdgeThickness] = useState(1.0);
@@ -102,12 +101,12 @@ export default function ThreeDVisualPage() {
   const chessBoardGroupRef = useRef<THREE.Group | null>(null);
   const chessPiecesGroupRef = useRef<THREE.Group | null>(null);
   
-  // 拖拽状态（右侧面板）
+  // Dragging state (right panel)
   const [panelPos, setPanelPos] = useState<{x: number; y: number}>({ x: 24, y: 24 });
   const [panelDragging, setPanelDragging] = useState(false);
   const dragOffsetRef = useRef<{x: number; y: number}>({ x: 0, y: 0 });
 
-  // Three.js 对象引用
+  // Three.js object references
   const nodesGroupRef = useRef<THREE.Group | null>(null);
   const linksGroupRef = useRef<THREE.Group | null>(null);
   const raycasterRef = useRef<THREE.Raycaster | null>(null);
@@ -115,7 +114,7 @@ export default function ThreeDVisualPage() {
 
 
 
-  // 初始化Three.js场景（本地依赖）
+  // Initialize Three.js scene (local dependencies)
   useEffect(() => {
     if (!canvasRef.current || !containerRef.current) return;
 
@@ -137,7 +136,7 @@ export default function ThreeDVisualPage() {
     renderer.shadowMap.enabled = false;
     rendererRef.current = renderer;
 
-    // 星空背景（低分辨率）
+    // Star background (low resolution)
     const starsGeometry = new THREE.BufferGeometry();
     const starsCount = performanceMode ? 500 : 2000;
     const positions = new Float32Array(starsCount * 3);
@@ -148,22 +147,22 @@ export default function ThreeDVisualPage() {
     stars.frustumCulled = true;
     scene.add(stars);
 
-    // 控制器
+    // Controller
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = true;
     controls.dampingFactor = performanceMode ? 0.06 : 0.05;
     controlsRef.current = controls;
 
-    // 光照
+    // Lighting
     scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(10, 10, 5);
     scene.add(dirLight);
 
-    // 射线检测
+    // Raycasting
     raycasterRef.current = new THREE.Raycaster();
 
-    // 分组
+    // Grouping
     nodesGroupRef.current = new THREE.Group();
     linksGroupRef.current = new THREE.Group();
     chessBoardGroupRef.current = new THREE.Group();
@@ -186,7 +185,7 @@ export default function ThreeDVisualPage() {
       if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
       animatingRef.current = true;
       requestAnimationFrame(animate);
-      // 帧率限制（性能模式30fps，否则60fps）
+      // Frame rate limit (30fps in performance mode, 60fps otherwise)
       const now = performance.now();
       const minDelta = performanceMode ? (1000 / 30) : (1000 / 60);
       if (now - lastRenderRef.current < minDelta) return;
@@ -198,7 +197,7 @@ export default function ThreeDVisualPage() {
 
     const onMouseMove = (event: MouseEvent) => {
       if (!canvasRef.current || !cameraRef.current || !raycasterRef.current || !nodesGroupRef.current) return;
-      // 射线节流
+      // Raycasting throttling
       const now = performance.now();
       const rayDelta = performanceMode ? 120 : 60;
       if (now - lastRaycastRef.current < rayDelta) return;
@@ -226,19 +225,19 @@ export default function ThreeDVisualPage() {
       renderer.dispose();
       animatingRef.current = false;
     };
-  // 仅在首次和performanceMode变化时重建渲染器与背景
+  // Only rebuild renderer and background on first render and when performanceMode changes
   }, [performanceMode]);
 
-  // 构建棋盘与棋子
+  // Build chessboard and chess pieces
   const buildChessBoard = (ctxList: number[]) => {
     if (!chessBoardGroupRef.current || !chessPiecesGroupRef.current) return;
     chessBoardGroupRef.current.clear();
     chessPiecesGroupRef.current.clear();
 
-    // 仅单图可用
+    // Only single graph available
     if (graphs.length !== 1) return;
 
-    // 计算embedding层的实际y高度（与布局一致）
+    // Calculate actual y height of embedding layer (consistent with layout)
     let minLayer = Number.POSITIVE_INFINITY;
     let maxLayer = Number.NEGATIVE_INFINITY;
     processedNodes.forEach(n => {
@@ -254,25 +253,25 @@ export default function ThreeDVisualPage() {
     const yCenterOffsetLocal = -((maxLayer - minLayer) * ySpacingLocal) / 2;
     const embeddingY = layerToYLocal(minLayer) + yCenterOffsetLocal;
 
-    // 棋盘参数
+    // Chessboard parameters
     const gridSize = 8; // 8x8
-    const cellSize = 5.0; // 放大格子边长
-    const boardSize = gridSize * cellSize; // 棋盘总宽
+    const cellSize = 5.0; // Enlarge grid side length
+    const boardSize = gridSize * cellSize; // Chessboard total width
 
-    // 将ctx映射到8x8网格（按升序截断/填充）
+    // Map ctx to 8x8 grid (sort/pad by ascending)
     const sortedCtx = [...ctxList].sort((a,b)=>a-b);
     const maxCells = gridSize * gridSize;
     const mappedCtx = sortedCtx.slice(0, maxCells);
 
-    // 棋盘底板
+    // Chessboard base
     const boardGeo = new THREE.PlaneGeometry(boardSize, boardSize);
     const boardMat = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
     const boardMesh = new THREE.Mesh(boardGeo, boardMat);
-    boardMesh.rotation.x = -Math.PI / 2; // 水平放置
+    boardMesh.rotation.x = -Math.PI / 2; // Horizontal placement
     boardMesh.position.set(0, embeddingY, 0);
     chessBoardGroupRef.current.add(boardMesh);
 
-    // 画格子
+    // Draw grid
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
         const isDark = (r + c) % 2 === 1;
@@ -287,7 +286,7 @@ export default function ThreeDVisualPage() {
       }
     }
 
-    // 从FEN生成棋子
+    // Generate chess pieces from FEN
     try {
       const fen = graphs[0]?.data?.metadata?.prompt || '';
       const boardPart = String(fen).split(' ')[0] || '';
@@ -306,7 +305,7 @@ export default function ThreeDVisualPage() {
                 const tileZ = (r - (gridSize - 1) / 2) * cellSize;
                 const isWhite = ch === ch.toUpperCase();
                 const color = isWhite ? 0xffffff : 0x333333;
-                const height = 3.2; // 增加高度
+                const height = 3.2; // Increase height
                 const radialSegments = performanceMode ? 10 : 18;
                 const geo = new THREE.CylinderGeometry(1.3, 1.3, height, radialSegments);
                 const mat = new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 1.0, emissive: 0x111111, emissiveIntensity: 0.2 });
@@ -321,7 +320,7 @@ export default function ThreeDVisualPage() {
       }
     } catch {}
 
-    // 参考柱：将上方feature的同ctx列x位置做参考（保持与棋盘r/c一致）
+    // Reference column: use x position of same ctx column in the above feature (keep consistent with chessboard r/c)
     const allCtxSet = new Set<number>(ctxList);
     const allCtxArr = Array.from(allCtxSet.values()).sort((a,b)=>a-b);
     const ctxToX = new Map<number, number>();
@@ -343,21 +342,21 @@ export default function ThreeDVisualPage() {
     });
   };
 
-  // 在数据或模式变化时重建棋盘
+  // Rebuild chessboard when data or mode changes
   useEffect(() => {
     if (!chessMode) {
       chessBoardGroupRef.current?.clear();
       chessPiecesGroupRef.current?.clear();
       return;
     }
-    if (graphs.length !== 1) return; // 仅单图
-    // 收集embedding层的ctx（按node_id解析layer/ctx，layer最小的一层视为embedding层）
+    if (graphs.length !== 1) return; // Only single graph
+    // Collect ctx from embedding layer (parse layer/ctx from node_id, the layer with the smallest layer is considered the embedding layer)
     const embCtxSet = new Set<number>();
     processedNodes.forEach(n => {
       const parts = (n.node_id || '').split('_');
       const rawLayer = Number(parts[0]);
       const layerFromId = Number.isFinite(rawLayer) ? Math.floor(rawLayer / 2) : 0;
-      if (layerFromId === 0) { // 视为embedding层
+      if (layerFromId === 0) { // Considered as embedding layer
         const ctxFromId = Number(parts[2]);
         const ctx = (n as any).ctx_idx ?? (Number.isFinite(ctxFromId) ? ctxFromId : 0);
         embCtxSet.add(ctx);
@@ -387,7 +386,7 @@ export default function ThreeDVisualPage() {
     if (tooltipRef.current) tooltipRef.current.style.display = 'none';
   };
 
-  // 文件上传处理
+  // File upload processing
   const handleFileUpload = async (files: FileList) => {
     if (files.length < 1 || files.length > 4) {
       setError('Please upload 1-4 JSON files');
@@ -395,7 +394,7 @@ export default function ThreeDVisualPage() {
     }
 
     const filesArr = Array.from(files);
-    console.log('📦 本次将解析文件数量:', filesArr.length, filesArr.map(f=>f.name));
+    console.log('Number of files to be parsed:', filesArr.length, filesArr.map(f=>f.name));
 
     setIsLoading(true);
     setError(null);
@@ -406,30 +405,30 @@ export default function ThreeDVisualPage() {
 
       for (let i = 0; i < filesArr.length; i++) {
         const file = filesArr[i];
-        console.log(`⏳ 准备读取文件[${i}/${filesArr.length}]: ${file.name}, size=${file.size}`);
+        console.log(`Preparing to read file [${i}/${filesArr.length}]: ${file.name}, size=${file.size}`);
         try {
           let text: string | null = null;
-          // 路径1：直接使用 File.text()
+          // Path 1: directly use File.text()
           try {
             text = await file.text();
-            console.log(`📄 text()成功[${i}]: bytes=${text.length}`);
+            console.log(`text() successful [${i}]: bytes=${text.length}`);
           } catch (e1: any) {
-            console.warn(`⚠️ text()失败[${i}]: ${file.name}, 尝试FileReader`, e1?.message || e1);
-            // 路径2：使用 FileReader 读取
+            console.warn(`text() failed [${i}]: ${file.name}, trying FileReader`, e1?.message || e1);
+            // Path 2: use FileReader to read
             text = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
               reader.onload = () => resolve(String(reader.result || ''));
               reader.onerror = () => reject(reader.error || new Error('FileReader error'));
               reader.readAsText(file);
             });
-            console.log(`📄 FileReader成功[${i}]: bytes=${text.length}`);
+            console.log(`FileReader successful [${i}]: bytes=${text.length}`);
           }
 
           const data: GraphData = JSON.parse(text!);
           const nodeCount = Array.isArray((data as any).nodes) ? (data as any).nodes.length : 0;
           const linkCount = Array.isArray((data as any).links) ? (data as any).links.length : 0;
           const label = data.label || data.metadata?.slug || file.name.replace(/\.json$/,'');
-          console.log(`✅ 解析成功[${i}]: label=${label}, nodes=${nodeCount}, links=${linkCount}`);
+          console.log(`Parsing successful [${i}]: label=${label}, nodes=${nodeCount}, links=${linkCount}`);
 
           loadedGraphs.push({
             data,
@@ -438,17 +437,17 @@ export default function ThreeDVisualPage() {
             highlighted: false,
             id: i
           });
-          console.log(`📌 已加入loadedGraphs: index=${i}, 当前总数=${loadedGraphs.length}`);
+          console.log(`Added to loadedGraphs: index=${i}, current total=${loadedGraphs.length}`);
         } catch (e: any) {
-          console.error(`❌ 解析失败[${i}]: ${file.name}`, e?.message || e);
+          console.error(`Parsing failed [${i}]: ${file.name}`, e?.message || e);
           failures.push({ name: file.name, reason: e?.message || 'unknown' });
         }
       }
 
-      console.log('✅ 已加载图:', loadedGraphs.map(g => g.data.label || g.data.metadata?.slug || `Graph ${g.id + 1}`));
-      console.log('📊 图数量:', loadedGraphs.length, '，失败数量:', failures.length);
+      console.log('Loaded graphs:', loadedGraphs.map(g => g.data.label || g.data.metadata?.slug || `Graph ${g.id + 1}`));
+      console.log('Graph number:', loadedGraphs.length, 'Failed number:', failures.length);
       if (failures.length > 0) {
-        console.warn('⚠️ 失败的文件:', failures);
+        console.warn('Failed files:', failures);
       }
 
       if (loadedGraphs.length === 0) {
@@ -458,7 +457,7 @@ export default function ThreeDVisualPage() {
       }
 
       setGraphs(loadedGraphs);
-      console.log('🚀 调用processGraphs, 传入图数量=', loadedGraphs.length);
+      console.log('Calling processGraphs, number of graphs=', loadedGraphs.length);
       processGraphs(loadedGraphs);
     } catch (err) {
       setError('Failed to load graph files: ' + (err instanceof Error ? err.message : 'Unknown error'));
@@ -467,13 +466,13 @@ export default function ThreeDVisualPage() {
     }
   };
 
-  // 处理图数据
+    // process graph data
   const processGraphs = (loadedGraphs: ProcessedGraph[]) => {
-    console.log('🔧 开始处理图数据，图数量=', loadedGraphs.length);
+    console.log('Starting to process graph data, number of graphs=', loadedGraphs.length);
     loadedGraphs.forEach((g, idx) => {
       const nodeCount = Array.isArray((g.data as any).nodes) ? (g.data as any).nodes.length : 0;
       const linkCount = Array.isArray((g.data as any).links) ? (g.data as any).links.length : 0;
-      console.log(`  • 图[${idx}] ${g.data.label || g.data.metadata?.slug || idx}: nodes=${nodeCount}, links=${linkCount}`);
+      console.log(`Graph [${idx}] ${g.data.label || g.data.metadata?.slug || idx}: nodes=${nodeCount}, links=${linkCount}`);
     });
 
     const nodeMap = new Map<string, ProcessedNode>();
@@ -482,14 +481,14 @@ export default function ThreeDVisualPage() {
         const nodeId = node.node_id;
         if (!nodeId) return;
 
-        // 统一按 node_id 合并（包含 logit 和 embedding 节点）
+        // Merge by node_id (including logit and embedding nodes)
         const mapKey = nodeId;
 
         if (nodeMap.has(mapKey)) {
           const existingNode = nodeMap.get(mapKey)!;
           if (!existingNode.graphIds.includes(graphIndex)) existingNode.graphIds.push(graphIndex);
           existingNode.isShared = existingNode.graphIds.length > 1;
-          // 保留更有信息量的字段
+          // Keep more informative fields
           if (!existingNode.feature_type && node.feature_type) existingNode.feature_type = node.feature_type;
         } else {
           const color = node.feature_type ? (FEATURE_TYPE_COLORS as any)[(node.feature_type as string).toLowerCase?.() || node.feature_type] || FEATURE_TYPE_COLORS.default : graph.color;
@@ -510,15 +509,15 @@ export default function ThreeDVisualPage() {
     const totalNodes = nodeMap.size;
     const sharedCount = Array.from(nodeMap.values()).filter(n => n.isShared).length;
     const uniqueCount = totalNodes - sharedCount;
-    console.log(`📈 聚合节点: total=${totalNodes}, shared=${sharedCount}, unique=${uniqueCount}`);
+    console.log(`Aggregated nodes: total=${totalNodes}, shared=${sharedCount}, unique=${uniqueCount}`);
 
     layoutNodes(Array.from(nodeMap.values()), loadedGraphs);
     setProcessedNodes(Array.from(nodeMap.values()));
   };
 
-  // 节点布局（共享节点2D，独特节点多平面）
+  // Node layout (shared nodes 2D, unique nodes multi-plane)
   const layoutNodes = (nodes: ProcessedNode[], loadedGraphs: ProcessedGraph[]) => {
-    // 解析基础信息
+    // Parse basic information
     const parsedNodes = nodes.map(n => {
       const parts = (n.node_id || '').split('_');
       const rawLayer = Number(parts[0]);
@@ -529,7 +528,7 @@ export default function ThreeDVisualPage() {
       return { n, layer, ctx };
     });
 
-    // 统计所有层与所有ctx
+    // Count all layers and all ctx
     const layerSet = new Set<number>();
     const ctxSet = new Set<number>();
     parsedNodes.forEach(p => { layerSet.add(p.layer); ctxSet.add(p.ctx); });
@@ -537,14 +536,14 @@ export default function ThreeDVisualPage() {
     if (layers.length === 0) return;
     const ctxList = Array.from(ctxSet.values()).sort((a,b)=>a-b);
 
-    // 垂直方向：logit在最上，embedding在最下 => y随层号增大而上移（反转）
+    // Vertical direction: logit at the top, embedding at the bottom => y increases with layer number (reversed)
     const minLayer = layers[0];
     const maxLayer = layers[layers.length - 1];
     const ySpacing = 18;
     const layerToY = (layer: number) => (layer - minLayer) * ySpacing; 
     const yCenterOffset = -((maxLayer - minLayer) * ySpacing) / 2;
 
-    // 水平方向：按全局ctx列对齐
+    // Horizontal direction: align by global ctx column
     const xGroupSpacing = 10;
     const xInGroupSpacing = 2.2;
     const ctxToX = new Map<number, number>();
@@ -553,11 +552,11 @@ export default function ThreeDVisualPage() {
       ctxToX.set(ctx, x);
     });
 
-    // 如果是Chess模式（单图），准备ctx->棋盘tile坐标映射
+    // If Chess mode (single graph), prepare ctx->chessboard tile coordinate mapping
     let ctxToTileXZ: Map<number, {x: number; z: number}> | null = null;
     if (chessMode && graphs.length === 1) {
       const gridSize = 8;
-      const cellSize = 5.0; // 与棋盘一致
+      const cellSize = 5.0; // Same as chessboard
       const sortedCtx = [...ctxList].sort((a,b)=>a-b).slice(0, gridSize * gridSize);
       ctxToTileXZ = new Map<number, {x: number; z: number}>();
       sortedCtx.forEach((ctx, i) => {
@@ -569,7 +568,7 @@ export default function ThreeDVisualPage() {
       });
     }
 
-    // 先按层与ctx聚合，保证相同ctx的X一致
+    // First aggregate by layer and ctx, ensure same ctx X is consistent
     const mapKey = (layer: number, ctx: number) => `${layer}__${ctx}`;
     const bucket = new Map<string, ProcessedNode[]>();
     parsedNodes.forEach(({ n, layer, ctx }) => {
@@ -578,7 +577,7 @@ export default function ThreeDVisualPage() {
       bucket.get(key)!.push(n);
     });
 
-    // 基础平面位置（未应用多平面变换）
+    // Base plane position (not applied multi-plane transformation)
     const basePos = new Map<string, { x: number; y: number }[]>();
     const orderScore = (ft?: string) => {
       const t = (ft||'').toLowerCase();
@@ -606,13 +605,13 @@ export default function ThreeDVisualPage() {
         }
         const y = baseY;
         arr.push({ x, y });
-        // 直接写入node的z（在后续统一写入时使用映射）
+        // Directly write node's z (used for mapping in subsequent uniform write)
         if (z !== undefined) (node as any).__tileZ = z;
       });
       basePos.set(key, arr);
     });
 
-    // 为不同子集分配平面（非chess模式仅用y分层；chess模式x/z来自tile，z再按子集扇区叠加）
+    // Allocate planes for different subsets (non-chess mode only use y layers; chess mode x/z from tile, z then add by subset sector)
     const nGraphs = Math.max(1, loadedGraphs.length);
     const baseAngles: number[] = Array.from({ length: nGraphs }, (_, i) => (2 * Math.PI * i) / nGraphs);
     const depthUnit = 6;
@@ -655,12 +654,12 @@ export default function ThreeDVisualPage() {
         const zOffset = zOffsetForSubset(subset);
 
         if (phi === null) {
-          // 全共享：中央扇区
+          // All shared: central sector
           node.x = xFinal;
           node.y = by;
           node.z = (zBaseFromTile !== null) ? zBaseFromTile : 0;
         } else {
-          // 绕Y轴旋转 + 偏移（仅当非棋盘时才旋转x；棋盘模式保持tile x，不再旋转x）
+          // Rotate around Y axis + offset (only rotate x when not chessboard; chessboard mode keep tile x, no longer rotate x)
           if (zBaseFromTile !== null) {
             node.x = xFinal;
             node.y = by;
@@ -677,7 +676,7 @@ export default function ThreeDVisualPage() {
       });
     });
 
-    // 完成后渲染
+    // After rendering
     renderNodes();
     renderLinks(loadedGraphs);
   };
@@ -695,7 +694,7 @@ export default function ThreeDVisualPage() {
     });
   };
 
-  // 渲染节点
+  // Render nodes
   const renderNodes = () => {
     if (!nodesGroupRef.current || !sceneRef.current) return;
     nodesGroupRef.current.clear();
@@ -704,7 +703,7 @@ export default function ThreeDVisualPage() {
       if (!graph?.visible && !node.isShared) return;
       if (!showUniqueNodes && !node.isShared) return;
 
-      // 检测是否为logit节点：优先用标志，其次用type/feature_type关键词
+      // Check if it is a logit node: use flag first, then use type/feature_type keywords
       const isLogit = (node as any).is_target_logit === true 
         || (node.type && /logit/i.test(node.type))
         || (node.feature_type && /logit/i.test(node.feature_type));
@@ -741,7 +740,7 @@ export default function ThreeDVisualPage() {
     });
   };
 
-  // 渲染连接（跨图合并相同的边）
+  // Render links (merge same edges across graphs)
   const renderLinks = (loadedGraphs: ProcessedGraph[]) => {
     if (!linksGroupRef.current) return;
     linksGroupRef.current.clear();
@@ -771,7 +770,8 @@ export default function ThreeDVisualPage() {
         new THREE.Vector3(source.x, source.y, source.z),
         new THREE.Vector3(target.x, target.y, target.z)
       ]);
-      // 共享边：用白色更醒目；唯一边：取所属图的颜色（若多图但同一条边，已走共享）
+      // Shared edge: use white for higher visibility; unique edge: use the color of the owning graph
+      // (if an edge appears in multiple graphs, it is already treated as shared)
       const isShared = graphIds.length > 1;
       const color = isShared ? 0xffffff : (graphs[graphIds[0]]?.color ? new THREE.Color(graphs[graphIds[0]].color) : new THREE.Color('#999999'));
       const opacity = isShared ? 0.8 : 0.5;
@@ -781,7 +781,7 @@ export default function ThreeDVisualPage() {
     });
   };
 
-  // 重新渲染场景（当控制开关变化时）
+  // Re-render scene (when control switch changes)
   useEffect(() => {
     if (processedNodes.length > 0) {
       renderNodes();
@@ -819,12 +819,12 @@ export default function ThreeDVisualPage() {
   const toggleGraphVisibility = (graphId: number) => setGraphs(prev => prev.map(graph => graph.id === graphId ? { ...graph, visible: !graph.visible } : graph));
   const toggleGraphHighlight = (graphId: number) => setGraphs(prev => prev.map(graph => graph.id === graphId ? { ...graph, highlighted: !graph.highlighted } : graph));
 
-  // 面板拖拽
+  // Panel dragging
   const onPanelMouseDown = (e: React.MouseEvent) => { setPanelDragging(true); dragOffsetRef.current = { x: e.clientX - panelPos.x, y: e.clientY - panelPos.y }; };
   const onPanelMouseMove = (e: React.MouseEvent) => { if (!panelDragging) return; setPanelPos({ x: e.clientX - dragOffsetRef.current.x, y: e.clientY - dragOffsetRef.current.y }); };
   const onPanelMouseUp = () => setPanelDragging(false);
 
-  // 绑定点击跳转到 Feature 页面
+  // Bind click to jump to Feature page
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -838,19 +838,16 @@ export default function ThreeDVisualPage() {
       const intersects = raycasterRef.current.intersectObjects(nodesGroupRef.current.children, false);
       if (intersects.length === 0) return;
       const nodeData = intersects[0].object.userData as ProcessedNode;
-      // 从node_id解析layer与featureIndex
+      // Parse layer and featureIndex from node_id
       const parts = (nodeData.node_id || '').split('_');
       const rawLayer = Number(parts[0]);
       const layerIdx = Number.isFinite(rawLayer) ? Math.floor(rawLayer / 2) : (nodeData.layer ?? 0);
       const featureIndex = Number(parts[1]);
       const isLorsa = (nodeData.feature_type || '').toLowerCase() === 'lorsa';
-      const dictionary = isLorsa 
-        ? (linkGraphData?.metadata?.lorsa_analysis_name && linkGraphData.metadata.lorsa_analysis_name .includes('BT4')
-            ? `BT4_lorsa_L${layerIdx}A` 
-            : `lc0-lorsa-L${layerIdx}`)
-        : (linkGraphData?.metadata?.tc_analysis_name && linkGraphData.metadata.tc_analysis_name .includes('BT4')
-            ? `BT4_tc_L${layerIdx}M` 
-            : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`);
+      // Use default dictionary naming scheme; 3D view does not depend on circuit metadata
+      const dictionary = isLorsa
+        ? `lc0-lorsa-L${layerIdx}`
+        : `lc0_L${layerIdx}M_16x_k30_lr2e-03_auxk_sparseadam`;
       const url = `/features?dictionary=${encodeURIComponent(dictionary)}&featureIndex=${featureIndex}`;
       window.open(url, '_blank');
     };
@@ -905,7 +902,7 @@ export default function ThreeDVisualPage() {
         )}
       </div>
 
-      {/* 可拖拽的右侧控制面板 */}
+      {/* Draggable right control panel */}
       <div
         className="fixed w-80 bg-white border border-gray-200 shadow-lg rounded-md p-4"
         style={{ left: panelPos.x, top: panelPos.y, cursor: panelDragging ? 'grabbing' : 'grab', userSelect: 'none' }}
@@ -958,7 +955,7 @@ export default function ThreeDVisualPage() {
                   <Switch checked={performanceMode} onCheckedChange={setPerformanceMode} />
                 </div>
                 {graphs.length !== 1 && chessMode && (
-                  <div className="text-xs text-orange-600">仅在单图时可启用棋盘模式</div>
+                  <div className="text-xs text-orange-600">Chessboard mode can only be enabled when there is only one graph</div>
                 )}
               </CardContent>
             </Card>

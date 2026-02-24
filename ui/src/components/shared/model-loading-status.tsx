@@ -18,7 +18,7 @@ interface ModelLoadingStatusProps {
   onLoadingStateChange?: (isLoading: boolean, isLoaded: boolean) => void;
 }
 
-// 全局状态管理（跨组件共享）
+// Global state management (shared across components)
 let globalLoadingState = {
   isLoading: false,
   isLoaded: false,
@@ -49,7 +49,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
-  // 订阅全局状态变化
+  // Subscribe to global state changes
   useEffect(() => {
     const listener = () => {
       setIsLoading(globalLoadingState.isLoading);
@@ -62,19 +62,19 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     };
   }, []);
 
-  // 通知父组件状态变化
+  // Notify parent components when loading state changes
   useEffect(() => {
     onLoadingStateChange?.(isLoading, isLoaded);
   }, [isLoading, isLoaded, onLoadingStateChange]);
 
-  // 自动滚动到底部
+  // Automatically scroll logs to the bottom
   useEffect(() => {
     if (logsContainerRef.current) {
       logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
     }
   }, [loadingLogs]);
 
-  // 获取加载日志
+  // Fetch loading logs from backend
   const fetchLoadingLogs = useCallback(async () => {
     try {
       const url = `${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?model_name=${encodeURIComponent(modelName)}`;
@@ -87,12 +87,12 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
         return data.logs || [];
       }
     } catch (error) {
-      console.error('获取加载日志出错:', error);
+      console.error('Failed to fetch loading logs:', error);
     }
     return [];
   }, [modelName]);
 
-  // 检查模型加载状态
+  // Check whether the model is already available
   const checkLoadingStatus = useCallback(async () => {
     try {
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
@@ -101,15 +101,15 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
         return data.available === true;
       }
     } catch (error) {
-      console.error('检查加载状态出错:', error);
+      console.error('Failed to check loading status:', error);
     }
     return false;
   }, []);
 
-  // 预加载模型
+  // Preload models
   const preloadModels = useCallback(async () => {
     if (globalLoadingState.isLoading) {
-      console.log('⏳ 模型正在加载中，跳过重复请求');
+      console.log('⏳ Model is already loading, skipping duplicate request.');
       return;
     }
 
@@ -121,14 +121,14 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     notifyListeners();
 
     try {
-      console.log('🔍 开始预加载 Transcoders 和 LoRSAs:', modelName);
+      console.log('🔍 Start preloading Transcoders and LoRSAs for model:', modelName);
 
-      // 开始轮询日志
+      // Start polling logs
       pollIntervalRef.current = setInterval(async () => {
         await fetchLoadingLogs();
       }, 500);
 
-      // 发送预加载请求
+      // Send preload request
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`, {
         method: 'POST',
         headers: {
@@ -137,7 +137,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
         body: JSON.stringify({ model_name: modelName }),
       });
 
-      // 等待一段时间获取最后的日志
+      // Wait a bit to fetch final logs
       await new Promise(resolve => setTimeout(resolve, 1000));
       await fetchLoadingLogs();
 
@@ -148,17 +148,17 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
 
       if (response.ok) {
         const data = await response.json();
-        console.log('✅ 预加载完成:', data);
+        console.log('✅ Preload completed:', data);
         globalLoadingState.isLoaded = true;
         setIsLoaded(true);
       } else {
         const errorText = await response.text();
-        console.error('❌ 预加载失败:', errorText);
+        console.error('❌ Preload failed:', errorText);
         setError(errorText);
       }
     } catch (error) {
-      console.error('❌ 预加载出错:', error);
-      setError(error instanceof Error ? error.message : '未知错误');
+      console.error('❌ Preload error:', error);
+      setError(error instanceof Error ? error.message : 'Unknown error');
     } finally {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
@@ -170,12 +170,12 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     }
   }, [modelName, fetchLoadingLogs]);
 
-  // 自动预加载
+  // Auto-preload when enabled
   useEffect(() => {
     if (autoPreload && !globalLoadingState.isLoaded && !globalLoadingState.isLoading) {
-      // 先检查是否已经加载
+      // Check first whether the model is already loaded
       const checkAndLoad = async () => {
-        // 避免频繁检查
+        // Avoid frequent status checks
         const now = Date.now();
         if (now - globalLoadingState.lastCheckTime < 5000) {
           return;
@@ -195,7 +195,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     }
   }, [autoPreload, checkLoadingStatus, preloadModels]);
 
-  // 清理轮询
+  // Cleanup polling interval
   useEffect(() => {
     return () => {
       if (pollIntervalRef.current) {
@@ -204,7 +204,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     };
   }, []);
 
-  // 获取状态图标
+  // Get status icon
   const getStatusIcon = () => {
     if (isLoading) {
       return <Loader2 className="w-4 h-4 animate-spin text-blue-500" />;
@@ -218,28 +218,28 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     return <Cpu className="w-4 h-4 text-gray-400" />;
   };
 
-  // 获取状态文本
+  // Get user-facing status text
   const getStatusText = () => {
     if (isLoading) {
-      return '加载中...';
+      return 'Loading...';
     }
     if (isLoaded) {
-      return 'TC/LoRSA 已就绪';
+      return 'TC/LoRSA is ready';
     }
     if (error) {
-      return '加载失败';
+      return 'Load failed';
     }
-    return 'TC/LoRSA 未加载';
+    return 'TC/LoRSA not loaded';
   };
 
-  // 渲染日志列表
+  // Render logs list
   const renderLogs = () => (
     <div
       ref={logsContainerRef}
       className="max-h-64 overflow-y-auto bg-gray-900 text-gray-100 rounded-lg p-3 font-mono text-xs space-y-1"
     >
       {loadingLogs.length === 0 ? (
-        <div className="text-gray-500 text-center py-4">暂无加载日志</div>
+        <div className="text-gray-500 text-center py-4">No loading logs yet.</div>
       ) : (
         loadingLogs.map((log, idx) => (
           <div key={idx} className="flex">
@@ -261,7 +261,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     </div>
   );
 
-  // 如果只显示按钮
+  // Button-only mode: show a compact status button and open dialog on click
   if (showButton) {
     return (
       <>
@@ -280,12 +280,12 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
             <DialogHeader>
               <DialogTitle className="flex items-center space-x-2">
                 <Cpu className="w-5 h-5" />
-                <span>模型加载状态</span>
+                <span>Model Loading Status</span>
               </DialogTitle>
             </DialogHeader>
 
             <div className="space-y-4">
-              {/* 状态卡片 */}
+              {/* Status card */}
               <Card>
                 <CardContent className="pt-4">
                   <div className="flex items-center justify-between">
@@ -304,7 +304,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
                           onClick={preloadModels}
                         >
                           <RefreshCw className="w-4 h-4 mr-1" />
-                          {isLoaded ? '重新加载' : '开始加载'}
+                          {isLoaded ? 'Reload models' : 'Start loading'}
                         </Button>
                       )}
                       <Button
@@ -312,25 +312,25 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
                         size="sm"
                         onClick={fetchLoadingLogs}
                       >
-                        刷新日志
+                        Refresh logs
                       </Button>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* 错误信息 */}
+              {/* Error display */}
               {error && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
                   {error}
                 </div>
               )}
 
-              {/* 加载日志 */}
+              {/* Loading logs */}
               <Card>
                 <CardHeader className="py-3">
                   <CardTitle className="text-sm flex items-center justify-between">
-                    <span>加载日志 ({loadingLogs.length})</span>
+                    <span>Loading logs ({loadingLogs.length})</span>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -347,11 +347,11 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
                 )}
               </Card>
 
-              {/* 说明 */}
+              {/* Helper text */}
               <div className="text-xs text-gray-500 space-y-1">
-                <p>• Transcoders (TC) 和 LoRSAs 是 Circuit Trace 分析所需的模型组件</p>
-                <p>• 首次加载可能需要几分钟，加载完成后会被缓存</p>
-                <p>• 此加载状态在 Play Game 和 Search Circuits 页面之间共享</p>
+                <p>• Transcoders (TC) and LoRSAs are model components required for circuit trace analysis.</p>
+                <p>• The first load may take a few minutes; once loaded, the models are cached.</p>
+                <p>• This loading status is shared between the Play Game and Search Circuits pages.</p>
               </div>
             </div>
           </DialogContent>
@@ -360,14 +360,14 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     );
   }
 
-  // 渲染完整卡片
+  // Full card mode
   return (
     <Card>
       <CardHeader className="py-3">
         <CardTitle className="text-sm flex items-center justify-between">
           <div className="flex items-center space-x-2">
             {getStatusIcon()}
-            <span>模型加载状态</span>
+            <span>Model Loading Status</span>
           </div>
           <div className="flex space-x-2">
             {!isLoading && (
@@ -377,7 +377,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
                 onClick={preloadModels}
               >
                 <RefreshCw className="w-4 h-4 mr-1" />
-                {isLoaded ? '重新加载' : '开始加载'}
+                {isLoaded ? 'Reload models' : 'Start loading'}
               </Button>
             )}
             <Button
@@ -393,7 +393,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
       {!isCollapsed && (
         <CardContent className="pt-0 space-y-3">
           <div className="text-sm">
-            <span className="text-gray-500">模型:</span>
+            <span className="text-gray-500">Model:</span>
             <span className="ml-2 font-mono">{modelName}</span>
           </div>
           {error && (
@@ -408,7 +408,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
   );
 };
 
-// 导出一个 hook 用于获取加载状态
+// Hook to consume the shared model loading state
 export const useModelLoadingStatus = () => {
   const [isLoading, setIsLoading] = useState(globalLoadingState.isLoading);
   const [isLoaded, setIsLoaded] = useState(globalLoadingState.isLoaded);

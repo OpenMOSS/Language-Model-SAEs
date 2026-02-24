@@ -335,7 +335,7 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
           Circuit Interpretation
           {node && (
             <span className="text-sm font-normal text-gray-600 ml-2">
-              - {featureType === 'lorsa' ? 'LoRSA' : 'Transcoder'} L{node.layer} #{node.feature}
+              - {featureType === 'lorsa' ? 'Lorsa' : 'Transcoder'} L{node.layer} #{node.feature}
             </span>
           )}
         </h3>
@@ -343,7 +343,7 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
           <button
             onClick={() => {
               setShowAllCircuits(!showAllCircuits);
-              // useEffect 会自动处理加载逻辑，这里不需要手动调用
+              // useEffect will handle the loading logic automatically; no manual call needed here
             }}
             className={`px-3 py-1 text-sm rounded transition-colors ${
               showAllCircuits
@@ -461,7 +461,7 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
         </div>
       )}
 
-      {/* 所有其他circuits（当显示全部时） */}
+      {/* All other circuits (when "Show All" is enabled) */}
       {showAllCircuits && otherCircuits.length > 0 && (
         <div className="mb-6">
           <h4 className="font-semibold mb-3 text-sm text-gray-700">
@@ -510,7 +510,7 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
         </div>
       )}
 
-      {/* 加载状态 */}
+      {/* Loading state */}
       {loadingAllCircuits && showAllCircuits && allCircuits.length === 0 && (
         <div className="text-center py-8 text-gray-500">Loading...</div>
       )}
@@ -527,7 +527,7 @@ export const CircuitInterpretationCard: React.FC<CircuitInterpretationCardProps>
   );
 };
 
-// Circuit项组件
+// Circuit item component
 interface CircuitItemProps {
   circuit: CircuitAnnotation;
   node: {
@@ -606,7 +606,7 @@ const CircuitItem: React.FC<CircuitItemProps> = ({
 
   return (
     <div className="border border-gray-300 rounded p-4">
-      {/* Circuit头部 */}
+      {/* Circuit header */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1">
           {editingCircuitId === circuit.circuit_id ? (
@@ -623,7 +623,7 @@ const CircuitItem: React.FC<CircuitItemProps> = ({
                   className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
                   disabled={loading}
                 >
-                  保存
+                  Save
                 </button>
                 <button
                   onClick={() => {
@@ -640,7 +640,7 @@ const CircuitItem: React.FC<CircuitItemProps> = ({
             <div>
               <p className="text-gray-700 mb-1 text-sm">
                 <span className="font-semibold">Circuit Interpretation:</span>{' '}
-                {circuit.circuit_interpretation || '(无)'}
+                {circuit.circuit_interpretation || '(None)'}
               </p>
               <p className="text-xs text-gray-500">
                 Circuit ID: {circuit.circuit_id}
@@ -720,7 +720,7 @@ const CircuitItem: React.FC<CircuitItemProps> = ({
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="font-medium">
-                      {feature.feature_type === 'lorsa' ? 'LoRSA' : 'Transcoder'} L{feature.layer} #{feature.feature_index}
+                      {feature.feature_type === 'lorsa' ? 'Lorsa' : 'Transcoder'} L{feature.layer} #{feature.feature_index}
                     </div>
                     <div className="text-xs text-gray-600 mt-1">
                       SAE: {feature.sae_name}

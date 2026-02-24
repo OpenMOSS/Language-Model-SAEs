@@ -37,7 +37,7 @@ const checkAnalysisNames = (metadata: any): CheckAnalysisNamesResult => {
   if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
     if (!KNOWN_ANALYSIS_NAMES.includes(lorsaAnalysisName)) {
       warnings.push(
-        `⚠️ LoRSA analysis_name "${lorsaAnalysisName}" is not in known combinations, will use default combo k128_e128 (BT4_lorsa)`
+        `⚠️ Lorsa analysis_name "${lorsaAnalysisName}" is not in known combinations, will use default combo k128_e128 (BT4_lorsa)`
       );
     }
   }

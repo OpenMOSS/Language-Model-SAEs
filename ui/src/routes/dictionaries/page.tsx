@@ -137,9 +137,9 @@ export const DictionaryPage = () => {
               setSelectedDictionary(value);
             }}
             options={dictionaryOptions}
-            placeholder="选择字典..."
-            commandPlaceholder="搜索字典..."
-            emptyIndicator="未找到匹配的字典"
+            placeholder="Select dictionary..."
+            commandPlaceholder="Search dictionaries..."
+            emptyIndicator="No matching dictionaries found"
             className="w-full"
           />
           <span className="font-bold justify-self-end">Select analysis:</span>

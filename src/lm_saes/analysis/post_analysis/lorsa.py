@@ -1,9 +1,9 @@
-"""Post-analysis processor for LoRSA (Low-Rank Sparse Attention) SAE.
+"""Post-analysis processor for Lorsa (Low-Rank Sparse Attention) SAE.
 
-This module provides post-processing functionality specific to LoRSA SAEs,
+This module provides post-processing functionality specific to Lorsa SAEs,
 including handling of z patterns (attention patterns) in sparse layout.
 
-The z patterns represent the attention patterns for each active feature in the LoRSA model.
+The z patterns represent the attention patterns for each active feature in the Lorsa model.
 They are stored as sparse tensors with shape (batch, context, feature, n_ctx) where:
 - batch: batch dimension
 - context: sequence length dimension
@@ -11,7 +11,7 @@ They are stored as sparse tensors with shape (batch, context, feature, n_ctx) wh
 - n_ctx: context length for attention patterns
 
 Example:
-    When analyzing LoRSA features, the post processor extracts z patterns for each feature
+    When analyzing Lorsa features, the post processor extracts z patterns for each feature
     and returns them in sparse layout format:
 
     {
@@ -42,9 +42,9 @@ logger = get_distributed_logger("lorsa_post_analysis")
 
 
 class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
-    """Post-analysis processor for LoRSA SAE.
+    """Post-analysis processor for Lorsa SAE.
 
-    This processor handles LoRSA-specific analysis results including:
+    This processor handles Lorsa-specific analysis results including:
     - Z patterns (attention patterns) in sparse layout
     """
 
@@ -60,7 +60,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
         activation_factory: ActivationFactory | None = None,
         activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]] | None]:
-        """Process tensors and add LoRSA-specific data to sample_result.
+        """Process tensors and add Lorsa-specific data to sample_result.
 
         Args:
             sae: The sparse autoencoder model
@@ -123,7 +123,7 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
 
         visited = 0
         active_head_mask = act_times.ne(0)
-        pbar = tqdm(total=interested_pairs.shape[0], desc="Processing LoRSA z patterns")
+        pbar = tqdm(total=interested_pairs.shape[0], desc="Processing Lorsa z patterns")
         # Iterate through activation stream
         for batch_data in activation_stream:
             # Extract metadata from batch
@@ -219,5 +219,5 @@ class LorsaPostAnalysisProcessor(PostAnalysisProcessor):
         }
 
 
-# Register the processor for LoRSA SAE type
+# Register the processor for Lorsa SAE type
 register_post_analysis_processor("lorsa", LorsaPostAnalysisProcessor)

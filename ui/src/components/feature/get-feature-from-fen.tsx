@@ -809,7 +809,7 @@ export const GetFeatureFromFen = ({
           <div className="text-sm font-normal mt-2 text-gray-600">
             FEN: <code className="bg-gray-100 px-2 py-1 rounded text-xs">{fen}</code>
             <br />
-            Layer: {layer} | Position: {position} | Component: {componentType === "attn" ? "Attention (LoRSA)" : "MLP (Transcoder)"}
+            Layer: {layer} | Position: {position} | Component: {componentType === "attn" ? "Attention (Lorsa)" : "MLP (Transcoder)"}
           </div>
         </CardTitle>
       </CardHeader>

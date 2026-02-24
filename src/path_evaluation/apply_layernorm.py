@@ -36,8 +36,8 @@ def apply_layernorm_path_with_feature_types(
 ) -> torch.Tensor:
     """使用模型的 LayerNorm，将向量从 source feature 传播到 target feature。
 
-    该函数考虑了 transcoder 和 LoRSA 在模型中的不同位置：
-    - LoRSA 特征位于对应层 ``ln1`` 之前（即该层 attention 的输入残差处）；
+    该函数考虑了 transcoder 和 Lorsa 在模型中的不同位置：
+    - Lorsa 特征位于对应层 ``ln1`` 之前（即该层 attention 的输入残差处）；
     - Transcoder 特征位于对应层 ``ln2`` 之前（即该层 MLP 的输入残差处）。
 
     我们只沿着各层的 ``ln1`` / ``ln2`` 轨迹传播向量，不显式建模注意力或 MLP 的非线性部分，
@@ -88,7 +88,7 @@ def apply_layernorm_path_with_feature_types(
 
     # 将位置抽象为「在第几层的第几个 LayerNorm 之前」
     # 对于第 L 层：
-    #   - LoRSA 位置：在 ln1 之前，记为时间点 2L
+    #   - Lorsa 位置：在 ln1 之前，记为时间点 2L
     #   - Transcoder 位置：在 ln2 之前，记为时间点 2L+1
     # 跨层传播就是在这些时间点之间依次应用 ln1 / ln2。
     def _pos(layer: int, feature_type: FeatureType) -> int:

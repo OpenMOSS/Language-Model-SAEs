@@ -77,10 +77,10 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
         tooltipText = `Feature: ${hoveredNode.featureId} (Layer ${hoveredNode.layerIdx})`;
       }
 
-      // 追加来源文件信息（如果有）
+      // Append source file information when available
       if (hoveredNode.sourceFiles && hoveredNode.sourceFiles.length) {
         const nodeType = (hoveredNode.feature_type || '').toLowerCase();
-        // 对于 logit 和 embedding 节点，不显示来源文件信息
+        // For logit and embedding nodes, do not show source file information
         if (nodeType !== 'logit' && nodeType !== 'embedding') {
           const files = hoveredNode.sourceFiles.join(', ');
           tooltipText = `${tooltipText} | Source: ${files}`;

@@ -12,7 +12,7 @@ import { ChessBoard } from '@/components/chess/chess-board';
 import { transformCircuitData } from '@/components/circuits/link-graph/utils';
 import { useModelLoadingStatus } from '@/components/shared/model-loading-status';
 
-// 搜索边数据类型
+// Search edge data type
 interface SearchEdge {
   parent: string;
   child: string;
@@ -26,7 +26,7 @@ interface SearchEdge {
   timestamp: number;
 }
 
-// Circuit Trace 参数类型
+// Circuit trace parameter type
 interface CircuitTraceParams {
   max_feature_nodes: number;
   node_threshold: number;
@@ -34,7 +34,7 @@ interface CircuitTraceParams {
   max_act_times: number | null;
 }
 
-// 边的 Circuit Trace 结果类型
+// Circuit trace result type for a single edge
 export interface EdgeCircuitTraceResult {
   edgeKey: string;
   parentFen: string;
@@ -67,12 +67,12 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
   isExpanded = false,
   onToggleExpand,
 }) => {
-  // Trace 状态
+  // Trace state
   const [isTracing, setIsTracing] = useState(false);
   const [traceResult, setTraceResult] = useState<any>(existingResult?.traceResult || null);
   const [visualizationData, setVisualizationData] = useState<any>(existingResult?.visualizationData || null);
   
-  // 参数状态
+  // Parameter state
   const [showParamsDialog, setShowParamsDialog] = useState(false);
   const [circuitParams, setCircuitParams] = useState<CircuitTraceParams>(
     existingResult?.params || {
@@ -83,25 +83,25 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
     }
   );
   
-  // Side 和 Order Mode 状态
+  // Side and order mode state
   const [traceSide, setTraceSide] = useState<'q' | 'k' | 'both'>(existingResult?.side || 'k');
   const [orderMode, setOrderMode] = useState<'positive' | 'negative'>(existingResult?.orderMode || 'positive');
   
-  // Graph 可视化状态
+  // Graph visualization state
   const [clickedNodeId, setClickedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [pinnedNodeIds, setPinnedNodeIds] = useState<string[]>([]);
   
-  // 全屏模式
+  // Fullscreen mode
   const [isFullscreen, setIsFullscreen] = useState(false);
   
-  // 折叠状态
+  // Collapsed / expanded state
   const [isCollapsed, setIsCollapsed] = useState(!isExpanded);
   
-  // 模型加载状态（与 play-game 页面共享）
+  // Model loading state (shared with play-game page)
   const { isLoading: isModelLoading, isLoaded: isModelLoaded } = useModelLoadingStatus();
 
-  // 处理参数变更
+  // Handle parameter changes
   const handleParamsChange = useCallback((key: keyof CircuitTraceParams, value: string) => {
     setCircuitParams(prev => ({
       ...prev,
@@ -117,21 +117,21 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
     }));
   }, []);
 
-  // 处理 Circuit Trace
+  // Handle circuit trace execution
   const handleCircuitTrace = useCallback(async () => {
-    // 先检查后端是否有正在进行的circuit tracing进程
+    // First check if the backend is already running another circuit tracing process
     try {
       const statusResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
       if (statusResponse.ok) {
         const status = await statusResponse.json();
         if (status.is_tracing) {
-          alert('后端正在执行另一个circuit tracing进程，请等待完成后再试');
+          alert('The backend is currently running another circuit tracing process. Please wait for it to finish and try again.');
           return;
         }
       }
     } catch (error) {
-      console.error('检查circuit tracing状态失败:', error);
-      // 如果检查失败，仍然继续执行（避免因为网络问题阻止用户操作）
+      console.error('Failed to check circuit tracing status:', error);
+      // If the status check fails, still proceed (avoid blocking the user due to network issues)
     }
     
     setIsTracing(true);
@@ -149,7 +149,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
         save_activation_info: true,
       };
       
-      console.log('🔍 Edge Circuit Trace 请求:', {
+      console.log('🔍 Edge circuit trace request:', {
         edgeKey,
         move: edge.move,
         parentFen: edge.parent,
@@ -167,19 +167,19 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
       if (response.ok) {
         const data = await response.json();
         
-        // 设置 BT4 模型 metadata
+        // Set BT4 model metadata
         if (data.metadata) {
           data.metadata.lorsa_analysis_name = 'BT4_lorsa_L{}A';
           data.metadata.tc_analysis_name = 'BT4_tc_L{}M';
         }
         
-        // 转换数据用于可视化
+        // Transform data for visualization
         const transformedData = transformCircuitData(data);
         
         setTraceResult(data);
         setVisualizationData(transformedData);
         
-        // 通知父组件
+        // Notify parent component
         const result: EdgeCircuitTraceResult = {
           edgeKey,
           parentFen: edge.parent,
@@ -195,25 +195,25 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
         
         onTraceComplete?.(result);
         
-        console.log('✅ Edge Circuit Trace 完成:', {
+        console.log('✅ Edge circuit trace completed:', {
           edgeKey,
           nodesCount: data.nodes?.length || 0,
           linksCount: data.links?.length || 0,
         });
       } else {
         const errorText = await response.text();
-        console.error('❌ Edge Circuit Trace 失败:', response.status, errorText);
-        alert(`Circuit Trace 失败: ${errorText}`);
+        console.error('❌ Edge circuit trace failed:', response.status, errorText);
+        alert(`Circuit trace failed: ${errorText}`);
       }
     } catch (error) {
-      console.error('❌ Edge Circuit Trace 出错:', error);
-      alert(`Circuit Trace 出错: ${error instanceof Error ? error.message : '未知错误'}`);
+      console.error('❌ Edge circuit trace error:', error);
+      alert(`Circuit trace error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsTracing(false);
     }
   }, [edge, edgeKey, traceSide, orderMode, circuitParams, onTraceComplete]);
 
-  // 处理节点点击
+  // Handle node click
   const handleNodeClick = useCallback((node: any, isMetaKey: boolean) => {
     const nodeId = node.nodeId || node.id;
     
@@ -228,17 +228,17 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
     }
   }, [clickedNodeId, pinnedNodeIds]);
 
-  // 处理节点悬停
+  // Handle node hover
   const handleNodeHover = useCallback((nodeId: string | null) => {
     setHoveredNodeId(nodeId);
   }, []);
 
-  // 切换折叠状态
+  // Toggle collapsed state
   const toggleCollapse = useCallback(() => {
     setIsCollapsed(prev => !prev);
   }, []);
 
-  // 渲染折叠的预览
+  // Render collapsed preview bar
   const renderCollapsedPreview = () => (
     <div
       className="flex items-center justify-between p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
@@ -252,7 +252,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
         </span>
         {traceResult && (
           <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">
-            已完成 ({traceResult.nodes?.length || 0} 节点)
+            Completed ({traceResult.nodes?.length || 0} nodes)
           </span>
         )}
       </div>
@@ -274,14 +274,14 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
     </div>
   );
 
-  // 渲染展开的面板
+  // Render expanded panel
   const renderExpandedPanel = () => (
     <Card className="border-2 border-blue-200">
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center justify-between text-base">
           <div className="flex items-center space-x-2">
             <Zap className={`w-4 h-4 ${traceResult ? 'text-green-500' : 'text-blue-500'}`} />
-            <span>边 Circuit Trace: {edge.move}</span>
+            <span>Edge Circuit Trace: {edge.move}</span>
           </div>
           <div className="flex items-center space-x-2">
             <Button variant="ghost" size="sm" onClick={() => setShowParamsDialog(true)}>
@@ -304,23 +304,23 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* 边信息 */}
+        {/* Edge information */}
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
-            <span className="font-medium text-gray-700">父节点 FEN:</span>
+            <span className="font-medium text-gray-700">Parent FEN:</span>
             <div className="font-mono text-xs bg-blue-50 p-2 rounded mt-1 break-all">
               {edge.parent}
             </div>
           </div>
           <div>
-            <span className="font-medium text-gray-700">子节点 FEN:</span>
+            <span className="font-medium text-gray-700">Child FEN:</span>
             <div className="font-mono text-xs bg-green-50 p-2 rounded mt-1 break-all">
               {edge.child}
             </div>
           </div>
         </div>
         
-        {/* 边统计 */}
+        {/* Edge statistics */}
         <div className="grid grid-cols-4 gap-2 text-xs">
           <div className="bg-gray-50 p-2 rounded">
             <span className="text-gray-500">Visits:</span>
@@ -340,17 +340,17 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           </div>
         </div>
         
-        {/* Trace 控制 */}
+        {/* Trace controls */}
         <div className="flex items-center space-x-4">
           <div className="flex-1">
-            <Label className="text-xs">分析侧</Label>
+            <Label className="text-xs">Analysis side</Label>
             <Select value={traceSide} onValueChange={(v: 'q' | 'k' | 'both') => setTraceSide(v)}>
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="q">Q侧</SelectItem>
-                <SelectItem value="k">K侧</SelectItem>
+                <SelectItem value="q">Q side</SelectItem>
+                <SelectItem value="k">K side</SelectItem>
                 <SelectItem value="both">Q+K</SelectItem>
               </SelectContent>
             </Select>
@@ -373,7 +373,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
               disabled={isTracing || isModelLoading || !isModelLoaded}
               size="sm"
               className="h-8"
-              title={!isModelLoaded ? 'TC/LoRSA 模型未加载，请先加载模型' : ''}
+              title={!isModelLoaded ? 'TC/Lorsa model is not loaded. Please load the model first.' : ''}
             >
               {isTracing ? (
                 <>
@@ -383,12 +383,12 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
               ) : isModelLoading ? (
                 <>
                   <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                  模型加载中...
+                  Model loading...
                 </>
               ) : !isModelLoaded ? (
                 <>
                   <AlertCircle className="w-3 h-3 mr-1" />
-                  模型未加载
+                  Model not loaded
                 </>
               ) : (
                 <>
@@ -400,18 +400,21 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           </div>
         </div>
         
-        {/* 模型加载提示 */}
+        {/* Model loading hint */}
         {!isModelLoaded && !isModelLoading && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 text-yellow-700 text-xs flex items-center">
             <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
-            <span>TC/LoRSA 模型尚未加载。请点击页面顶部的"模型加载状态"按钮加载模型后再进行 Circuit Trace。</span>
+            <span>
+              The TC/LoRSA model is not loaded yet. Please click the "Model Loading Status" button at the top of the page
+              to load the model before running a circuit trace.
+            </span>
           </div>
         )}
         
-        {/* 棋盘预览 */}
+        {/* Chessboard preview */}
         <div className="flex justify-center space-x-4">
           <div className="text-center">
-            <div className="text-xs text-gray-500 mb-1">移动前</div>
+            <div className="text-xs text-gray-500 mb-1">Before move</div>
             <ChessBoard
               fen={edge.parent}
               size="small"
@@ -423,7 +426,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
             <span className="text-2xl text-gray-400">→</span>
           </div>
           <div className="text-center">
-            <div className="text-xs text-gray-500 mb-1">移动后</div>
+            <div className="text-xs text-gray-500 mb-1">After move</div>
             <ChessBoard
               fen={edge.child}
               size="small"
@@ -432,31 +435,31 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           </div>
         </div>
         
-        {/* Trace 结果预览 */}
+        {/* Trace result summary */}
         {traceResult && (
           <div className="bg-green-50 rounded-lg p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-green-700">Trace 结果</span>
+              <span className="text-sm font-medium text-green-700">Trace result</span>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setIsFullscreen(true)}
               >
                 <Maximize2 className="w-3 h-3 mr-1" />
-                查看完整图
+                View full graph
               </Button>
             </div>
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div>
-                <span className="text-gray-500">节点数:</span>
+                <span className="text-gray-500">Nodes:</span>
                 <span className="ml-1 font-mono">{traceResult.nodes?.length || 0}</span>
               </div>
               <div>
-                <span className="text-gray-500">连接数:</span>
+                <span className="text-gray-500">Edges:</span>
                 <span className="ml-1 font-mono">{traceResult.links?.length || 0}</span>
               </div>
               <div>
-                <span className="text-gray-500">目标移动:</span>
+                <span className="text-gray-500">Target move:</span>
                 <span className="ml-1 font-mono">{traceResult.metadata?.target_move || edge.move}</span>
               </div>
             </div>
@@ -466,7 +469,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
     </Card>
   );
 
-  // 渲染全屏对话框
+  // Render fullscreen dialog
   const renderFullscreenDialog = () => (
     <Dialog open={isFullscreen} onOpenChange={setIsFullscreen}>
       <DialogContent className="max-w-[95vw] max-h-[95vh] w-full h-full overflow-hidden">
@@ -517,20 +520,20 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
     </Dialog>
   );
 
-  // 渲染参数设置对话框
+  // Render parameter settings dialog
   const renderParamsDialog = () => (
     <Dialog open={showParamsDialog} onOpenChange={setShowParamsDialog}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings className="w-5 h-5" />
-            Circuit Trace 参数设置
+            Circuit Trace Parameters
           </DialogTitle>
         </DialogHeader>
         
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="max_feature_nodes">最大特征节点数</Label>
+            <Label htmlFor="max_feature_nodes">Max feature nodes</Label>
             <Input
               id="max_feature_nodes"
               type="number"
@@ -543,7 +546,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="node_threshold">节点阈值</Label>
+            <Label htmlFor="node_threshold">Node threshold</Label>
             <Input
               id="node_threshold"
               type="number"
@@ -557,7 +560,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="edge_threshold">边阈值</Label>
+            <Label htmlFor="edge_threshold">Edge threshold</Label>
             <Input
               id="edge_threshold"
               type="number"
@@ -571,7 +574,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="max_act_times">最大激活次数</Label>
+            <Label htmlFor="max_act_times">Max activation count</Label>
             <Input
               id="max_act_times"
               type="number"
@@ -581,14 +584,14 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
               value={circuitParams.max_act_times || ''}
               onChange={(e) => handleParamsChange('max_act_times', e.target.value)}
               className="font-mono"
-              placeholder="留空表示无限制"
+              placeholder="Leave empty for no limit"
             />
           </div>
         </div>
         
         <DialogFooter>
           <Button variant="outline" onClick={() => setShowParamsDialog(false)}>
-            取消
+            Cancel
           </Button>
           <Button
             variant="outline"
@@ -599,10 +602,10 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
               max_act_times: null,
             })}
           >
-            重置
+            Reset
           </Button>
           <Button onClick={() => setShowParamsDialog(false)}>
-            确定
+            Confirm
           </Button>
         </DialogFooter>
       </DialogContent>

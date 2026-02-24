@@ -29,22 +29,22 @@ export const CustomFenInput = ({
   const [fenAnalysisError, setFenAnalysisError] = useState<string | null>(null);
   const [fenAnalysisResult, setFenAnalysisResult] = useState<FenAnalysisResult | null>(null);
 
-  // 当切换 dictionary 或 feature 时，清空自定义 FEN 分析结果
+  // Clear custom FEN analysis state when dictionary or feature changes
   useEffect(() => {
     setFenAnalysisResult(null);
     setFenAnalysisError(null);
     setCustomFen("");
   }, [dictionary, featureIndex]);
 
-  // 分析自定义FEN的函数
+  // Analyze custom FEN against a specific dictionary + feature
   const analyzeCustomFen = useAsyncFn(async (fen: string, dict: string | null, featIndex: number) => {
     if (!fen || !fen.trim()) {
-      setFenAnalysisError("请输入有效的FEN字符串");
+      setFenAnalysisError("Please enter a valid FEN string.");
       return;
     }
     
     if (!dict) {
-      setFenAnalysisError("请先选择一个字典");
+      setFenAnalysisError("Please select a dictionary first.");
       return;
     }
 
@@ -72,7 +72,7 @@ export const CustomFenInput = ({
 
       const data = await response.json();
       
-      // 解析返回的数据，构建激活值数组
+      // Parse backend response and build a 64-square activation array
       let activations: number[] | undefined = undefined;
       if (data.feature_acts_indices && data.feature_acts_values) {
         activations = new Array(64).fill(0);
@@ -88,7 +88,7 @@ export const CustomFenInput = ({
         }
       }
 
-      // 处理 z pattern 数据
+      // Parse z-pattern data (Lorsa only)
       let zPatternIndices: number[][] | undefined = undefined;
       let zPatternValues: number[] | undefined = undefined;
       if (data.z_pattern_indices && data.z_pattern_values) {
@@ -104,8 +104,8 @@ export const CustomFenInput = ({
         zPatternValues,
       });
     } catch (error) {
-      setFenAnalysisError(error instanceof Error ? error.message : "分析FEN时出错");
-      console.error("分析FEN错误:", error);
+      setFenAnalysisError(error instanceof Error ? error.message : "Error while analyzing FEN.");
+      console.error("Error analyzing FEN:", error);
     } finally {
       setFenAnalysisLoading(false);
     }
@@ -122,17 +122,17 @@ export const CustomFenInput = ({
       <div className="bg-white rounded-lg border shadow-sm p-4 pb-8">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-center flex-1">
-            自定义FEN分析
+            Custom FEN Analysis
           </h3>
         </div>
 
-        {/* 输入区域 */}
+        {/* Input section */}
         <div className="mb-4 space-y-2">
           <Input
             disabled={disabled || fenAnalysisLoading}
             className="bg-white"
             type="text"
-            placeholder="输入FEN字符串，例如: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            placeholder="Enter a FEN string, e.g. rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
             value={customFen}
             onChange={(e) => setCustomFen(e.target.value)}
             onKeyDown={(e) => {
@@ -147,18 +147,18 @@ export const CustomFenInput = ({
             onClick={handleAnalyze}
             className="w-full"
           >
-            {fenAnalysisLoading ? "分析中..." : "分析FEN"}
+            {fenAnalysisLoading ? "Analyzing..." : "Analyze FEN"}
           </Button>
         </div>
 
-        {/* 错误显示 */}
+        {/* Error display */}
         {fenAnalysisError && (
           <div className="text-red-500 font-bold text-center mb-4">
-            FEN分析错误: {fenAnalysisError}
+            FEN analysis error: {fenAnalysisError}
           </div>
         )}
 
-        {/* 结果显示 */}
+        {/* Result display */}
         {fenAnalysisResult && (
           <div className="space-y-2">
             <div className="text-center mb-2">

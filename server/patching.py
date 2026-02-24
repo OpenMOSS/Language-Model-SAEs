@@ -42,7 +42,7 @@ class PatchingAnalyzer:
         lorsa_activations, tc_activations = [], []
         
         for layer in range(15):
-            # LoRSA激活
+            # Lorsa激活
             lorsa_input = cache[f'blocks.{layer}.hook_attn_in']
             lorsa_dense_activation = self.lorsas[layer].encode(lorsa_input)
             lorsa_sparse_activation = lorsa_dense_activation.to_sparse_coo()

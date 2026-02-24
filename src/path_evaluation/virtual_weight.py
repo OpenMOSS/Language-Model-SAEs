@@ -194,7 +194,7 @@ def compute_weighted_virtual_weight_from_json(
     transcoders:
         Transcoder SAE 字典。
     lorsas:
-        LoRSA 列表。
+        Lorsa 列表。
     apply_layernorm_path:
         是否应用 LayerNorm 路径传播。
 
@@ -306,7 +306,7 @@ def compute_folder_virtual_weight(
     transcoders:
         Transcoder SAE 字典。
     lorsas:
-        LoRSA 列表。
+        Lorsa 列表。
     apply_layernorm_path:
         是否应用 LayerNorm 路径传播。
 

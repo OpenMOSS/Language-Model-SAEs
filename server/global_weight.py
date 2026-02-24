@@ -182,13 +182,13 @@ def tc_global_weight_in(
         feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
 
     feature_list_lorsa = []
-    # LoRSA 0 ~ layer_idx
+    # Lorsa 0 ~ layer_idx
     for i in range(layer_idx + 1):
         # 如果有层过滤器，只包含指定层
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # 调试信息
-            print(f"✅ tc_global_weight_in: 处理LoRSA层{i} (过滤器: {layer_filter})")
+            print(f"✅ tc_global_weight_in: 处理Lorsa层{i} (过滤器: {layer_filter})")
         # 获取decoder矩阵（带activations权重）
         f_dec = lorsas[i].W_O * lorsa_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
@@ -209,7 +209,7 @@ def lorsa_global_weight_in(
     k: int = 100,
     layer_filter: List[int] | None = None,
 ) -> List[Tuple[str, float]]:
-    """计算LoRSA feature的输入全局权重"""
+    """计算Lorsa feature的输入全局权重"""
     if layer_filter is not None:
         print(f"🔍 lorsa_global_weight_in: layer_filter={layer_filter}")
     # 获取encoder向量
@@ -228,13 +228,13 @@ def lorsa_global_weight_in(
         feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
 
     feature_list_lorsa = []
-    # LoRSA 0 ~ layer_idx-1
+    # Lorsa 0 ~ layer_idx-1
     for i in range(layer_idx):
         # 如果有层过滤器，只包含指定层
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # 调试信息
-            print(f"✅ lorsa_global_weight_in: 处理LoRSA层{i} (过滤器: {layer_filter})")
+            print(f"✅ lorsa_global_weight_in: 处理Lorsa层{i} (过滤器: {layer_filter})")
         f_dec = lorsas[i].W_O * lorsa_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
@@ -277,7 +277,7 @@ def tc_global_weight_out(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # 调试信息
-            print(f"✅ tc_global_weight_out: 处理LoRSA层{i} (过滤器: {layer_filter})")
+            print(f"✅ tc_global_weight_out: 处理Lorsa层{i} (过滤器: {layer_filter})")
         f_enc = lorsas[i].W_V  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
@@ -297,7 +297,7 @@ def lorsa_global_weight_out(
     k: int = 100,
     layer_filter: List[int] | None = None,
 ) -> List[Tuple[str, float]]:
-    """计算LoRSA feature的输出全局权重"""
+    """计算Lorsa feature的输出全局权重"""
     if layer_filter is not None:
         print(f"🔍 lorsa_global_weight_out: layer_filter={layer_filter}")
     # 获取decoder向量（带activations权重）
@@ -316,13 +316,13 @@ def lorsa_global_weight_out(
         feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
 
     feature_list_lorsa = []
-    # LoRSA layer_idx+1 ~ n_layers-1
+    # Lorsa layer_idx+1 ~ n_layers-1
     for i in range(layer_idx + 1, len(transcoders)):
         # 如果有层过滤器，只包含指定层
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # 调试信息
-            print(f"✅ lorsa_global_weight_out: 处理LoRSA层{i} (过滤器: {layer_filter})")
+            print(f"✅ lorsa_global_weight_out: 处理Lorsa层{i} (过滤器: {layer_filter})")
         f_enc = lorsas[i].W_V  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))

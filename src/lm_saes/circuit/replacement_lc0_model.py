@@ -476,7 +476,7 @@ class ReplacementModel(HookedTransformer):
             for layer in range(self.cfg.n_layers)
         ])
         if lorsa_reconstruction.ndim == 4:
-            # LoRSA decode returns per-head contributions; sum over heads to match
+            # Lorsa decode returns per-head contributions; sum over heads to match
             # the attn_out_cache tensor shape (layers x seq_len x d_model).
             lorsa_reconstruction = lorsa_reconstruction.sum(dim=1)
 

@@ -61,10 +61,10 @@ interface BetweenFeaturesResult {
     featuresIn: Array<{ name: string; weight: number }>;
     featuresOut: Array<{ name: string; weight: number }>;
   };
-  rankAInB: number | null; // Feature A 在 Feature B 的 features_in 中的排名
-  rankBInA: number | null; // Feature B 在 Feature A 的 features_out 中的排名
-  weightAInB: number | null; // Feature A 在 Feature B 的 features_in 中的权重
-  weightBInA: number | null; // Feature B 在 Feature A 的 features_out 中的权重
+  rankAInB: number | null; // Rank of Feature A in Feature B's features_in
+  rankBInA: number | null; // Rank of Feature B in Feature A's features_out
+  weightAInB: number | null; // Weight of Feature A in Feature B's features_in
+  weightBInA: number | null; // Weight of Feature B in Feature A's features_out
 }
 
 interface TopActivationData {
@@ -129,7 +129,7 @@ const FeatureNode = ({ data, selected }: {
             style={{ backgroundColor: data.nodeColor || '#95a5a6' }}
           />
           <span className="text-xs font-semibold text-gray-700">
-            {data.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{data.layer} #{data.featureIndex}
+            {data.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L{data.layer} #{data.featureIndex}
           </span>
         </div>
         {data.level !== undefined && (
@@ -207,7 +207,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
   const [layerForFeatureSelection, setLayerForFeatureSelection] = useState<number>(0);
   const [positionForFeatureSelection, setPositionForFeatureSelection] = useState<number>(0);
   const [componentTypeForFeatureSelection, setComponentTypeForFeatureSelection] = useState<"attn" | "mlp">("attn");
-  const [autoCreateEdges, setAutoCreateEdges] = useState<boolean>(false); // 默认不自动创建边
+  const [autoCreateEdges, setAutoCreateEdges] = useState<boolean>(false); // By default, do not auto-create edges
 
   // Get SAE combo ID (use useState to avoid re-reading on every render)
   const [saeComboId, setSaeComboId] = useState<string | undefined>(() => {
@@ -341,7 +341,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
   }, [setNodes, setEdges]);
 
   // Load circuits on mount (only once)
-  // 使用 ref 来跟踪是否已经加载过，避免重复加载
+  // Use ref to track whether circuits have already been loaded to avoid duplicate loading
   const hasLoadedCircuitsRef = useRef(false);
   
   useEffect(() => {
@@ -349,10 +349,10 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       hasLoadedCircuitsRef.current = true;
       loadCircuits();
     } else if (!saeComboId) {
-      // 如果 saeComboId 被清空，重置标志
+      // If saeComboId is cleared, reset the flag
       hasLoadedCircuitsRef.current = false;
     }
-    // 只在 saeComboId 变化时重新加载，避免频繁调用
+    // Only reload when saeComboId changes to avoid frequent calls
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saeComboId]);
 
@@ -484,7 +484,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
   // Preload models before fetching global weight
   const preloadModels = useCallback(async (comboId: string): Promise<void> => {
-    setLoadingMessage('正在检查模型加载状态...');
+    setLoadingMessage('Checking model loading status...');
     
     // Check loading status
     const checkLoadingStatus = async (): Promise<{ isLoading: boolean; logs?: Array<{ timestamp: number; message: string }> }> => {
@@ -507,7 +507,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     // If already loading, wait for completion
     let status = await checkLoadingStatus();
     if (status.isLoading) {
-      setLoadingMessage('检测到模型正在加载中，等待加载完成...');
+      setLoadingMessage('Detected model is loading, waiting for completion...');
       const maxWaitTime = 300000; // 5 minutes max
       const startTime = Date.now();
       let lastLogCount = status.logs?.length ?? 0;
@@ -516,19 +516,19 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         status = await checkLoadingStatus();
         if (status.logs && status.logs.length > lastLogCount) {
           const lastLog = status.logs[status.logs.length - 1];
-          setLoadingMessage(`加载中: ${lastLog.message}`);
+          setLoadingMessage(`Loading: ${lastLog.message}`);
           lastLogCount = status.logs.length;
         }
       }
       if (status.isLoading) {
-        throw new Error('模型加载超时，请稍后重试');
+        throw new Error('Model loading timeout, please try again later');
       }
-      setLoadingMessage('模型加载完成');
+      setLoadingMessage('Model loading completed');
       return;
     }
 
     // Call preload endpoint
-    setLoadingMessage('开始预加载模型...');
+    setLoadingMessage('Starting model preload...');
     const preloadRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`, {
       method: 'POST',
       headers: {
@@ -542,18 +542,18 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
     if (!preloadRes.ok) {
       const errorText = await preloadRes.text();
-      throw new Error(`预加载失败: HTTP ${preloadRes.status}: ${errorText}`);
+      throw new Error(`Preload failed: HTTP ${preloadRes.status}: ${errorText}`);
     }
 
     const preloadData = await preloadRes.json();
     
     if (preloadData.status === 'already_loaded') {
-      setLoadingMessage('模型已加载');
+      setLoadingMessage('Model loaded');
       return;
     }
 
     if (preloadData.status === 'loaded' || preloadData.status === 'loading') {
-      setLoadingMessage('等待模型加载完成...');
+      setLoadingMessage('Waiting for model loading to complete...');
       const maxWaitTime = 300000;
       const startTime = Date.now();
       let lastLogCount = 0;
@@ -561,17 +561,17 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         status = await checkLoadingStatus();
         if (status.logs && status.logs.length > lastLogCount) {
           const lastLog = status.logs[status.logs.length - 1];
-          setLoadingMessage(`加载中: ${lastLog.message}`);
+          setLoadingMessage(`Loading: ${lastLog.message}`);
           lastLogCount = status.logs.length;
         }
         if (!status.isLoading) {
           await new Promise(resolve => setTimeout(resolve, 1000));
-          setLoadingMessage('模型加载完成');
+          setLoadingMessage('Model loaded');
           return;
         }
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
-      throw new Error('模型加载超时，请稍后重试');
+      throw new Error('Model loading timeout, please try again later');
     }
   }, []);
 
@@ -609,7 +609,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     layerB: number, featureIndexB: number, featureTypeB: string
   ) => {
     if (!saeComboId) {
-      alert('请先选择 SAE 组合');
+      alert('Please select an SAE combo first.');
       return;
     }
 
@@ -620,7 +620,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       await preloadModels(saeComboId);
 
       // Fetch global weight for Feature A
-      setLoadingMessage('正在计算 Feature A 的全局权重...');
+      setLoadingMessage('Computing global weights for Feature A...');
       const paramsA = new URLSearchParams({
         model_name: 'lc0/BT4-1024x15x32h',
         feature_type: featureTypeA === 'lorsa' ? 'lorsa' : 'tc',
@@ -632,9 +632,9 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
       let responseA = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${paramsA.toString()}`);
       if (responseA.status === 503) {
-        setLoadingMessage('模型未加载，正在自动加载...');
+        setLoadingMessage('Model not loaded, loading automatically...');
         await preloadModels(saeComboId);
-        setLoadingMessage('正在计算 Feature A 的全局权重...');
+        setLoadingMessage('Computing global weights for Feature A...');
         responseA = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${paramsA.toString()}`);
       }
       if (!responseA.ok) {
@@ -643,7 +643,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       const dataA: GlobalWeightData = await responseA.json();
 
       // Fetch global weight for Feature B
-      setLoadingMessage('正在计算 Feature B 的全局权重...');
+      setLoadingMessage('Computing global weights for Feature B...');
       const paramsB = new URLSearchParams({
         model_name: 'lc0/BT4-1024x15x32h',
         feature_type: featureTypeB === 'lorsa' ? 'lorsa' : 'tc',
@@ -655,9 +655,9 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
       let responseB = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${paramsB.toString()}`);
       if (responseB.status === 503) {
-        setLoadingMessage('模型未加载，正在自动加载...');
+        setLoadingMessage('Model not loaded, loading automatically...');
         await preloadModels(saeComboId);
-        setLoadingMessage('正在计算 Feature B 的全局权重...');
+        setLoadingMessage('Computing global weights for Feature B...');
         responseB = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${paramsB.toString()}`);
       }
       if (!responseB.ok) {
@@ -670,9 +670,9 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       const featureBName = buildFeatureName(featureTypeB, layerB, featureIndexB);
 
       // Find ranks
-      // Feature A 在 Feature B 的 features_in 中的排名（A 影响 B）
+      // Feature A's rank in Feature B's features_in (A influences B)
       const rankAInB = findFeatureRank(featureAName, dataB.features_in);
-      // Feature B 在 Feature A 的 features_out 中的排名（A 影响 B）
+      // Feature B's rank in Feature A's features_out (A influences B)
       const rankBInA = findFeatureRank(featureBName, dataA.features_out);
 
       setBetweenFeaturesResult({
@@ -701,7 +701,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       setLoadingMessage(null);
     } catch (err) {
       console.error('Failed to fetch global weight between features:', err);
-      alert('获取两个特征之间的全局权重失败: ' + (err instanceof Error ? err.message : '未知错误'));
+      alert('Failed to compute global weight between the two features: ' + (err instanceof Error ? err.message : 'Unknown error'));
       setBetweenFeaturesResult(null);
     } finally {
       setLoadingGlobalWeights(false);
@@ -769,7 +769,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     const fen = interactionFen || (selectedCircuit as any)?.original_fen || '8/p3kpp1/8/3R1r2/8/4P1Q1/PPr4n/6KR b - - 9 32';
     
     if (!fen) {
-      alert('请先输入 FEN 字符串');
+      alert('Please provide a FEN string first.');
       return;
     }
 
@@ -778,29 +778,35 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     
     if (!useMultiNodeMode) {
       // Fallback to old two-node mode for backward compatibility
-    if (!selectedNodeId || !selectedNodeId2 || !selectedCircuit) {
-        alert('请选择两个节点来进行交互分析，或者使用多节点选择模式');
-      return;
-    }
+      if (!selectedNodeId || !selectedNodeId2 || !selectedCircuit) {
+        alert('Please select two nodes for interaction analysis, or use the multi-node selection mode.');
+        return;
+      }
 
     const nodeA = nodes.find(n => n.id === selectedNodeId);
     const nodeB = nodes.find(n => n.id === selectedNodeId2);
 
-    if (!nodeA || !nodeB) {
-      alert('找不到选中的节点');
-      return;
-    }
+      if (!nodeA || !nodeB) {
+        alert('Selected nodes could not be found.');
+        return;
+      }
 
       // Check positions
       const nodeAPos = steeringNodePositions.get(selectedNodeId);
       const nodeBPos = targetNodePositions.get(selectedNodeId2);
       
       if (nodeAPos === undefined) {
-        alert(`请为 steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) 指定 position`);
+        alert(
+          `Please specify a position for the steering node ` +
+          `(${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}).`
+        );
         return;
       }
       if (nodeBPos === undefined) {
-        alert(`请为 target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) 指定 position`);
+        alert(
+          `Please specify a position for the target node ` +
+          `(${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}).`
+        );
         return;
       }
 
@@ -812,11 +818,19 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         // Fetch activation
         const activation = await fetchNodeActivation(selectedNodeId, nodeAPos);
         if (activation === null || activation === 0) {
-          alert(`Steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) 在 position ${nodeAPos} 的激活值为 0，无法进行分析`);
+          alert(
+            `Steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+            `L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) has activation 0 at position ${nodeAPos}, ` +
+            `cannot run interaction analysis.`
+          );
           return;
         }
       } else if (nodeAActivation === 0) {
-        alert(`Steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) 在 position ${nodeAPos} 的激活值为 0，无法进行分析`);
+        alert(
+          `Steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+          `L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) has activation 0 at position ${nodeAPos}, ` +
+          `cannot run interaction analysis.`
+        );
         return;
       }
 
@@ -824,11 +838,19 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         // Fetch activation
         const activation = await fetchNodeActivation(selectedNodeId2, nodeBPos);
         if (activation === null || activation === 0) {
-          alert(`Target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) 在 position ${nodeBPos} 的激活值为 0，无法进行分析`);
+          alert(
+            `Target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+            `L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) has activation 0 at position ${nodeBPos}, ` +
+            `cannot run interaction analysis.`
+          );
           return;
         }
       } else if (nodeBActivation === 0) {
-        alert(`Target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) 在 position ${nodeBPos} 的激活值为 0，无法进行分析`);
+        alert(
+          `Target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+          `L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) has activation 0 at position ${nodeBPos}, ` +
+          `cannot run interaction analysis.`
+        );
         return;
       }
 
@@ -867,7 +889,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       setInteractionResult(result);
     } catch (error) {
       console.error('Failed to analyze node interaction:', error);
-      alert(`分析节点交互失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      alert(`Failed to analyze node interaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setAnalyzingInteraction(false);
     }
@@ -876,7 +898,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
     // New multi-node mode
     if (!selectedCircuit) {
-      alert('请先选择一个 Circuit');
+      alert('Please select a circuit first.');
       return;
     }
 
@@ -889,7 +911,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       .filter((n): n is ReactFlowNode<FeatureNodeData> => n !== undefined);
 
     if (steeringNodes.length === 0 || targetNodes.length === 0) {
-      alert('请至少选择一个 steering node 和一个 target node');
+      alert('Please select at least one steering node and one target node.');
       return;
     }
 
@@ -897,7 +919,10 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     for (const node of steeringNodes) {
       const pos = steeringNodePositions.get(node.id);
       if (pos === undefined) {
-        alert(`请为 steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 指定 position`);
+        alert(
+          `Please specify a position for the steering node ` +
+          `(${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}).`
+        );
         return;
       }
     }
@@ -905,7 +930,10 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     for (const node of targetNodes) {
       const pos = targetNodePositions.get(node.id);
       if (pos === undefined) {
-        alert(`请为 target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 指定 position`);
+        alert(
+          `Please specify a position for the target node ` +
+          `(${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}).`
+        );
         return;
       }
     }
@@ -919,11 +947,19 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         // Fetch activation
         const fetchedActivation = await fetchNodeActivation(node.id, pos);
         if (fetchedActivation === null || fetchedActivation === 0) {
-          alert(`Steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 在 position ${pos} 的激活值为 0，无法进行分析`);
+          alert(
+            `Steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+            `L${node.data?.layer} #${node.data?.featureIndex}) has activation 0 at position ${pos}, ` +
+            `cannot run interaction analysis.`
+          );
           return;
         }
       } else if (activation === 0) {
-        alert(`Steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 在 position ${pos} 的激活值为 0，无法进行分析`);
+        alert(
+          `Steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+          `L${node.data?.layer} #${node.data?.featureIndex}) has activation 0 at position ${pos}, ` +
+          `cannot run interaction analysis.`
+        );
         return;
       }
     }
@@ -936,11 +972,19 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         // Fetch activation
         const fetchedActivation = await fetchNodeActivation(node.id, pos);
         if (fetchedActivation === null || fetchedActivation === 0) {
-          alert(`Target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 在 position ${pos} 的激活值为 0，无法进行分析`);
+          alert(
+            `Target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+            `L${node.data?.layer} #${node.data?.featureIndex}) has activation 0 at position ${pos}, ` +
+            `cannot run interaction analysis.`
+          );
           return;
         }
       } else if (activation === 0) {
-        alert(`Target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}) 在 position ${pos} 的激活值为 0，无法进行分析`);
+        alert(
+          `Target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+          `L${node.data?.layer} #${node.data?.featureIndex}) has activation 0 at position ${pos}, ` +
+          `cannot run interaction analysis.`
+        );
         return;
       }
     }
@@ -986,7 +1030,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       setInteractionResult(result);
     } catch (error) {
       console.error('Failed to analyze node interaction:', error);
-      alert(`分析节点交互失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      alert(`Failed to analyze node interaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setAnalyzingInteraction(false);
     }
@@ -1009,7 +1053,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
   // Fetch Top Activations for a feature
   const fetchTopActivations = useCallback(async (layer: number, featureIndex: number, featureType: string) => {
     if (!saeComboId) {
-      alert('请先选择 SAE 组合');
+      alert('Please select an SAE combo first.');
       return;
     }
 
@@ -1017,7 +1061,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     let dictionary: string = '';
     
     try {
-      // 优先从 circuit annotation 的 feature 中获取 sae_name
+      // Prefer to get sae_name from circuit annotation's feature definition
       let foundDictionary: string | undefined = undefined;
       
       if (selectedCircuit) {
@@ -1031,12 +1075,12 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         }
       }
       
-      // 如果从 circuit 中找不到，根据 sae_combo_id 生成
+      // If not found in the circuit, generate based on sae_combo_id
       if (!foundDictionary) {
         const isLorsa = featureType === 'lorsa';
-        // 根据 sae_combo_id 生成正确的 dictionary 名称
-        // 对于 k_30_e_16: BT4_tc_L{layer}M_k30_e16 或 BT4_lorsa_L{layer}A_k30_e16
-        // 对于 k_128_e_128 (默认): BT4_tc_L{layer}M 或 BT4_lorsa_L{layer}A
+        // Generate the correct dictionary name based on sae_combo_id
+        // For k_30_e_16: BT4_tc_L{layer}M_k30_e16 or BT4_lorsa_L{layer}A_k30_e16
+        // For k_128_e_128 (default): BT4_tc_L{layer}M or BT4_lorsa_L{layer}A
         if (saeComboId === 'k_30_e_16') {
           foundDictionary = isLorsa 
             ? `BT4_lorsa_L${layer}A_k30_e16`
@@ -1054,7 +1098,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
             ? `BT4_lorsa_L${layer}A_k256_e128`
             : `BT4_tc_L${layer}M_k256_e128`;
         } else {
-          // 默认组合 k_128_e_128
+          // Default combo k_128_e_128
           foundDictionary = isLorsa 
             ? `BT4_lorsa_L${layer}A`
             : `BT4_tc_L${layer}M`;
@@ -1063,7 +1107,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       
       dictionary = foundDictionary;
       
-      console.log('🔍 获取 Top Activation 数据:', {
+      console.log('🔍 Fetching Top Activation data:', {
         layer,
         featureIndex,
         featureType,
@@ -1081,7 +1125,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         }
       );
       
-      console.log('📡 Top Activation API 请求:', {
+      console.log('📡 Top Activation API request:', {
         url: `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
         status: response.status,
         statusText: response.statusText,
@@ -1187,7 +1231,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         }
       }
       
-      console.log('🔍 Top Activations提取结果:', {
+      console.log('🔍 Top Activations extraction result:', {
         totalSamples: allSamples.length,
         chessSamplesFound: chessSamples.length,
         dictionary,
@@ -1200,7 +1244,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
         .slice(0, 8);
 
-      console.log('✅ Top Activations最终结果:', {
+      console.log('✅ Top Activations final result:', {
         topSamplesCount: topSamples.length,
         samples: topSamples.map(s => ({
           fen: s.fen.substring(0, 20) + '...',
@@ -1212,8 +1256,12 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       setTopActivations(topSamples);
     } catch (err) {
       console.error('❌ Failed to fetch top activations:', err);
-      const errorMessage = err instanceof Error ? err.message : '未知错误';
-      alert(`获取Top Activations失败: ${errorMessage}\n\n使用的字典名称: ${dictionary || '未确定'}\n请检查字典名称是否正确。`);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      alert(
+        `Failed to fetch Top Activations: ${errorMessage}\n\n` +
+        `Dictionary name used: ${dictionary || 'N/A'}\n` +
+        'Please check whether the dictionary name is correct.'
+      );
       setTopActivations([]);
     } finally {
       setLoadingTopActivations(false);
@@ -1381,7 +1429,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     featureIndex: number
   ) => {
     if (!saeComboId) {
-      alert('请先选择 SAE 组合');
+      alert('Please select an SAE combo first.');
       return;
     }
 
@@ -1446,10 +1494,13 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         // Reload circuit to get updated data
         await loadCircuit(selectedCircuit.circuit_id);
         
-        alert(`Feature L${layerForFeatureSelection} #${featureIndex} 已添加到 circuit${autoCreateEdges ? '（已自动创建边）' : ''}`);
+        alert(
+          `Feature L${layerForFeatureSelection} #${featureIndex} ` +
+          `has been added to the circuit${autoCreateEdges ? ' (edges auto-created)' : ''}`
+        );
       } else {
         // Create new circuit
-        const circuitInterpretation = prompt('请输入新 Circuit 的名称/解释:');
+        const circuitInterpretation = prompt('Please enter a name/interpretation for the new circuit:');
         if (!circuitInterpretation) {
           return; // User cancelled
         }
@@ -1469,11 +1520,11 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         await loadCircuit(newCircuit.circuit_id);
         await loadCircuits(); // Refresh circuit list
         
-        alert(`已创建新 Circuit: ${circuitInterpretation}`);
+        alert(`Created new circuit: ${circuitInterpretation}`);
       }
     } catch (err) {
       console.error('Failed to add feature to circuit:', err);
-      alert(`添加 Feature 失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`Failed to add feature: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [
     saeComboId,
@@ -1494,16 +1545,16 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
     componentType: "attn" | "mlp"
   ) => {
     if (!selectedCircuit) {
-      alert('请先选择一个 Circuit');
+      alert('Please select a circuit first.');
       return;
     }
 
     if (!saeComboId) {
-      alert('请先选择 SAE 组合');
+      alert('Please select an SAE combo first.');
       return;
     }
 
-    if (!confirm(`确定要从 Circuit 中删除 Feature L${layer} #${featureIndex} 吗？`)) {
+    if (!confirm(`Are you sure you want to remove Feature L${layer} #${featureIndex} from the circuit?`)) {
       return;
     }
 
@@ -1532,10 +1583,10 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       // Reload circuit to get updated data
       await loadCircuit(selectedCircuit.circuit_id);
       
-      alert(`Feature L${layer} #${featureIndex} 已从 circuit 中删除`);
+      alert(`Feature L${layer} #${featureIndex} has been removed from the circuit.`);
     } catch (err) {
       console.error('Failed to remove feature from circuit:', err);
-      alert(`删除 Feature 失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      alert(`Failed to remove feature: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [
     selectedCircuit,
@@ -1665,9 +1716,9 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
             <CardHeader>
               <CardTitle>Global Weight Analysis (Between Two Features)</CardTitle>
               <p className="text-sm text-gray-600 mt-2">
-                点击节点选择第一个特征，按住 Ctrl/Cmd 点击选择第二个特征
+                Click a node to select the first feature, then Ctrl/Cmd-click another node to select the second.
                 <br />
-                <em>选择两个节点后，还可以进行节点交互分析（查看因果影响）</em>
+                <em>After selecting two nodes, you can also run node interaction analysis (to inspect causal influence).</em>
               </p>
             </CardHeader>
             <CardContent>
@@ -1675,21 +1726,21 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 {/* Selected Features Display */}
                 <div className="space-y-2">
                   <div className="p-2 bg-blue-50 border border-blue-200 rounded">
-                    <p className="text-xs font-medium text-blue-900">Feature A (第一个):</p>
+                    <p className="text-xs font-medium text-blue-900">Feature A (first):</p>
                     <p className="text-sm text-blue-700">
-                      {selectedNode.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{selectedNode.data?.layer} #{selectedNode.data?.featureIndex}
+                      {selectedNode.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L{selectedNode.data?.layer} #{selectedNode.data?.featureIndex}
                     </p>
                   </div>
                   {selectedNode2 ? (
                     <div className="p-2 bg-green-50 border border-green-200 rounded">
-                      <p className="text-xs font-medium text-green-900">Feature B (第二个):</p>
+                      <p className="text-xs font-medium text-green-900">Feature B (second):</p>
                       <p className="text-sm text-green-700">
-                        {selectedNode2.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{selectedNode2.data?.layer} #{selectedNode2.data?.featureIndex}
+                        {selectedNode2.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L{selectedNode2.data?.layer} #{selectedNode2.data?.featureIndex}
                       </p>
                     </div>
                   ) : (
                     <div className="p-2 bg-gray-50 border border-gray-200 rounded">
-                      <p className="text-xs text-gray-500">按住 Ctrl/Cmd 点击另一个节点选择 Feature B</p>
+                      <p className="text-xs text-gray-500">Hold Ctrl/Cmd and click another node to select Feature B.</p>
                     </div>
                   )}
                 </div>
@@ -1698,7 +1749,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 <Button
                   onClick={() => {
                     if (!selectedNode2) {
-                      alert('请先选择第二个特征（按住 Ctrl/Cmd 点击节点）');
+                      alert('Please select the second feature (hold Ctrl/Cmd and click a node).');
                       return;
                     }
                     const nodeDataA = selectedNode.data;
@@ -1721,10 +1772,10 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                   {loadingGlobalWeights ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      {loadingMessage || '计算中...'}
+                      {loadingMessage || 'Computing...'}
                     </>
                   ) : (
-                    '计算两个特征之间的全局权重'
+                    'Compute global weight between the two features'
                   )}
                 </Button>
 
@@ -1738,36 +1789,36 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 {betweenFeaturesResult && (
                   <div className="space-y-3 mt-4">
                     <div className="p-3 bg-purple-50 border border-purple-200 rounded">
-                      <p className="text-sm font-medium text-purple-900 mb-2">分析结果:</p>
+                      <p className="text-sm font-medium text-purple-900 mb-2">Analysis result:</p>
                       <div className="space-y-2 text-sm">
                         <div>
                           <span className="font-medium">Feature A → Feature B:</span>
                           {betweenFeaturesResult.rankBInA !== null ? (
                             <span className="ml-2">
-                              在 Feature A 的 <strong>features_out</strong> 中排名 <strong className="text-purple-700">#{betweenFeaturesResult.rankBInA}</strong>
+                              Ranked in Feature A's <strong>features_out</strong> as <strong className="text-purple-700">#{betweenFeaturesResult.rankBInA}</strong>
                               {betweenFeaturesResult.weightBInA !== null && (
                                 <span className="ml-2 text-gray-600">
-                                  (权重: {betweenFeaturesResult.weightBInA.toFixed(6)})
+                                  (weight: {betweenFeaturesResult.weightBInA.toFixed(6)})
                                 </span>
                               )}
                             </span>
                           ) : (
-                            <span className="ml-2 text-gray-500">未在 Top 100 中找到</span>
+                            <span className="ml-2 text-gray-500">Not found in Top 100</span>
                           )}
                         </div>
                         <div>
                           <span className="font-medium">Feature B ← Feature A:</span>
                           {betweenFeaturesResult.rankAInB !== null ? (
                             <span className="ml-2">
-                              在 Feature B 的 <strong>features_in</strong> 中排名 <strong className="text-purple-700">#{betweenFeaturesResult.rankAInB}</strong>
+                              Ranked in Feature B's <strong>features_in</strong> as <strong className="text-purple-700">#{betweenFeaturesResult.rankAInB}</strong>
                               {betweenFeaturesResult.weightAInB !== null && (
                                 <span className="ml-2 text-gray-600">
-                                  (权重: {betweenFeaturesResult.weightAInB.toFixed(6)})
+                                  (weight: {betweenFeaturesResult.weightAInB.toFixed(6)})
                                 </span>
                               )}
                             </span>
                           ) : (
-                            <span className="ml-2 text-gray-500">未在 Top 100 中找到</span>
+                            <span className="ml-2 text-gray-500">Not found in Top 100</span>
                           )}
                         </div>
                       </div>
@@ -1836,7 +1887,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                           />
                         ) : (
                           <div className="text-center text-gray-400 text-sm py-4">
-                            无效的FEN字符串
+                            Invalid FEN string
                           </div>
                         )}
                       </div>
@@ -1844,7 +1895,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                   </div>
                 ) : (
                   <div className="text-center text-gray-500 py-4">
-                    {loadingTopActivations ? '加载中...' : '未找到包含棋盘的激活样本'}
+                    {loadingTopActivations ? 'Loading...' : 'No activation samples with valid chess positions were found.'}
                   </div>
                 )}
               </div>
@@ -1963,15 +2014,15 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                   size="sm"
                 >
                   <Trash2 className="w-4 h-4 mr-2" />
-                  从Circuit删除
+                  Remove from circuit
                 </Button>
               </div>
 
               <div className="text-xs text-gray-600 bg-blue-50 p-2 rounded border">
-                💡 <strong>提示：</strong>选择两个节点来进行交互分析：
-                <br />1. 点击选择第一个节点（steering节点）
-                <br />2. 按住 Ctrl/Cmd 点击选择第二个节点（target节点）
-                <br />3. 然后可以使用"节点交互分析"功能
+                💡 <strong>Tip:</strong> Select two nodes to run interaction analysis:
+                <br />1. Click to select the first node (steering node)
+                <br />2. Hold Ctrl/Cmd and click to select the second node (target node)
+                <br />3. Then you can use the "Node Interaction Analysis" function
               </div>
             </div>
           </CardContent>
@@ -1981,10 +2032,10 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       {/* Feature Selection from FEN */}
       <Card>
         <CardHeader>
-          <CardTitle>从 FEN 添加 Feature 到 Circuit</CardTitle>
+          <CardTitle>Add Feature from FEN to Circuit</CardTitle>
           <p className="text-sm text-gray-600">
-            选择 FEN、层、位置和组件类型，然后选择要添加的 feature
-            {selectedCircuit ? `（将添加到当前 circuit: ${selectedCircuit.circuit_interpretation}）` : '（将创建新 circuit）'}
+            Choose FEN, layer, position, and component type, then pick a feature to add.
+            {selectedCircuit ? ` (will be added to current circuit: ${selectedCircuit.circuit_interpretation})` : ' (a new circuit will be created)'}
           </p>
         </CardHeader>
         <CardContent>
@@ -1992,7 +2043,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
             {/* FEN and position configuration */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="fen-for-feature">FEN 字符串</Label>
+                <Label htmlFor="fen-for-feature">FEN string</Label>
                 <Input
                   id="fen-for-feature"
                   value={fenForFeatureSelection}
@@ -2002,7 +2053,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="layer-for-feature">层 (Layer)</Label>
+                <Label htmlFor="layer-for-feature">Layer</Label>
                 <Input
                   id="layer-for-feature"
                   type="number"
@@ -2014,7 +2065,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="position-for-feature">位置 (Position)</Label>
+                <Label htmlFor="position-for-feature">Position</Label>
                 <Input
                   id="position-for-feature"
                   type="number"
@@ -2026,14 +2077,14 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="component-type-for-feature">组件类型</Label>
+                <Label htmlFor="component-type-for-feature">Component type</Label>
                 <select
                   id="component-type-for-feature"
                   value={componentTypeForFeatureSelection}
                   onChange={(e) => setComponentTypeForFeatureSelection(e.target.value as "attn" | "mlp")}
                   className="w-full p-2 border rounded bg-white"
                 >
-                  <option value="attn">Attention (LoRSA)</option>
+                  <option value="attn">Attention (Lorsa)</option>
                   <option value="mlp">MLP (Transcoder)</option>
                 </select>
               </div>
@@ -2049,7 +2100,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 className="w-4 h-4"
               />
               <Label htmlFor="auto-create-edges" className="text-sm">
-                自动为新添加的 feature 创建边（连接到现有 features，权重为 0）
+                Automatically create edges for the new feature (connect to existing features with weight 0)
               </Label>
             </div>
 
@@ -2064,7 +2115,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 saeComboId={saeComboId}
                 actionTypes={["add_to_steer"]}
                 actionButtonLabels={{
-                  add_to_steer: selectedCircuit ? "加入Circuit" : "创建Circuit",
+                  add_to_steer: selectedCircuit ? "Add to circuit" : "Create circuit",
                 }}
                 showTopActivations={false}
                 showFenActivations={false}
@@ -2076,7 +2127,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                 className="border-0 shadow-none" // Remove card styling since it's inside another card
               />
               <div className="mt-2 text-xs text-gray-500">
-                💡 点击 feature 列表中的"{selectedCircuit ? "加入Circuit" : "创建Circuit"}"按钮将 feature {selectedCircuit ? "添加到当前 circuit" : "创建新 circuit"}
+                💡 Click the "{selectedCircuit ? "Add to circuit" : "Create circuit"}" button in the feature list to {selectedCircuit ? "add the feature to the current circuit" : "create a new circuit with the feature"}.
               </div>
             </div>
           </div>
@@ -2096,7 +2147,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
             <div className="space-y-4">
               {/* Selection Mode Toggle */}
               <div className="flex items-center space-x-4 p-3 bg-gray-50 rounded border">
-                <Label className="text-sm font-medium">选择模式:</Label>
+                <Label className="text-sm font-medium">Selection mode:</Label>
                 <Button
                   onClick={() => {
                     setNodeSelectionMode("steering");
@@ -2108,7 +2159,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                   variant={nodeSelectionMode === "steering" ? "default" : "outline"}
                   size="sm"
                 >
-                  选择 Steering Nodes
+                  Select steering nodes
                 </Button>
                 <Button
                   onClick={() => {
@@ -2121,7 +2172,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                   variant={nodeSelectionMode === "target" ? "default" : "outline"}
                   size="sm"
                 >
-                  选择 Target Nodes
+                  Select target nodes
                 </Button>
                 <Button
                   onClick={() => {
@@ -2134,13 +2185,13 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                   variant="outline"
                   size="sm"
                 >
-                  取消选择模式
+                  Clear selection mode
                 </Button>
               </div>
 
               {/* FEN Display with ChessBoard */}
               <div className="space-y-2">
-                <Label htmlFor="interaction-fen" className="text-sm font-medium">FEN (用于前向传播):</Label>
+                <Label htmlFor="interaction-fen" className="text-sm font-medium">FEN (for forward pass):</Label>
                 <Input
                   id="interaction-fen"
                   type="text"
@@ -2150,7 +2201,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                     // Clear activations when FEN changes
                     setNodeActivations(new Map());
                   }}
-                  placeholder={selectedCircuit ? `默认: ${(selectedCircuit as any).original_fen || '无'}` : '输入 FEN 字符串'}
+                  placeholder={selectedCircuit ? `Default: ${(selectedCircuit as any).original_fen || 'N/A'}` : 'Enter a FEN string'}
                   className="w-full"
                 />
                 {selectedCircuit && (selectedCircuit as any).original_fen && (
@@ -2163,7 +2214,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                     size="sm"
                     className="text-xs"
                   >
-                    使用 Circuit 的 FEN
+                    Use circuit FEN
                   </Button>
                 )}
                 {interactionFen && (
@@ -2181,7 +2232,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
               <div className="space-y-2">
                 <div className="p-2 bg-blue-50 border border-blue-200 rounded">
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs font-medium text-blue-900">Steering Nodes ({selectedSteeringNodeIds.size > 0 ? selectedSteeringNodeIds.size : (selectedNodeId ? 1 : 0)}):</p>
+                    <p className="text-xs font-medium text-blue-900">Steering nodes ({selectedSteeringNodeIds.size > 0 ? selectedSteeringNodeIds.size : (selectedNodeId ? 1 : 0)}):</p>
                     {selectedSteeringNodeIds.size > 0 && (
                       <Button
                         onClick={() => {
@@ -2192,7 +2243,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                         size="sm"
                         className="h-6 px-2 text-xs"
                       >
-                        清空
+                        Clear
                       </Button>
                     )}
                   </div>
@@ -2207,7 +2258,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                           <div key={id} className="flex flex-col gap-2 text-sm text-blue-700 bg-white p-2 rounded border border-blue-200">
                             <div className="flex items-center justify-between">
                               <span className="font-medium">
-                                {node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{node.data?.layer} #{node.data?.featureIndex}
+                                {node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L{node.data?.layer} #{node.data?.featureIndex}
                               </span>
                               <Button
                                 onClick={(e) => {
@@ -2273,13 +2324,13 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                                   {isLoading ? (
                                     <Loader2 className="w-3 h-3 animate-spin" />
                                   ) : (
-                                    '获取激活值'
+                                    'Get activation'
                                   )}
                                 </Button>
                               )}
                               {activation !== undefined && (
                                 <span className={`text-xs font-medium ${activation === 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                  激活值: {activation.toFixed(4)}
+                                  Activation: {activation.toFixed(4)}
                                 </span>
                               )}
                             </div>
@@ -2294,7 +2345,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                           <span className="text-sm text-blue-700">
                     {(() => {
                       const node = nodes.find(n => n.id === selectedNodeId);
-                      return node ? `${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}` : 'Unknown';
+                      return node ? `${node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}` : 'Unknown';
                     })()}
                           </span>
                         </div>
@@ -2335,25 +2386,25 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                               {loadingActivations.has(selectedNodeId) ? (
                                 <Loader2 className="w-3 h-3 animate-spin" />
                               ) : (
-                                '获取激活值'
+                                    'Get activation'
                               )}
                             </Button>
                           )}
                           {nodeActivations.get(selectedNodeId) !== undefined && (
                             <span className={`text-xs font-medium ${nodeActivations.get(selectedNodeId) === 0 ? 'text-red-600' : 'text-green-600'}`}>
-                              激活值: {nodeActivations.get(selectedNodeId)!.toFixed(4)}
+                              Activation: {nodeActivations.get(selectedNodeId)!.toFixed(4)}
                             </span>
                           )}
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-gray-500">点击"选择 Steering Nodes"按钮，然后点击图中的节点进行选择（再次点击可取消选择）</p>
+                    <p className="text-xs text-gray-500">Click "Select steering nodes", then click nodes in the graph to select them (click again to deselect).</p>
                   )}
                 </div>
                 <div className="p-2 bg-green-50 border border-green-200 rounded">
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs font-medium text-green-900">Target Nodes ({selectedTargetNodeIds.size > 0 ? selectedTargetNodeIds.size : (selectedNodeId2 ? 1 : 0)}):</p>
+                    <p className="text-xs font-medium text-green-900">Target nodes ({selectedTargetNodeIds.size > 0 ? selectedTargetNodeIds.size : (selectedNodeId2 ? 1 : 0)}):</p>
                     {selectedTargetNodeIds.size > 0 && (
                       <Button
                         onClick={() => {
@@ -2364,7 +2415,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                         size="sm"
                         className="h-6 px-2 text-xs"
                       >
-                        清空
+                        Clear
                       </Button>
                     )}
                   </div>
@@ -2379,7 +2430,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                           <div key={id} className="flex flex-col gap-2 text-sm text-green-700 bg-white p-2 rounded border border-green-200">
                             <div className="flex items-center justify-between">
                               <span className="font-medium">
-                                {node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L{node.data?.layer} #{node.data?.featureIndex}
+                                {node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L{node.data?.layer} #{node.data?.featureIndex}
                               </span>
                               <Button
                                 onClick={(e) => {
@@ -2445,13 +2496,13 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                                   {isLoading ? (
                                     <Loader2 className="w-3 h-3 animate-spin" />
                                   ) : (
-                                    '获取激活值'
+                                    'Get activation'
                                   )}
                                 </Button>
                               )}
                               {activation !== undefined && (
                                 <span className={`text-xs font-medium ${activation === 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                  激活值: {activation.toFixed(4)}
+                                  Activation: {activation.toFixed(4)}
                                 </span>
                               )}
                             </div>
@@ -2466,7 +2517,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                           <span className="text-sm text-green-700">
                     {(() => {
                       const node = nodes.find(n => n.id === selectedNodeId2);
-                      return node ? `${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}` : 'Unknown';
+                      return node ? `${node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}` : 'Unknown';
                     })()}
                           </span>
                 </div>
@@ -2507,33 +2558,33 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                               {loadingActivations.has(selectedNodeId2) ? (
                                 <Loader2 className="w-3 h-3 animate-spin" />
                               ) : (
-                                '获取激活值'
+                                'Get activation'
                               )}
                             </Button>
                           )}
                           {nodeActivations.get(selectedNodeId2) !== undefined && (
                             <span className={`text-xs font-medium ${nodeActivations.get(selectedNodeId2) === 0 ? 'text-red-600' : 'text-green-600'}`}>
-                              激活值: {nodeActivations.get(selectedNodeId2)!.toFixed(4)}
+                              Activation: {nodeActivations.get(selectedNodeId2)!.toFixed(4)}
                             </span>
                           )}
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-gray-500">点击"选择 Target Nodes"按钮，然后点击图中的节点进行选择（再次点击可取消选择）</p>
+                    <p className="text-xs text-gray-500">Click "Select target nodes", then click nodes in the graph to select them (click again to deselect).</p>
                   )}
                 </div>
               </div>
 
               {/* FEN Input */}
               <div className="space-y-2">
-                <Label htmlFor="interaction-fen" className="text-sm font-medium">FEN (用于前向传播，留空则使用 Circuit 的 FEN):</Label>
+                <Label htmlFor="interaction-fen" className="text-sm font-medium">FEN (for forward pass, leave empty to use circuit FEN):</Label>
                 <Input
                   id="interaction-fen"
                   type="text"
                   value={interactionFen}
                   onChange={(e) => setInteractionFen(e.target.value)}
-                  placeholder={selectedCircuit ? `默认: ${(selectedCircuit as any).original_fen || '无'}` : '输入 FEN 字符串'}
+                  placeholder={selectedCircuit ? `Default: ${(selectedCircuit as any).original_fen || 'N/A'}` : 'Enter a FEN string'}
                   className="w-full"
                 />
                 {selectedCircuit && (selectedCircuit as any).original_fen && (
@@ -2543,7 +2594,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
                     size="sm"
                     className="text-xs"
                   >
-                    使用 Circuit 的 FEN
+                    Use circuit FEN
                   </Button>
                 )}
               </div>

@@ -420,7 +420,7 @@ def load_model_and_transcoders(
         lorsas = _global_lorsas_cache[cache_key]
         
         # 加载LORSA（逐层检查，避免重复加载）
-        add_log(f"🔍 开始加载LoRSAs，共{n_layers}层...")
+        add_log(f"🔍 开始加载Lorsas，共{n_layers}层...")
         for layer in range(n_layers):
             # 检查是否应该中断加载
             if cancel_flag is not None:
@@ -430,16 +430,16 @@ def load_model_and_transcoders(
                 else:
                     should_cancel = cancel_flag.get("should_cancel", False)
                 if should_cancel:
-                    add_log(f"🛑 加载被中断（LoRSA Layer {layer}/{n_layers-1}）")
+                    add_log(f"🛑 加载被中断（Lorsa Layer {layer}/{n_layers-1}）")
                     raise InterruptedError("加载被用户中断")
             
             # 检查该层是否已经加载
             if layer < len(lorsas):
-                add_log(f"  [LoRSA Layer {layer}/{n_layers-1}] ✅ 已缓存，跳过加载")
+                add_log(f"  [Lorsa Layer {layer}/{n_layers-1}] ✅ 已缓存，跳过加载")
                 continue
             
             lorsa_path = f"{lorsa_base_path}/L{layer}"
-            add_log(f"  [LoRSA Layer {layer}/{n_layers-1}] 开始加载: {lorsa_path}")
+            add_log(f"  [Lorsa Layer {layer}/{n_layers-1}] 开始加载: {lorsa_path}")
             logger.info(f"📁 加载LORSA L{layer}: {lorsa_path}")
             start_time = time.time()
             lorsas.append(LowRankSparseAttention.from_pretrained(
@@ -447,9 +447,9 @@ def load_model_and_transcoders(
                 device=device
             ))
             load_time = time.time() - start_time
-            add_log(f"  [LoRSA Layer {layer}/{n_layers-1}] ✅ 加载完成，耗时: {load_time:.2f}秒")
+            add_log(f"  [Lorsa Layer {layer}/{n_layers-1}] ✅ 加载完成，耗时: {load_time:.2f}秒")
         
-        add_log(f"✅ 所有LoRSAs加载完成，共{len(lorsas)}层")
+        add_log(f"✅ 所有Lorsas加载完成，共{len(lorsas)}层")
         
         # 创建替换模型
         add_log("🔍 创建ReplacementModel...")
@@ -919,7 +919,7 @@ def run_circuit_trace(
             # 直接从配置中读取analysis_name字段（如果存在），否则回退到模板字段
             lorsa_analysis_name = combo_cfg.get("lorsa_analysis_name", combo_cfg.get("lorsa_sae_name_template", ""))
             tc_analysis_name = combo_cfg.get("tc_analysis_name", combo_cfg.get("tc_sae_name_template", ""))
-            logger.info(f"使用SAE组合 {combo_cfg['id']} 的analysis_name: LoRSA={lorsa_analysis_name}, TC={tc_analysis_name}")
+            logger.info(f"使用SAE组合 {combo_cfg['id']} 的analysis_name: Lorsa={lorsa_analysis_name}, TC={tc_analysis_name}")
         except Exception as e:
             logger.warning(f"无法获取SAE组合配置，使用空字符串: {e}")
             import traceback
@@ -1124,7 +1124,7 @@ def check_dense_features(
         threshold: 激活次数阈值，None表示无限大（所有节点都不是dense）
         mongo_client: MongoDB客户端
         sae_series: SAE系列名称
-        lorsa_analysis_name: LoRSA分析名称模板（如 ""）
+        lorsa_analysis_name: Lorsa分析名称模板（如 ""）
         tc_analysis_name: TC分析名称模板（如 "BT4_tc_L{}M"）BT4_lorsa_L{}A
     
     Returns:

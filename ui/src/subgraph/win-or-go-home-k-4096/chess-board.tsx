@@ -10,33 +10,33 @@ interface ChessBoardProps {
   contextId?: number;
   size?: 'small' | 'medium' | 'large';
   showCoordinates?: boolean;
-  move?: string; // 移动字符串，如 "a2a4"
-  orientation?: 'white' | 'black' | 'auto'; // 方向覆盖
-  flip_activation?: boolean; // 控制激活值是否翻转
-  onMove?: (move: string) => void; // 新增：移动回调
-  onSquareClick?: (square: string) => void; // 新增：格子点击回调
-  isInteractive?: boolean; // 新增：是否允许交互
-  autoFlipWhenBlack?: boolean; // 新增：到黑方行棋时自动翻转
-  moveColor?: string; // 新增：箭头颜色（与节点颜色一致）
+  move?: string; // move string, like "a2a4"
+  orientation?: 'white' | 'black' | 'auto'; // direction cover
+  flip_activation?: boolean; // control whether to flip activation value
+  onMove?: (move: string) => void; // new: move callback
+  onSquareClick?: (square: string) => void; // new: square click callback
+  isInteractive?: boolean; // new: whether to allow interaction
+  autoFlipWhenBlack?: boolean; // new: automatically flip when black to move
+  moveColor?: string; // new: arrow color (same as node color)
 }
 
-// 棋子Unicode符号映射
+// chess piece Unicode symbol mapping
 const PIECE_SYMBOLS: { [key: string]: string } = {
-  'K': '♔', // 白王
-  'Q': '♕', // 白后
-  'R': '♖', // 白车
-  'B': '♗', // 白象
-  'N': '♘', // 白马
-  'P': '♙', // 白兵
-  'k': '♚', // 黑王
-  'q': '♛', // 黑后
-  'r': '♜', // 黑车
-  'b': '♝', // 黑象
-  'n': '♞', // 黑马
-  'p': '♟', // 黑兵
+  'K': '♔', // white king
+  'Q': '♕', // white queen
+  'R': '♖', // white rook
+  'B': '♗', // white bishop
+  'N': '♘', // white knight
+  'P': '♙', // white pawn
+  'k': '♚', // black king
+  'q': '♛', // black queen
+  'r': '♜', // black rook
+  'b': '♝', // black bishop
+  'n': '♞', // black knight
+  'p': '♟', // black pawn
 };
 
-// FEN字符串解析函数
+// FEN string parsing function
 const parseFEN = (fen: string) => {
   const parts = fen.trim().split(' ');
   if (parts.length < 4) {
@@ -50,7 +50,7 @@ const parseFEN = (fen: string) => {
     throw new Error('Invalid board configuration in FEN');
   }
 
-  // 将FEN转换为8x8数组
+  // convert FEN to 8x8 array
   const board: (string | null)[][] = [];
   
   for (let i = 0; i < 8; i++) {
@@ -59,13 +59,13 @@ const parseFEN = (fen: string) => {
     
     for (const char of rowStr) {
       if (/\d/.test(char)) {
-        // 数字表示空格数量
+        // numbers represent the number of empty squares
         const emptySquares = parseInt(char);
         for (let j = 0; j < emptySquares; j++) {
           row.push(null);
         }
       } else {
-        // 棋子字符
+        // chess piece characters
         row.push(char);
       }
     }
@@ -82,33 +82,33 @@ const parseFEN = (fen: string) => {
   };
 };
 
-// 将行列坐标转换为线性索引 (0-63)
+// convert row and column coordinates to linear index (0-63)
 const getSquareIndex = (row: number, col: number): number => {
   return row * 8 + col;
 };
 
-// 获取激活强度的颜色
+// get the color of activation strength
 const getActivationColor = (activation: number): string => {
   if (activation === 0) return 'transparent';
   
-  // 激活值统一用红色表示，根据强度调整透明度
+  // activation value is represented by red, adjust opacity based on strength
   const intensity = Math.min(Math.abs(activation), 1);
   const opacity = Math.max(0.4, intensity);
   
-  return `rgba(239, 68, 68, ${opacity})`; // 红色表示激活
+  return `rgba(239, 68, 68, ${opacity})`; // red represents activation
 };
 
-// 获取Z模式的目标格子 - 只显示最强的几个连接
+// get the target squares of Z pattern - only display the strongest few connections
 const getZPatternTargets = (sourceSquare: number, zPatternIndices?: number[][], zPatternValues?: number[]) => {
   if (!zPatternIndices || !zPatternValues) return [];
   
   const targets: { square: number; strength: number }[] = [];
   
-  // 检查数据格式 - 参考feature page逻辑
+  // check data format - reference feature page logic
   const looksLikePairList = Array.isArray(zPatternIndices[0]) && (zPatternIndices[0] as number[]).length === 2;
   
   if (looksLikePairList) {
-    // 格式：[[source, target], ...] 对应 [value, ...]
+    // format: [[source, target], ...] corresponds to [value, ...]
     for (let i = 0; i < zPatternIndices.length; i++) {
       const pair = zPatternIndices[i] as number[];
       const value = zPatternValues[i] || 0;
@@ -119,12 +119,11 @@ const getZPatternTargets = (sourceSquare: number, zPatternIndices?: number[][], 
       }
     }
   } else {
-    // 格式：zPatternIndices[0]为源位置数组，zPatternIndices[1]为目标位置数组
+    // format: zPatternIndices[0] is the source position array, zPatternIndices[1] is the target position array
     if (zPatternIndices.length >= 2) {
       const sources = zPatternIndices[0] as number[];
       const targets_array = zPatternIndices[1] as number[];
       
-      // 遍历所有连接
       for (let i = 0; i < Math.min(sources.length, targets_array.length, zPatternValues.length); i++) {
         const source = sources[i];
         const target = targets_array[i];
@@ -137,13 +136,13 @@ const getZPatternTargets = (sourceSquare: number, zPatternIndices?: number[][], 
     }
   }
   
-  // 只返回绝对值最大的前8个连接（参考feature页面逻辑）
+  // only return the top 8 connections by absolute strength (reference feature page logic)    
   return targets
     .sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))
     .slice(0, 8);
 };
 
-// 解析象棋移动字符串
+// parse chess move string
 const parseMove = (move: string) => {
   if (!move || move.length < 4) return null;
   
@@ -189,20 +188,20 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   autoFlipWhenBlack = false,
   moveColor,
 }) => {
-  // 一行精简日志：直接打印用于显示的数据结构
+  // a concise log: directly print the data structure for display
   console.log(`[CB#${sampleIndex ?? 'NA'}] activations:`, activations);
   console.log(`[CB#${sampleIndex ?? 'NA'}] zPatternIndices:`, zPatternIndices);
   console.log(`[CB#${sampleIndex ?? 'NA'}] zPatternValues:`, zPatternValues);
 
-  // Hover状态管理
+  // hover state management
   const [hoveredSquare, setHoveredSquare] = useState<number | null>(null);
   
-  // 新增：点击选择状态管理
+  // new: click selection state management
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
   const [possibleMoves, setPossibleMoves] = useState<string[]>([]);
   const [boardEvaluation, setBoardEvaluation] = useState<number[] | null>(null);
 
-  // 修改handleAnalyze函数，移除JSON.stringify中对象的尾随逗号
+  // modify handleAnalyze function, remove trailing comma in JSON.stringify
   const handleAnalyze = async () => {
     try {
       const res = await fetch("/analyze/board", {
@@ -213,11 +212,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       const data = await res.json();
       setBoardEvaluation(data.evaluation);
     } catch (error) {
-      console.error("分析局面失败", error);
+      console.error("Failed to analyze position:", error);
     }
   };
 
-  // 在状态声明区域之后添加 useEffect 来自动调用 handleAnalyze，当 fen 变化时触发
+  // add useEffect to automatically call handleAnalyze, triggered when fen changes
   useEffect(() => {
     handleAnalyze();
   }, [fen]);
@@ -234,41 +233,41 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   if (!parsedBoard) {
     return (
       <div className="p-4 border border-red-200 rounded-lg bg-red-50">
-        <p className="text-red-700 text-sm">无效的FEN格式: {fen}</p>
+        <p className="text-red-700 text-sm">Invalid FEN format: {fen}</p>
       </div>
     );
   }
 
   const { board, isWhiteToMove } = parsedBoard;
 
-  // 黑方行棋时翻转棋盘显示（受开关控制）
+  // flip board when black to move (controlled by switch)
   const flip = autoFlipWhenBlack ? !isWhiteToMove : false;
 
-  // 根据 flip 决定是否翻转棋盘
+  // determine whether to flip board based on flip
   const displayBoard = useMemo(() => {
     return flip ? [...board].reverse() : board;
   }, [board, flip]);
 
-  // 解析移动信息
+  // parse move information
   const parsedMove = useMemo(() => {
     return move ? parseMove(move) : null;
   }, [move]);
 
-  // 根据显示位置计算实际的squareIndex（考虑翻转）
+  // calculate actual square index based on display position (considering flip)
   const getActualSquareIndex = (displayRow: number, col: number): number => {
     const actualRow = flip ? (7 - displayRow) : displayRow;
     return getSquareIndex(actualRow, col);
   };
 
-  // 激活值索引映射 - 始终保持在原始绝对位置，不受翻转影响
+  // activation index mapping
   const getActivationIndex = (displayRow: number, col: number): number => {
-    // 将显示行转换回原始棋盘行（如果棋盘被翻转）
+    // convert display row back to original board row (if board is flipped)
     const originalRow = flip_activation ? (7 - displayRow) : displayRow;
-    // 激活值始终使用原始位置索引
+    // activation value always uses original position index
     return originalRow * 8 + col;
   };
 
-  // 根据实际squareIndex计算显示位置（用于箭头绘制）
+  // calculate display position based on actual square index (for arrow drawing)
   const getDisplayPosition = (actualSquareIndex: number) => {
     const actualRow = Math.floor(actualSquareIndex / 8);
     const col = actualSquareIndex % 8;
@@ -276,7 +275,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     return { row: displayRow, col };
   };
 
-  // 新增：根据棋盘朝向(flip)计算显示位置（用于棋盘元素/箭头对齐棋盘格子）
+  // new: calculate display position based on board orientation (flip) for board elements/arrows aligning with board squares
   const getBoardDisplayPosition = (actualSquareIndex: number) => {
     const actualRow = Math.floor(actualSquareIndex / 8);
     const col = actualSquareIndex % 8;
@@ -284,64 +283,59 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
     return { row: displayRow, col };
   };
 
-  // Z模式和激活值的显示位置映射 - 始终保持在原始绝对位置
+  // Z pattern and activation value display position mapping
   const getDisplayPositionFromActivationIndex = (activationIndex: number) => {
     const originalRow = Math.floor(activationIndex / 8);
     const col = activationIndex % 8;
     
-    // 根据棋盘是否翻转来确定显示行，但激活值索引本身不变
+    // determine display row based on whether board is flipped, but activation index itself remains unchanged
     const displayRow = flip_activation ? (7 - originalRow) : originalRow;
     return { row: displayRow, col };
   };
-
-  // 根据显示行索引获取棋盘行号（1-8）
   const getDisplayRowNumber = (displayRowIndex: number) => {
-    // 不管是否翻转，显示行0始终对应最上面一行，应该显示最大的行号
     return 8 - displayRowIndex;
   };
 
-  // 统一的 从索引到标准坐标的命名（不依赖行棋方）
   const getSquareNameFromActivationIndex = (activationIndex: number) => {
     const activationRow = Math.floor(activationIndex / 8);
     const col = activationIndex % 8;
     return `${String.fromCharCode(97 + col)}${8 - activationRow}`;
   };
 
-  // 新增：处理格子点击
   const handleSquareClick = (activationIndex: number, displayRow: number, col: number) => {
     if (!isInteractive) return;
     
     const squareName = getSquareNameFromActivationIndex(activationIndex);
-    console.log('点击格子:', squareName, '激活索引:', activationIndex);
+    console.log('Click square:', squareName, 'activation index:', activationIndex);
     
     if (selectedSquare === null) {
-      // 第一次点击：选择起点
+      // first click: select start square
       setSelectedSquare(activationIndex);
       setPossibleMoves([]);
       onSquareClick?.(squareName);
-      console.log('选择起点:', squareName);
+      console.log('Select start square:', squareName);
     } else if (selectedSquare === activationIndex) {
-      // 点击同一格子：取消选择
+      // click on the same square: cancel selection
       setSelectedSquare(null);
       setPossibleMoves([]);
-      console.log('取消选择');
+      console.log('Cancel selection');
     } else {
-      // 第二次点击：尝试移动
+      // second click: try to move
       const fromSquare = getSquareNameFromActivationIndex(selectedSquare);
       const moveString = `${fromSquare}${squareName}`;
       
-      console.log('尝试移动:', moveString);
+      console.log('Try to move:', moveString);
       
-      // 调用移动回调
+      // call move callback
       onMove?.(moveString);
       
-      // 清除选择状态
+      // clear selection state
       setSelectedSquare(null);
       setPossibleMoves([]);
     }
   };
 
-  // 根据尺寸设置样式
+  // set styles based on size
   const sizeClasses = {
     small: 'w-64 h-64',
     medium: 'w-80 h-80',
@@ -367,35 +361,35 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   } as const;
   const boardPx = squareSizePxMap[size] * 8;
 
-  // 获取当前hover格子的Z模式目标
+  // get Z pattern targets for hovered square
   const zPatternTargets = hoveredSquare !== null ? getZPatternTargets(hoveredSquare, zPatternIndices, zPatternValues) : [];
 
   return (
     <div className="flex flex-col items-center space-y-2">
-      {/* 棋盘信息 */}
+      {/* board information */}
       <div className="text-sm text-gray-600 text-center">
         {sampleIndex !== undefined && (
-          <div>样本 #{sampleIndex}</div>
+          <div>Sample #{sampleIndex}</div>
         )}
         {analysisName && (
-          <div>分析: {analysisName}</div>
+          <div>Analysis: {analysisName}</div>
         )}
         <div className="mt-1">
           <span className={`inline-block w-3 h-3 rounded-full mr-1 ${
             isWhiteToMove ? 'bg-white border-2 border-gray-800' : 'bg-gray-800'
           }`}></span>
-          {isWhiteToMove ? '白方行棋' : '黑方行棋'}
+          {isWhiteToMove ? 'White to move' : 'Black to move'}
         </div>
         {isInteractive && selectedSquare !== null && (
           <div className="mt-1 text-blue-600 font-medium">
-            已选择: {getSquareNameFromActivationIndex(selectedSquare)}
+            Selected: {getSquareNameFromActivationIndex(selectedSquare)}
           </div>
         )}
       </div>
 
-      {/* 棋盘容器 */}
+      {/* Board container */}
       <div className={`relative ${sizeClasses[size]} border-4 border-gray-800 rounded-lg overflow-hidden shadow-lg`}>
-        {/* 棋盘网格 */}
+        {/* Board grid */}
         <div className="w-full h-full grid grid-cols-8 grid-rows-8">
           {displayBoard.map((row, displayRowIndex) =>
             row.map((_, colIndex) => {
@@ -406,48 +400,48 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               const activation = activations?.[activationIndex] || 0;
               const activationColor = getActivationColor(activation);
               
-              // 检查当前格子是否是hover格子的Z模式目标
+              // Check whether this square is a Z-pattern target of the hovered square
               const isZPatternTarget = zPatternTargets.some(target => target.square === activationIndex);
               const targetStrength = zPatternTargets.find(target => target.square === activationIndex)?.strength || 0;
               
-              // 检查是否为移动的起点或终点
+              // Check whether this is the move's from/to square
               const isMoveFromSquare = parsedMove && parsedMove.from.index === squareIndex;
               const isMoveToSquare = parsedMove && parsedMove.to.index === squareIndex;
               
-              // 新增：检查是否为选中的格子
+              // Check whether this is the selected square
               const isSelectedSquare = selectedSquare === activationIndex;
               
-              // 获取基础背景色
+              // Base background color
               const baseColor = isLight ? 'bg-amber-100' : 'bg-amber-800';
               
-              // 确定最终背景色
+              // Determine final background color
               let finalBackgroundColor;
-              const isSourceSquare = hoveredSquare === activationIndex; // 当前格子是否为源格子
+              const isSourceSquare = hoveredSquare === activationIndex; // whether this is the source square
               
               if (isSelectedSquare) {
-                // 选中的格子用蓝色高亮
+                // Selected square highlighted in blue
                 finalBackgroundColor = 'rgba(59, 130, 246, 0.8)'; // blue-500 with opacity
               } else if (isMoveFromSquare) {
-                // 移动起点使用moveColor
+                // Move start square uses moveColor
                 finalBackgroundColor = (moveColor || 'rgba(34, 197, 94, 0.7)');
               } else if (isMoveToSquare) {
-                // 移动终点使用更深的同色系
+                // Move end square uses a darker shade of the same color
                 finalBackgroundColor = (moveColor || 'rgba(22, 163, 74, 0.8)');
               } else if (isZPatternTarget) {
-                // Z模式目标格子根据强度使用不同颜色 - 参考feature页面逻辑
+                // Z-pattern target squares use different colors based on strength (mirroring feature page)
                 const absStrength = Math.abs(targetStrength);
-                const normalizedStrength = Math.min(absStrength / 0.01, 1); // 归一化到[0,1]
+                const normalizedStrength = Math.min(absStrength / 0.01, 1); // normalize to [0,1]
                 const opacity = Math.max(0.3, normalizedStrength * 0.7 + 0.3);
                 
                 if (targetStrength > 0) {
-                  // 正值用蓝色
+                  // Positive connections in blue
                   finalBackgroundColor = `rgba(59, 130, 246, ${opacity})`;
                 } else {
-                  // 负值用橙色/红色
+                  // Negative connections in orange/red
                   finalBackgroundColor = `rgba(249, 115, 22, ${opacity})`;
                 }
               } else if (activationColor !== 'transparent' && !isSourceSquare && hoveredSquare === null) {
-                // 只有在未悬停任何格子时才显示激活红色高亮
+                // Only show activation highlight when no square is hovered
                 finalBackgroundColor = activationColor;
               }
               
@@ -467,7 +461,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     backgroundColor: finalBackgroundColor,
                   }}
                   onMouseEnter={() => {
-                    // 只有激活值不为0的格子才响应hover
+                    // Only squares with non-zero activation respond to hover
                     if (activation !== 0) {
                       setHoveredSquare(activationIndex);
                     }
@@ -477,18 +471,18 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   }}
                   onClick={() => handleSquareClick(activationIndex, displayRowIndex, colIndex)}
                   title={`${String.fromCharCode(97 + colIndex)}${getDisplayRowNumber(displayRowIndex)}${
-                    activation !== 0 ? ` (激活: ${activation.toFixed(3)})` : ''
+                    activation !== 0 ? ` (activation: ${activation.toFixed(3)})` : ''
                   }${
-                    isZPatternTarget ? ` [Z模式目标: ${targetStrength.toFixed(3)}]` : ''
+                    isZPatternTarget ? ` [Z-pattern target: ${targetStrength.toFixed(3)}]` : ''
                   }${
-                    isMoveFromSquare ? ' [移动起点]' : ''
+                    isMoveFromSquare ? ' [move from]' : ''
                   }${
-                    isMoveToSquare ? ' [移动终点]' : ''
+                    isMoveToSquare ? ' [move to]' : ''
                   }${
-                    isSelectedSquare ? ' [已选中]' : ''
+                    isSelectedSquare ? ' [selected]' : ''
                   }`}
                 >
-                  {/* 棋子 */}
+                  {/* Piece */}
                   {piece && (
                     <span
                       className={`
@@ -504,16 +498,14 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     </span>
                   )}
 
-                  {/* 激活值显示 - 在格子内部显示，源格子时隐去 */}
+                  {/* Activation value badge (hidden on source square) */}
                   {activation !== 0 && !isSourceSquare && hoveredSquare === null && (
                     <div className="absolute top-0 right-0 bg-blue-600 text-white text-xs rounded px-1 leading-3" style={{ fontSize: '10px' }}>
                       {Math.abs(activation).toFixed(2)}
                     </div>
                   )}
 
-                  {/* 移除错误的对称高亮，直接按实际起点/终点高亮 */}
-
-                  {/* Z模式值显示 - 在格子内部左上角显示 */}
+                  {/* Z-pattern strength badge (top-left inside square) */}
                   {isZPatternTarget && (
                     <div className={`absolute top-0 left-0 text-white text-xs rounded px-1 leading-3 ${
                       targetStrength > 0 ? 'bg-blue-700' : 'bg-orange-700'
@@ -522,7 +514,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     </div>
                   )}
 
-                  {/* 坐标标记 */}
+                  {/* Coordinate labels */}
                   {showCoordinates && (
                     <>
                       {colIndex === 0 && (
@@ -542,7 +534,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
             })
           )}
         
-        {/* 移动箭头覆盖层 */}
+        {/* Move arrow overlay */}
         {parsedMove && (
           <svg
             className="absolute inset-0 pointer-events-none"
@@ -557,7 +549,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               </marker>
             </defs>
             {(() => {
-              // 使用棋盘朝向映射，保证箭头与格子渲染一致
+              // Use board orientation mapping to keep the arrow aligned with rendered squares
               const fromPos = getBoardDisplayPosition(parsedMove.from.index);
               const toPos = getBoardDisplayPosition(parsedMove.to.index);
               const sq = squareSizePxMap[size];
@@ -581,96 +573,14 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           </svg>
         )}
 
-        {/* 新增：绘制 graph 节点与边 */}
-        {(() => {
-          // 在现有的 svg 上新增一个图层，用于绘制 graph 节点和边
-          const graphGroup = document.querySelector('.graph-overlay')?.appendChild(document.createElement('g'));
-          if (!graphGroup) return;
-
-          // 边绘制：遍历 graph.edges，绘制连线（粗线，圆角）
-          graphGroup.setAttribute('class', 'graph-overlay');
-          graph.edges.forEach(edge => {
-            const sourceNode = graph.getNodeById(edge.sourceId);
-            const targetNode = graph.getNodeById(edge.targetId);
-            if (!sourceNode || !targetNode) return;
-
-            // 根据棋盘状态计算节点的屏幕坐标
-            const getCoordinates = (position) => {
-              const row = Math.floor(position / 8);
-              const col = position % 8;
-              const displayRow = boardState.flipped ? (7 - row) : row;
-              return {
-                x: col * SQUARE_SIZE + SQUARE_SIZE / 2,
-                y: displayRow * SQUARE_SIZE + SQUARE_SIZE / 2
-              };
-            };
-
-            const sourceCoords = getCoordinates(sourceNode.position);
-            const targetCoords = getCoordinates(targetNode.position);
-
-            graphGroup.appendChild(document.createElement('line'))
-              .setAttribute('x1', sourceCoords.x.toString())
-              .setAttribute('y1', sourceCoords.y.toString())
-              .setAttribute('x2', targetCoords.x.toString())
-              .setAttribute('y2', targetCoords.y.toString())
-              .style.stroke = globalColors.deepBlue
-              .style.strokeWidth = '4'
-              .style.strokeLinecap = 'round'
-              .style.strokeLinejoin = 'round';
-          });
-
-          // 节点绘制：遍历 graph.nodes，非 embedding 节点绘制矩形，子节点以圆形显示
-          graph.nodes.forEach(node => {
-            // 如果是 embedding 节点，则不单独显示
-            if (node.type === 'embedding') return;
-
-            // 计算节点位置：node.position 为棋盘格索引
-            const row = Math.floor(node.position / 8);
-            const col = node.position % 8;
-            const displayRow = boardState.flipped ? (7 - row) : row;
-            const x = col * SQUARE_SIZE + SQUARE_SIZE * 0.1; // 留边距
-            const y = displayRow * SQUARE_SIZE + SQUARE_SIZE * 0.1;
-            const width = SQUARE_SIZE * 0.8;
-            const height = SQUARE_SIZE * 0.8;
-
-            // 绘制节点矩形（深蓝色边框，无填充）
-            graphGroup.appendChild(document.createElement('rect'))
-              .setAttribute('x', x.toString())
-              .setAttribute('y', y.toString())
-              .setAttribute('width', width.toString())
-              .setAttribute('height', height.toString())
-              .style.fill = 'none'
-              .style.stroke = globalColors.deepBlue
-              .style.strokeWidth = '3'
-              .style.rx = '8';
-
-            // 绘制子节点：遍历当前节点的 childrenIds，对每个子节点绘制圆形（浅蓝色边框）
-            node.childrenIds.forEach(childId => {
-              const childNode = graph.getNodeById(childId);
-              if (!childNode) return;
-              const childRow = Math.floor(childNode.position / 8);
-              const childCol = childNode.position % 8;
-              const displayChildRow = boardState.flipped ? (7 - childRow) : childRow;
-              const cx = childCol * SQUARE_SIZE + SQUARE_SIZE / 2;
-              const cy = displayChildRow * SQUARE_SIZE + SQUARE_SIZE / 2;
-
-              graphGroup.appendChild(document.createElement('circle'))
-                .setAttribute('cx', cx.toString())
-                .setAttribute('cy', cy.toString())
-                .setAttribute('r', (SQUARE_SIZE * 0.15).toString())
-                .style.fill = 'none'
-                .style.stroke = globalColors.lightBlue
-                .style.strokeWidth = '2';
-            });
-          });
-        })()}
+        {/* Placeholder: graph nodes/edges layer (not implemented here) */}
       </div>
 
-              {/* FEN字符串和移动信息显示 */}
+      {/* FEN string and move info */}
       <div className="absolute -bottom-12 left-0 right-0 text-xs text-gray-500 text-center space-y-1">
         {parsedMove && (
           <div className="text-green-600 font-medium">
-            移动: {parsedMove.moveString}
+            Move: {parsedMove.moveString}
           </div>
         )}
         <div className="truncate">
@@ -679,9 +589,9 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       </div>
       </div>
 
-      {/* FEN字符串显示 */}
+      {/* FEN string display */}
       <div className="w-full max-w-lg text-xs text-gray-600 bg-gray-50 rounded p-2 border">
-        <div className="font-medium text-gray-800 mb-1">FEN字符串:</div>
+        <div className="font-medium text-gray-800 mb-1">FEN string:</div>
         <div className="font-mono text-xs break-all select-all">
           {fen}
         </div>
@@ -689,39 +599,39 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       <div className="mt-2">
         {boardEvaluation ? (
           <div className="mt-1 text-sm text-gray-700">
-            胜率: {boardEvaluation[0].toFixed(2)}, 和棋率: {boardEvaluation[1].toFixed(2)}, 对方胜率: {boardEvaluation[2].toFixed(2)}
+            Win rate: {boardEvaluation[0].toFixed(2)}, draw rate: {boardEvaluation[1].toFixed(2)}, opponent win rate: {boardEvaluation[2].toFixed(2)}
           </div>
         ) : (
-          <div className="mt-1 text-sm text-gray-700">正在分析局面...</div>
+          <div className="mt-1 text-sm text-gray-700">Analyzing position...</div>
         )}
       </div>
 
-      {/* 激活值统计 */}
+      {/* Activation statistics */}
       {activations && activations.some(a => a !== 0) && (
         <div className="text-xs text-gray-600 space-y-1">
-          <div>激活统计:</div>
+          <div>Activation stats:</div>
           <div className="flex space-x-4">
-            <span>激活格子: {activations.filter(a => a !== 0).length}</span>
-            <span>最大值: {Math.max(...activations.map(Math.abs)).toFixed(3)}</span>
-            <span className="text-red-600">🔴 激活值</span>
-            {hoveredSquare !== null && <span className="text-blue-600">🔵 Z模式连接 (最强8个)</span>}
+            <span>Activated squares: {activations.filter(a => a !== 0).length}</span>
+            <span>Max |activation|: {Math.max(...activations.map(Math.abs)).toFixed(3)}</span>
+            <span className="text-red-600">🔴 Activation value</span>
+            {hoveredSquare !== null && <span className="text-blue-600">🔵 Z-pattern connections (top 8 strongest)</span>}
           </div>
         </div>
       )}
 
-      {/* Z模式统计 */}
+      {/* Z-pattern statistics */}
       {zPatternValues && zPatternValues.length > 0 && (
         <div className="text-xs text-gray-600 space-y-1">
-          <div>Z模式连接: {zPatternValues.length}个</div>
-          <div>强度范围: {Math.min(...zPatternValues).toFixed(3)} ~ {Math.max(...zPatternValues).toFixed(3)}</div>
+          <div>Z-pattern connections: {zPatternValues.length}</div>
+          <div>Strength range: {Math.min(...zPatternValues).toFixed(3)} ~ {Math.max(...zPatternValues).toFixed(3)}</div>
           <div className="flex space-x-4">
-            <span className="text-blue-600">🔵 正值连接</span>
-            <span className="text-orange-600">🟠 负值连接</span>
+            <span className="text-blue-600">🔵 Positive connections</span>
+            <span className="text-orange-600">🟠 Negative connections</span>
           </div>
         </div>
       )}
 
-      {/* Hover状态显示Z模式连接详情 */}
+      {/* Hover state: show Z-pattern connection details */}
       {hoveredSquare !== null && (() => {
         const squareName = getSquareNameFromActivationIndex(hoveredSquare);
         const activation = activations?.[hoveredSquare] || 0;
@@ -729,11 +639,11 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
         return (
           <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
             <div className="font-medium text-blue-800">
-              格子 {squareName} (激活值: {activation.toFixed(3)})
+              Square {squareName} (activation: {activation.toFixed(3)})
             </div>
             {zPatternTargets.length > 0 ? (
               <>
-                <div className="text-blue-700">Z模式最强连接 ({zPatternTargets.length}个):</div>
+                <div className="text-blue-700">Strongest Z-pattern connections ({zPatternTargets.length}):</div>
                 <div className="grid grid-cols-2 gap-1">
                   {zPatternTargets.slice(0, 6).map((target, idx) => {
                     const targetName = getSquareNameFromActivationIndex(target.square);
@@ -745,12 +655,12 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     );
                   })}
                   {zPatternTargets.length > 6 && (
-                    <div className="text-blue-500 col-span-2">... 还有 {zPatternTargets.length - 6} 个连接</div>
+                    <div className="text-blue-500 col-span-2">... plus {zPatternTargets.length - 6} more connections</div>
                   )}
                 </div>
               </>
             ) : (
-              <div className="text-blue-600">无Z模式连接</div>
+              <div className="text-blue-600">No Z-pattern connections</div>
             )}
           </div>
         );

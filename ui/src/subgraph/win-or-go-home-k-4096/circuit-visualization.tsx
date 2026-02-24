@@ -10,7 +10,7 @@ import { FeatureCard } from "@/components/feature/feature-card";
 import { ChessBoard } from "@/components/chess/chess-board";
 import React from "react"; // Added missing import for React
 
-// 定义节点激活数据的类型
+// Node activation data type
 interface NodeActivationData {
   activations?: number[];
   zPatternIndices?: any;
@@ -41,37 +41,37 @@ export const CircuitVisualization = () => {
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [connectedFeatures, setConnectedFeatures] = useState<Feature[]>([]);
   const [isLoadingConnectedFeatures, setIsLoadingConnectedFeatures] = useState(false);
-  const [originalCircuitJson, setOriginalCircuitJson] = useState<any>(null); // 存储原始JSON数据（单图或合并后的）
-  const [editingClerp, setEditingClerp] = useState<string>(''); // 当前编辑的clerp
-  const [isSaving, setIsSaving] = useState(false); // 保存状态
-  const [originalFileName, setOriginalFileName] = useState<string>(''); // 原始文件名（单文件时）
-  const [updateCounter, setUpdateCounter] = useState(0); // 用于强制更新的计数器
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // 是否有未保存的更改
-  const [saveHistory, setSaveHistory] = useState<string[]>([]); // 保存历史记录
+  const [originalCircuitJson, setOriginalCircuitJson] = useState<any>(null); // Store original JSON data (single or merged)
+  const [editingClerp, setEditingClerp] = useState<string>(''); // Current clerp being edited
+  const [isSaving, setIsSaving] = useState(false); // Save-in-progress state
+  const [originalFileName, setOriginalFileName] = useState<string>(''); // Original filename (for single-file case)
+  const [updateCounter, setUpdateCounter] = useState(0); // Counter to force re-computation
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // Whether there are unsaved changes
+  const [saveHistory, setSaveHistory] = useState<string[]>([]); // Save history entries
 
-  // 多图支持：存放多份原始 JSON 及其文件名
+  // Multi-graph support: store multiple original JSONs and filenames
   const [multiOriginalJsons, setMultiOriginalJsons] = useState<{ json: CircuitJsonData; fileName: string }[]>([]);
 
-  // 为“各自独有”的节点/边分配的颜色表（最多4个图）
-  const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // 蓝、橙、绿、红
-  const DUPLICATE_FEATURE_ALT_COLOR = "#FF9800"; // 同一feature不同位置的备用颜色（琥珀橙）
+  // Color palette for nodes/edges that are unique to each graph (up to 4 graphs)
+  const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // blue, orange, green, red
+  const DUPLICATE_FEATURE_ALT_COLOR = "#FF9800"; // reserved alt color for duplicate features (amber)
 
-  // 将多个图的 JSON 合并为一个 LinkGraphData（节点按 node_id 合并，边按(source,target)合并）
+  // Merge multiple JSON graphs into a single LinkGraphData (nodes merged by node_id, edges by (source,target))
   const mergeGraphs = useCallback((jsons: CircuitJsonData[], fileNames?: string[]) => {
-    // 先将每个 JSON 转换为 LinkGraphData
+    // First convert each JSON into LinkGraphData
     const graphs = jsons.map(j => transformCircuitData(j));
 
-    // 合并 metadata（简单策略：拼接 prompt_tokens 并标注来源数量）
+    // Merge metadata (simple strategy: concatenate prompt_tokens and annotate number of sources)
     const mergedMetadata: any = {
       ...(graphs[0]?.metadata || {}),
       prompt_tokens: graphs.map((g, i) => `[#${i + 1}] ` + (g?.metadata?.prompt_tokens?.join(' ') || '')).filter(Boolean),
       sourceFileNames: fileNames && fileNames.length ? fileNames : undefined,
     };
 
-    // 合并节点
+    // Merge nodes
     type NodeAccum = {
-      base: any; // 任意一个来源的节点作为基准（保留 feature_type 等）
-      presentIn: number[]; // 出现于哪些图的索引
+      base: any; // Use one source node as base (keep feature_type etc.)
+      presentIn: number[]; // Indices of graphs this node appears in
     };
 
     const nodeMap = new Map<string, NodeAccum>();
@@ -83,18 +83,18 @@ export const CircuitVisualization = () => {
           nodeMap.set(key, { base: { ...n }, presentIn: [gi] });
         } else {
           const acc = nodeMap.get(key)!;
-          // 合并可选字段（以非空为准）
+          // Merge optional fields (prefer non-null values)
           acc.base.localClerp = acc.base.localClerp ?? n.localClerp;
           acc.base.remoteClerp = acc.base.remoteClerp ?? n.remoteClerp;
-          // 累加来源
+          // Track all graph indices this node appears in
           if (!acc.presentIn.includes(gi)) acc.presentIn.push(gi);
         }
       });
     });
 
-    // 为节点设置颜色：
-    // - 若 presentIn.length > 1（多个图共有）：使用 transformCircuitData 原有的 feature_type 颜色（acc.base.nodeColor）
-    // - 若仅在某个单图中：覆盖为 UNIQUE_GRAPH_COLORS[graphIndex]
+    // Assign node colors:
+    // - presentIn.length > 1 (shared across multiple graphs): keep transformCircuitData feature_type color (acc.base.nodeColor)
+    // - only in a single graph: override with UNIQUE_GRAPH_COLORS[graphIndex]
     let mergedNodes: any[] = [];
     nodeMap.forEach(({ base, presentIn }) => {
       const isShared = presentIn.length > 1;
@@ -115,18 +115,18 @@ export const CircuitVisualization = () => {
       });
     });
 
-    // 移除备用颜色逻辑：多文件场景仅保留
-    // - 共有节点：使用各自类型颜色（来自 transformCircuitData）
-    // - 独有节点：使用该文件唯一颜色 UNIQUE_GRAPH_COLORS[index]
+    // Remove alternate color logic: in multi-file setting we keep only
+    // - shared nodes: use type colors from transformCircuitData
+    // - unique nodes: use per-file UNIQUE_GRAPH_COLORS[index]
 
-    // 合并边：以(source,target)为键；
-    // - 若多图共有：保留 transform 中的颜色（红/绿取决于权重正负）和 strokeWidth（取最大）并将权重求和或取平均
-    // - 若单图有：保留并将颜色覆盖为对应图的 UNIQUE_GRAPH_COLORS[gi] 的淡化版以区分（但维持正负色彩会更直观，这里沿用正负色，不改变现有绿色/红色方案）
+    // Merge edges under (source,target) key:
+    // - if shared across graphs: keep transform colors (sign controls red/green) and take max strokeWidth, sum/avg weights
+    // - if unique to one graph: keep edge and still use sign-based color; we don't override with per-graph color here
     type LinkAccum = {
-      sources: number[]; // 出现于哪些图
+      sources: number[]; // Graph indices this edge appears in
       weightSum: number;
       maxStroke: number;
-      color: string; // 采用首次的权重颜色（正负）即可
+      color: string; // First sign-based color is sufficient
       pctInputSum: number;
       weightsBySource: Record<number, number>;
       pctBySource: Record<number, number>;
@@ -153,7 +153,7 @@ export const CircuitVisualization = () => {
           if (!acc.sources.includes(gi)) acc.sources.push(gi);
           acc.weightSum += (e.weight ?? 0);
           acc.maxStroke = Math.max(acc.maxStroke, e.strokeWidth ?? 1);
-          // 颜色按首次的正负即可，不覆盖
+          // Keep first sign-based color; no override needed
           acc.pctInputSum += (e.pctInput ?? 0);
           acc.weightsBySource[gi] = (acc.weightsBySource[gi] || 0) + (e.weight ?? 0);
           acc.pctBySource[gi] = (acc.pctBySource[gi] || 0) + (e.pctInput ?? (Math.abs(e.weight ?? 0) * 100));
@@ -167,7 +167,7 @@ export const CircuitVisualization = () => {
       const isShared = acc.sources.length > 1;
       const avgWeight = acc.weightSum / acc.sources.length;
       const avgPct = acc.pctInputSum / acc.sources.length;
-      // 沿用 transform 的正负配色：正=绿色，负=红色
+      // Follow transform's sign-based coloring: positive = green, negative = red
       const color = avgWeight > 0 ? "#4CAF50" : "#F44336";
       mergedLinks.push({
         source,
@@ -183,7 +183,7 @@ export const CircuitVisualization = () => {
       });
     });
 
-    // 重新为节点填充 sourceLinks/targetLinks
+    // Rebuild sourceLinks/targetLinks for nodes
     const nodeById: Record<string, any> = {};
     mergedNodes.forEach(n => { nodeById[n.nodeId] = { ...n, sourceLinks: [], targetLinks: [] }; });
     mergedLinks.forEach(l => {
@@ -235,7 +235,7 @@ export const CircuitVisualization = () => {
     setIsLoadingConnectedFeatures(loading);
   }, []);
 
-  // 单文件上传（保留，兼容）
+  // Single-file upload (kept for backward compatibility)
   const handleSingleFileUpload = useCallback(async (file: File) => {
     if (!file.name.endsWith('.json')) {
       setError('Please upload a JSON file');
@@ -248,9 +248,9 @@ export const CircuitVisualization = () => {
       
       const text = await file.text();
       const jsonData: CircuitJsonData = JSON.parse(text);
-      // 基础变换
+      // Basic transform
       const data = transformCircuitData(jsonData);
-      // 注入来源信息（单文件索引为 0）
+      // Inject source info (single file has index 0)
       let annotated = {
         ...data,
         nodes: data.nodes.map(n => ({
@@ -273,11 +273,11 @@ export const CircuitVisualization = () => {
       setHiddenIds([]);
       setSelectedFeature(null);
       setConnectedFeatures([]);
-      setOriginalCircuitJson(jsonData); // 存储原始JSON数据
-      setOriginalFileName(file.name); // 存储原始文件名
-      setEditingClerp(''); // 重置编辑状态
-      setHasUnsavedChanges(false); // 清除未保存的更改
-      setSaveHistory([]); // 清除保存历史
+      setOriginalCircuitJson(jsonData); // Store original JSON data
+      setOriginalFileName(file.name); // Store original filename
+      setEditingClerp(''); // Reset editor state
+      setHasUnsavedChanges(false); // Clear unsaved-changes flag
+      setSaveHistory([]); // Clear save history
       setMultiOriginalJsons([{ json: jsonData, fileName: file.name }]);
     } catch (err) {
       console.error('Failed to load circuit data:', err);
@@ -287,7 +287,7 @@ export const CircuitVisualization = () => {
     }
   }, [setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures]);
 
-  // 多文件上传（1-4 个）
+  // Multi-file upload (1–4 files)
   const handleMultiFilesUpload = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files).filter(f => f.name.endsWith('.json')).slice(0, 4);
     if (list.length === 0) {
@@ -303,7 +303,7 @@ export const CircuitVisualization = () => {
       const jsons: CircuitJsonData[] = texts.map(t => JSON.parse(t));
       const fileNames = list.map(f => f.name);
 
-      // 合并
+      // Merge graphs
       const merged = jsons.length === 1 
         ? (() => {
             const data = transformCircuitData(jsons[0]);
@@ -330,7 +330,7 @@ export const CircuitVisualization = () => {
       setHiddenIds([]);
       setSelectedFeature(null);
       setConnectedFeatures([]);
-      setOriginalCircuitJson(jsons.length === 1 ? jsons[0] : merged); // 单图保留原始，多图保留合并结果
+      setOriginalCircuitJson(jsons.length === 1 ? jsons[0] : merged); // Single graph keeps original JSON, multi-graph keeps merged JSON
       setOriginalFileName(list.length === 1 ? list[0].name : `merged_${list.length}_graphs.json`);
       setEditingClerp('');
       setHasUnsavedChanges(false);
@@ -345,7 +345,7 @@ export const CircuitVisualization = () => {
   }, [mergeGraphs, setLinkGraphData, setLoading, setError, setClickedId, setHoveredId, setPinnedIds, setHiddenIds, setSelectedFeature, setConnectedFeatures]);
 
   const handleFileUpload = useCallback(async (file: File) => {
-    // 兼容旧调用，保留单文件路径
+    // Backward compatible: keep single-file path
     return handleSingleFileUpload(file);
   }, [handleSingleFileUpload]);
 
@@ -384,18 +384,18 @@ export const CircuitVisualization = () => {
     }
   }, [handleSingleFileUpload, handleMultiFilesUpload]);
 
-  // 从circuit数据中提取FEN字符串
+  // Extract FEN string from circuit data
   const extractFenFromPrompt = useCallback(() => {
     if (!linkGraphData?.metadata?.prompt_tokens) return null;
     
     const promptText = linkGraphData.metadata.prompt_tokens.join(' ');
-    console.log('🔍 搜索FEN字符串:', promptText);
+    console.log('🔍 Searching for FEN string:', promptText);
     
-    // 更宽松的FEN格式检测
+    // More permissive FEN detection
     const lines = promptText.split('\n');
     for (const line of lines) {
       const trimmed = line.trim();
-      // 检查是否包含FEN格式 - 包含斜杠且有足够的字符
+      // Check for FEN-like pattern – must contain slashes and enough content
       if (trimmed.includes('/')) {
         const parts = trimmed.split(/\s+/);
         if (parts.length >= 6) {
@@ -403,25 +403,25 @@ export const CircuitVisualization = () => {
           const boardRows = boardPart.split('/');
           
           if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
-            console.log('✅ 找到FEN字符串:', trimmed);
+            console.log('✅ Found FEN string:', trimmed);
             return trimmed;
           }
         }
       }
     }
     
-    // 如果没找到完整的FEN，尝试更简单的匹配
+    // If no full FEN found, try a simpler match
     const simpleMatch = promptText.match(/[rnbqkpRNBQKP1-8\/]{15,}\s+[wb]\s+[KQkqA-Za-z-]+\s+[a-h][36-]?\s*\d*\s*\d*/);
     if (simpleMatch) {
-      console.log('✅ 找到简单FEN匹配:', simpleMatch[0]);
+      console.log('✅ Found simple FEN match:', simpleMatch[0]);
       return simpleMatch[0];
     }
     
-    console.log('❌ 未找到FEN字符串');
+    console.log('❌ No FEN string found');
     return null;
   }, [linkGraphData]);
 
-  // 按文件从原始 JSON 提取 FEN
+  // Extract FEN from a given circuit JSON (per-file)
   const extractFenFromCircuitJson = useCallback((json: any): string | null => {
     const tokens = json?.metadata?.prompt_tokens;
     if (!tokens) return null;
@@ -441,11 +441,11 @@ export const CircuitVisualization = () => {
     return simpleMatch ? simpleMatch[0] : null;
   }, []);
  
-  // 从prompt中提取输出移动
+  // Extract output move from prompt
   const extractOutputMove = useCallback(() => {
     if (!linkGraphData) return null;
 
-    // 1) 优先从 metadata 中读取 target_move 或 logit_moves[0]
+    // 1) Prefer metadata target_move or logit_moves[0]
     const tm = (linkGraphData as any)?.metadata?.target_move;
     if (typeof tm === 'string' && /^[a-h][1-8][a-h][1-8]([qrbn])?$/i.test(tm)) {
       return tm.toLowerCase();
@@ -455,13 +455,13 @@ export const CircuitVisualization = () => {
       return lm0.toLowerCase();
     }
 
-    // 2) 回退到从 prompt_tokens 中解析
+    // 2) Fallback: parse from prompt_tokens
     if (!linkGraphData?.metadata?.prompt_tokens) return null;
     const promptText = linkGraphData.metadata.prompt_tokens.join(' ');
-    console.log('🔍 搜索输出移动:', promptText);
+    console.log('🔍 Searching for output move:', promptText);
 
     const movePatterns = [
-      /(?:Output|Move|下一步|移动)[:：]\s*([a-h][1-8][a-h][1-8])/i,
+      /(?:Output|Move)[:：]\s*([a-h][1-8][a-h][1-8])/i,
       /\b([a-h][1-8][a-h][1-8])\b/g
     ];
 
@@ -471,21 +471,21 @@ export const CircuitVisualization = () => {
         const lastMatch = Array.isArray(matches) ? matches[matches.length - 1] : matches;
         const moveMatch = lastMatch.match(/[a-h][1-8][a-h][1-8]/);
         if (moveMatch) {
-          console.log('✅ 找到移动:', moveMatch[0]);
+          console.log('✅ Found move:', moveMatch[0]);
           return moveMatch[0].toLowerCase();
         }
       }
     }
 
-    console.log('❌ 未找到输出移动');
+    console.log('❌ No output move found');
     return null;
   }, [linkGraphData]);
 
-  // 按文件提取输出移动
+  // Extract output move from a specific circuit JSON
   const extractOutputMoveFromCircuitJson = useCallback((json: any): string | null => {
     if (!json) return null;
 
-    // 1) 优先从 metadata 中读取 target_move 或 logit_moves[0]
+    // 1) Prefer metadata target_move or logit_moves[0]
     const tm = json?.metadata?.target_move;
     if (typeof tm === 'string' && /^[a-h][1-8][a-h][1-8]([qrbn])?$/i.test(tm)) {
       return tm.toLowerCase();
@@ -495,12 +495,12 @@ export const CircuitVisualization = () => {
       return lm0.toLowerCase();
     }
 
-    // 2) 回退到从 prompt_tokens 中解析
+    // 2) Fallback: parse from prompt_tokens
     const tokens = json?.metadata?.prompt_tokens;
     if (!tokens) return null;
     const promptText = Array.isArray(tokens) ? tokens.join(' ') : String(tokens);
     const patterns = [
-      /(?:Output|Move|下一步|移动)[:：]\s*([a-h][1-8][a-h][1-8])/i,
+      /(?:Output|Move)[:：]\s*([a-h][1-8][a-h][1-8])/i,
       /\b([a-h][1-8][a-h][1-8])\b/g
     ];
     for (const pattern of patterns) {
@@ -514,15 +514,15 @@ export const CircuitVisualization = () => {
     return null;
   }, []);
  
-  // 改进的getNodeActivationData函数
+  // Improved getNodeActivationData helper
   const getNodeActivationData = useCallback((nodeId: string | null): NodeActivationData => {
     if (!nodeId || !originalCircuitJson) {
-      console.log('❌ 缺少必要参数:', { nodeId, hasOriginalCircuitJson: !!originalCircuitJson });
+      console.log('❌ Missing required parameters:', { nodeId, hasOriginalCircuitJson: !!originalCircuitJson });
       return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
     }
     
-    console.log(`🔍 查找节点 ${nodeId} 的激活数据...`);
-    console.log('📋 原始JSON数据结构:', {
+    console.log(`🔍 Looking up activation data for node ${nodeId}...`);
+    console.log('📋 Original JSON structure:', {
       type: typeof originalCircuitJson,
       isArray: Array.isArray(originalCircuitJson),
       hasNodes: !!originalCircuitJson.nodes,
@@ -530,19 +530,19 @@ export const CircuitVisualization = () => {
       keys: Object.keys(originalCircuitJson)
     });
     
-    // 解析 node_id -> rawLayer, featureOrHead, ctx(position)
+    // Parse node_id -> rawLayer, featureOrHead, ctx(position)
     const parseFromNodeId = (id: string) => {
       const parts = id.split('_');
       const rawLayer = Number(parts[0]) || 0;
       const featureOrHead = Number(parts[1]) || 0;
       const ctxIdx = Number(parts[2]) || 0;
-      // 将原始层号除以2得到真实层号
+      // Divide raw layer index by 2 to get actual model layer
       const layerForActivation = Math.floor(rawLayer / 2);
       return { rawLayer, layerForActivation, featureOrHead, ctxIdx };
     };
     const parsed = parseFromNodeId(nodeId);
 
-    // 1) 优先在 nodes 数组中做直接匹配（若节点对象内联了 activations/zPattern* 字段）
+    // 1) First try matching directly in nodes array (if node objects inline activations/zPattern* fields)
     let nodesToSearch: any[] = [];
     if (originalCircuitJson.nodes && Array.isArray(originalCircuitJson.nodes)) {
       nodesToSearch = originalCircuitJson.nodes;
@@ -569,7 +569,7 @@ export const CircuitVisualization = () => {
         const inlineActs = exactMatch.activations;
         const inlineZIdx = exactMatch.zPatternIndices;
         const inlineZVal = exactMatch.zPatternValues;
-        console.log('✅ 节点内联字段检查:', {
+        console.log('✅ Inline node fields check:', {
           hasInlineActivations: !!inlineActs,
           hasInlineZIdx: !!inlineZIdx,
           hasInlineZVal: !!inlineZVal,
@@ -586,8 +586,8 @@ export const CircuitVisualization = () => {
       }
     }
 
-    // 2) 基于 node_id 解析，在 activation 记录集合中匹配（layer/position/head_idx/feature_idx）
-    // 构建可扫描的记录集合（深度扫描 originalCircuitJson 的所有数组，挑出含关键键的条目）
+    // 2) Based on node_id, match in activation records (layer/position/head_idx/feature_idx)
+    // Build candidate records by scanning all arrays in originalCircuitJson and picking items with key fields
     const candidateRecords: any[] = [];
     const pushCandidateArrays = (obj: any) => {
       if (!obj) return;
@@ -609,9 +609,9 @@ export const CircuitVisualization = () => {
     };
     pushCandidateArrays(originalCircuitJson);
 
-    console.log('🧭 候选记录数:', candidateRecords.length);
+    console.log('🧭 Candidate record count:', candidateRecords.length);
 
-    // 定义匹配函数：根据 feature_type 选择使用 head_idx 或 feature_idx
+    // Matching function: choose head_idx vs feature_idx based on feature_type
     const tryMatchRecord = (rec: any, featureType?: string) => {
       const recLayer = Number(rec?.layer);
       const recPos = Number(rec?.position);
@@ -634,7 +634,7 @@ export const CircuitVisualization = () => {
       return layerOk && posOk && indexOk;
     };
 
-    // 为了确定 feature_type，先尽量从 nodes 中取该 nodeId 的类型
+    // Try to determine feature_type for this node from nodes array
     let featureTypeForNode: string | undefined = undefined;
     if (nodesToSearch.length > 0) {
       const nodeMeta = nodesToSearch.find(n => n?.node_id === nodeId);
@@ -643,7 +643,7 @@ export const CircuitVisualization = () => {
 
     const matched = candidateRecords.find(rec => tryMatchRecord(rec, featureTypeForNode));
     if (matched) {
-      console.log('✅ 通过解析匹配到activation记录:', {
+      console.log('✅ Found activation record via parsed match:', {
         nodeId,
         layerForActivation: parsed.layerForActivation,
         ctxIdx: parsed.ctxIdx,
@@ -659,12 +659,12 @@ export const CircuitVisualization = () => {
       };
     }
 
-    // 3) 回退：尝试模糊匹配 node_id 前缀
+    // 3) Fallback: fuzzy match using node_id prefix
     if (nodesToSearch.length > 0) {
       const fuzzyMatches = nodesToSearch.filter(node => node?.node_id && node.node_id.includes(nodeId.split('_')[0]));
       if (fuzzyMatches.length > 0) {
         const firstMatch = fuzzyMatches[0];
-        console.log('🔍 使用模糊匹配节点:', {
+        console.log('🔍 Using fuzzy node match:', {
           node_id: firstMatch.node_id,
           hasActivations: !!firstMatch.activations,
         });
@@ -678,7 +678,7 @@ export const CircuitVisualization = () => {
       }
     }
 
-    console.log('❌ 未找到任何匹配的节点/记录');
+    console.log('❌ No matching node/record found');
     return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
   }, [originalCircuitJson, updateCounter]);
 
@@ -690,7 +690,7 @@ export const CircuitVisualization = () => {
     const ctxIdx = Number(parts[2]) || 0;
     const layerForActivation = Math.floor(rawLayer / 2);
 
-    // 1) 优先在 nodes 数组中做直接匹配
+    // 1) First try a direct match in the nodes array
     let nodesToSearch: any[] = [];
     if (jsonData.nodes && Array.isArray(jsonData.nodes)) {
       nodesToSearch = jsonData.nodes;
@@ -726,7 +726,7 @@ export const CircuitVisualization = () => {
       }
     }
 
-    // 2) 深度扫描激活记录集合，匹配(layer/position/index)
+    // 2) Deep-scan activation records and match by (layer/position/index)
     const candidateRecords: any[] = [];
     const pushCandidateArrays = (obj: any) => {
       if (!obj) return;
@@ -745,7 +745,7 @@ export const CircuitVisualization = () => {
     };
     pushCandidateArrays(jsonData);
 
-    // 从 nodes 中尽量确定 feature_type
+    // Try to infer feature_type from nodes
     let featureTypeForNode: string | undefined;
     if (nodesToSearch.length > 0) {
       const nodeMeta = nodesToSearch.find((n: any) => n?.node_id === nodeId);
@@ -782,7 +782,7 @@ export const CircuitVisualization = () => {
       };
     }
 
-    // 3) 模糊匹配
+    // 3) Fuzzy match
     if (nodesToSearch.length > 0) {
       const fuzzyMatches = nodesToSearch.filter((node: any) => node?.node_id && node.node_id.includes(nodeId.split('_')[0]));
       if (fuzzyMatches.length > 0) {
@@ -800,17 +800,16 @@ export const CircuitVisualization = () => {
     return { activations: undefined, zPatternIndices: undefined, zPatternValues: undefined };
   }, []);
  
-  // 提取相关数据
+  // Extract derived data for UI
   const fen = extractFenFromPrompt();
   const outputMove = extractOutputMove();
   const nodeActivationData = getNodeActivationData(clickedId);
 
-  // 修复Hook使用 - 移到组件顶层，避免条件调用
+  // Keep clerp editor in sync with selected node (top-level hook, no conditional usage)
   React.useEffect(() => {
     if (clickedId && nodeActivationData) {
-      // 无论clerp是undefined、空字符串还是有内容，都设置到编辑器中
       const clerpValue = nodeActivationData.clerp || '';
-      console.log('🔄 更新编辑器状态:', {
+      console.log('🔄 Updating editor state:', {
         nodeId: clickedId,
         clerpValue,
         clerpType: typeof nodeActivationData.clerp,
@@ -819,14 +818,13 @@ export const CircuitVisualization = () => {
       });
       setEditingClerp(clerpValue);
     } else {
-      // 没有选中节点时，清空编辑器
-      console.log('🔄 清空编辑器状态');
+      console.log('🔄 Clearing editor state');
       setEditingClerp('');
     }
   }, [clickedId, nodeActivationData?.clerp, updateCounter]);
 
   const handleSaveClerp = useCallback(async () => {
-    console.log('🚀 开始保存clerp:', {
+    console.log('🚀 Starting clerp save:', {
       clickedId,
       hasOriginalCircuitJson: !!originalCircuitJson,
       editingClerp,
@@ -835,20 +833,20 @@ export const CircuitVisualization = () => {
     });
     
     if (!clickedId || !originalCircuitJson) {
-      console.log('❌ 保存失败：缺少必要数据');
+      console.log('❌ Save failed: missing required data');
       return;
     }
 
-    // 允许保存空内容，但至少要有一些变化
+    // Allow saving empty content as long as there is a change
     const trimmedClerp = editingClerp.trim();
     
     setIsSaving(true);
     
     try {
-      // 先创建深拷贝，避免直接修改原始数据
+      // Deep-copy to avoid mutating original data
       const updatedCircuitJson = JSON.parse(JSON.stringify(originalCircuitJson));
       
-      // 查找并更新对应的节点
+      // Find and update the matching node
       let updated = false;
       let nodesToSearch: any[] = [];
       
@@ -874,20 +872,19 @@ export const CircuitVisualization = () => {
         }
       }
 
-      // 直接通过node_id匹配并更新节点的clerp
+      // Match by node_id and update node.clerp
       for (const node of nodesToSearch) {
         if (node && typeof node === 'object' && node.node_id === clickedId) {
-          // 设置clerp字段，无论之前是否存在
           const previousClerp = node.clerp;
           node.clerp = trimmedClerp;
           updated = true;
-          console.log('✅ 已更新节点clerp:', {
+          console.log('✅ Updated node clerp:', {
             node_id: clickedId,
             feature: node.feature,
             layer: node.layer,
             feature_type: node.feature_type,
-            previousClerp: previousClerp || '(空)',
-            newClerp: trimmedClerp || '(空)',
+            previousClerp: previousClerp || '(empty)',
+            newClerp: trimmedClerp || '(empty)',
             newClerpLength: trimmedClerp.length
           });
           break;
@@ -895,23 +892,23 @@ export const CircuitVisualization = () => {
       }
 
       if (updated) {
-        // 更新状态为修改后的深拷贝
+        // Commit updated JSON back into state
         setOriginalCircuitJson(updatedCircuitJson);
         
-        // 强制触发重新获取节点数据
+        // Force refresh of node data
         setUpdateCounter(prev => prev + 1);
         
-        // 标记为有未保存的更改
+        // Mark unsaved changes
         setHasUnsavedChanges(true);
         
-        console.log('✅ 本地数据已更新，触发重新渲染');
-        console.log('🔍 验证更新:', {
+        console.log('✅ Local data updated, triggering re-render');
+        console.log('🔍 Verification:', {
           nodeId: clickedId,
           updatedClerp: updatedCircuitJson.nodes?.find((n: any) => n.node_id === clickedId)?.clerp,
           updateCounter: updateCounter + 1
         });
         
-        // 自动下载更新后的文件（使用原文件名）
+        // Automatically download updated JSON file (derive from original filename)
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const fileName = originalFileName || 'circuit_data.json';
         const baseName = fileName.replace('.json', '');
@@ -929,26 +926,37 @@ export const CircuitVisualization = () => {
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
         
-        // 添加到保存历史
-        setSaveHistory(prev => [...prev, `${new Date().toLocaleTimeString()}: 节点 ${clickedId} - ${trimmedClerp.length === 0 ? '清空clerp' : `更新为: ${trimmedClerp.substring(0, 30)}...`}`]);
+        // Append entry to save history
+        setSaveHistory(prev => [
+          ...prev,
+          `${new Date().toLocaleTimeString()}: node ${clickedId} - ${
+            trimmedClerp.length === 0 ? 'cleared clerp' : `updated to: ${trimmedClerp.substring(0, 30)}...`
+          }`
+        ]);
         
-        console.log('📥 文件已自动下载:', updatedFileName);
+        console.log('📥 Updated file downloaded:', updatedFileName);
         
-        // 显示成功消息和使用指引
-        alert(`✅ Clerp已成功保存并下载！${trimmedClerp.length === 0 ? '(保存为空内容)' : ''}\n\n📁 文件已保存到Downloads文件夹:\n${updatedFileName}\n\n💡 使用提示:\n1. 可以直接用新文件替换原文件\n2. 或者重新上传新文件到此页面\n3. 文件名包含时间戳避免覆盖`);
+        alert(
+          `✅ Clerp saved and downloaded successfully! ${trimmedClerp.length === 0 ? '(saved as empty)' : ''}\n\n` +
+          `📁 File saved to your Downloads folder:\n${updatedFileName}\n\n` +
+          `💡 How to use the updated file:\n` +
+          `1. Replace the original file with this updated one\n` +
+          `2. Or upload the new file to this page again\n` +
+          `3. The filename includes a timestamp to avoid accidental overwrites`
+        );
         
       } else {
-        throw new Error(`未找到对应的节点数据 (node_id: ${clickedId})`);
+        throw new Error(`Could not find node data for node_id: ${clickedId}`);
       }
     } catch (err) {
-      console.error('保存失败:', err);
-      alert('保存失败: ' + (err instanceof Error ? err.message : '未知错误'));
+      console.error('Save failed:', err);
+      alert('Save failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
       setIsSaving(false);
     }
   }, [clickedId, originalCircuitJson, editingClerp, originalFileName, setOriginalCircuitJson, updateCounter]);
 
-  // 快速导出当前状态的函数
+  // Quick export of current JSON state
   const handleQuickExport = useCallback(() => {
     if (!originalCircuitJson) return;
     
@@ -970,8 +978,13 @@ export const CircuitVisualization = () => {
     URL.revokeObjectURL(url);
     
     setHasUnsavedChanges(false);
-    console.log('📤 快速导出完成:', exportFileName);
-    alert(`📤 文件已导出到Downloads文件夹:\n${exportFileName}\n\n💡 要使用更新后的文件:\n1. 用新文件替换原文件\n2. 或者拖拽新文件到此页面重新加载`);
+    console.log('📤 Quick export completed:', exportFileName);
+    alert(
+      `📤 File exported to your Downloads folder:\n${exportFileName}\n\n` +
+      `💡 To use the updated file:\n` +
+      `1. Replace the original file with this one\n` +
+      `2. Or drag-and-drop the new file onto this page to reload`
+    );
   }, [originalCircuitJson, originalFileName]);
 
   if (error) {
@@ -1058,9 +1071,9 @@ export const CircuitVisualization = () => {
     );
   }
 
-  // 调试传递给ChessBoard的数据
+  // Debug data passed to ChessBoard
   if (clickedId && nodeActivationData) {
-    console.log('🎲 传递给ChessBoard的数据:', {
+    console.log('🎲 Data passed to ChessBoard:', {
       nodeId: clickedId,
       hasActivations: !!nodeActivationData.activations,
       activationsLength: nodeActivationData.activations?.length || 0,
@@ -1081,7 +1094,7 @@ export const CircuitVisualization = () => {
           <h2 className="text-l">{linkGraphData.metadata.prompt_tokens.join(' ')}</h2>
         </div>
         <div className="flex items-center space-x-2">
-          {/* 颜色-文件名图例（多文件时显示） */}
+          {/* Color legend for each source file (multi-file only) */}
           {linkGraphData.metadata.sourceFileNames && linkGraphData.metadata.sourceFileNames.length > 1 && (
             <div className="hidden md:flex items-center space-x-3 mr-4">
               {linkGraphData.metadata.sourceFileNames.map((name, idx) => (
@@ -1099,24 +1112,24 @@ export const CircuitVisualization = () => {
           {hasUnsavedChanges && (
             <div className="flex items-center space-x-2 px-3 py-1 bg-orange-100 text-orange-800 rounded-md text-sm">
               <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
-              <span>有未导出的更改</span>
+              <span>There are unsaved changes</span>
               <button
                 onClick={handleQuickExport}
                 className="ml-2 px-2 py-1 bg-orange-200 hover:bg-orange-300 text-orange-900 rounded text-xs transition-colors"
-                title="立即导出所有更改"
+                title="Export all changes now"
               >
-                导出
+                Export
               </button>
             </div>
           )}
           {saveHistory.length > 0 && (
             <div className="relative group">
               <button className="px-3 py-1 text-sm bg-green-100 text-green-800 rounded hover:bg-green-200 transition-colors">
-                保存历史 ({saveHistory.length})
+                Save history ({saveHistory.length})
               </button>
               <div className="absolute right-0 top-full mt-1 w-80 bg-white border rounded-lg shadow-lg z-10 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
                 <div className="p-3">
-                  <h4 className="font-medium text-gray-900 mb-2">最近的更改:</h4>
+                  <h4 className="font-medium text-gray-900 mb-2">Recent changes:</h4>
                   <div className="space-y-1 max-h-40 overflow-y-auto">
                     {saveHistory.slice(-5).reverse().map((entry, index) => (
                       <div key={index} className="text-xs text-gray-600 p-2 bg-gray-50 rounded">
@@ -1137,28 +1150,28 @@ export const CircuitVisualization = () => {
         </div>
       </div>
 
-      {/* Chess Board Display - 单文件 */}
+      {/* Chess Board Display - single-file */}
       {(!linkGraphData.metadata.sourceFileNames || linkGraphData.metadata.sourceFileNames.length <= 1) && fen && (
         <div className="flex justify-center mb-6">
           <div className="bg-white rounded-lg border shadow-sm p-4 pb-8">
             <h3 className="text-lg font-semibold mb-4 text-center">
-              Circuit棋盘状态
+              Circuit Board State
               {clickedId && nodeActivationData && (
                 <span className="text-sm font-normal text-blue-600 ml-2">
-                  (节点: {clickedId}{nodeActivationData.nodeType ? ` - ${nodeActivationData.nodeType.toUpperCase()}` : ''})
+                  (Node: {clickedId}{nodeActivationData.nodeType ? ` - ${nodeActivationData.nodeType.toUpperCase()}` : ''})
                 </span>
               )}
             </h3>
             {outputMove && (
               <div className="text-center mb-2 text-sm text-green-600 font-medium">
-                输出移动: {outputMove} 🎯
+                Output move: {outputMove} 🎯
               </div>
             )}
             {clickedId && nodeActivationData && nodeActivationData.activations && (
               <div className="text-center mb-2 text-sm text-purple-600">
-                激活数据: {nodeActivationData.activations.filter((v: number) => v !== 0).length} 个非零激活
+                Activations: {nodeActivationData.activations.filter((v: number) => v !== 0).length} non-zero activations
                 {nodeActivationData.zPatternIndices && nodeActivationData.zPatternValues && 
-                  `, ${nodeActivationData.zPatternValues.length} 个Z模式连接`
+                  `, ${nodeActivationData.zPatternValues.length} Z-pattern connections`
                 }
               </div>
             )}
@@ -1179,14 +1192,14 @@ export const CircuitVisualization = () => {
         </div>
       )}
 
-      {/* Chess Board Display - 多文件：为每个源文件渲染一个棋盘，并按来源显示激活 */}
+      {/* Chess Board Display - multi-file: one board per source file with per-source activations */}
       {linkGraphData.metadata.sourceFileNames && linkGraphData.metadata.sourceFileNames.length > 1 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           {multiOriginalJsons.map((entry, idx) => {
             const fileFen = extractFenFromCircuitJson(entry.json);
             if (!fileFen) return null;
             const fileMove = extractOutputMoveFromCircuitJson(entry.json);
-            // 判断当前选中节点是否属于该文件
+            // Check whether the selected node belongs to this file
             const currentNode = clickedId ? linkGraphData.nodes.find(n => n.nodeId === clickedId) : null;
             const belongs = currentNode && (currentNode.sourceIndices?.includes(idx) || currentNode.sourceIndex === idx);
             const perFileActivation = (clickedId && belongs)
@@ -1202,19 +1215,19 @@ export const CircuitVisualization = () => {
                   />
                   <span className="truncate" title={entry.fileName}>{entry.fileName}</span>
                   {clickedId && belongs && (
-                    <span className="text-xs font-normal text-blue-600 ml-2">(含该节点)</span>
+                    <span className="text-xs font-normal text-blue-600 ml-2">(contains this node)</span>
                   )}
                 </h3>
                 {fileMove && (
                   <div className="text-center mb-2 text-sm text-green-600 font-medium">
-                    输出移动: {fileMove} 🎯
+                    Output move: {fileMove} 🎯
                   </div>
                 )}
                 {clickedId && belongs && perFileActivation.activations && (
                   <div className="text-center mb-2 text-sm text-purple-600">
-                    激活数据: {perFileActivation.activations.filter((v: number) => v !== 0).length} 个非零激活
+                    Activations: {perFileActivation.activations.filter((v: number) => v !== 0).length} non-zero activations
                     {perFileActivation.zPatternIndices && perFileActivation.zPatternValues &&
-                      `, ${perFileActivation.zPatternValues.length} 个Z模式连接`}
+                      `, ${perFileActivation.zPatternValues.length} Z-pattern connections`}
                   </div>
                 )}
                 <ChessBoard
@@ -1278,7 +1291,7 @@ export const CircuitVisualization = () => {
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold">Node Clerp Editor</h3>
               <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">节点: {clickedId}</span>
+                <span className="text-sm text-gray-600">Node: {clickedId}</span>
                 {nodeActivationData.nodeType && (
                   <span className="px-2 py-1 bg-blue-100 text-blue-800 text-sm font-medium rounded-full">
                     {nodeActivationData.nodeType.toUpperCase()}
@@ -1287,20 +1300,20 @@ export const CircuitVisualization = () => {
               </div>
             </div>
             
-            {/* 始终显示编辑器，无论clerp是否存在或为空 */}
+            {/* Always show the editor, regardless of whether clerp exists or is empty */}
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <label className="block text-sm font-medium text-gray-700">
-                  Clerp内容 (可编辑)
+                  Clerp content (editable)
                   {nodeActivationData.clerp === undefined && (
-                    <span className="text-xs text-gray-500 ml-2">(节点暂无clerp字段，可新建)</span>
+                    <span className="text-xs text-gray-500 ml-2">(This node has no clerp field yet — you can create one.)</span>
                   )}
                   {nodeActivationData.clerp === '' && (
-                    <span className="text-xs text-gray-500 ml-2">(当前为空，可编辑)</span>
+                    <span className="text-xs text-gray-500 ml-2">(Currently empty — you can edit it.)</span>
                   )}
                 </label>
                 <div className="text-xs text-gray-500">
-                  字符数: {editingClerp.length}
+                  Characters: {editingClerp.length}
                 </div>
               </div>
               <textarea
@@ -1309,8 +1322,8 @@ export const CircuitVisualization = () => {
                 className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
                 placeholder={
                   nodeActivationData.clerp === undefined 
-                    ? "该节点暂无clerp字段，您可以在此输入新的clerp内容..." 
-                    : "输入或编辑节点的clerp内容..."
+                    ? "This node has no clerp field yet; you can enter new clerp content here..." 
+                    : "Enter or edit the clerp content for this node..."
                 }
               />
               <div className="flex justify-end space-x-2">
@@ -1319,11 +1332,11 @@ export const CircuitVisualization = () => {
                   className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
                   disabled={isSaving}
                 >
-                  重置
+                  Reset
                 </button>
                 {(() => {
                   const isDisabled = isSaving || editingClerp.trim() === (nodeActivationData.clerp || '');
-                  console.log('🔍 按钮状态调试:', {
+                  console.log('🔍 Button state debug:', {
                     isSaving,
                     editingClerpTrimmed: editingClerp.trim(),
                     nodeActivationDataClerp: nodeActivationData.clerp,
@@ -1337,51 +1350,52 @@ export const CircuitVisualization = () => {
                       onClick={handleSaveClerp}
                       disabled={isDisabled}
                       className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
-                      title="保存更改并自动下载更新后的文件到Downloads文件夹"
+                      title="Save changes and automatically download the updated file to your Downloads folder"
                     >
                       {isSaving && (
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                       )}
-                      {isSaving ? '保存中...' : '保存并下载'}
+                      {isSaving ? 'Saving...' : 'Save & Download'}
                     </button>
                   );
                 })()}
               </div>
               {editingClerp.trim() !== (nodeActivationData.clerp || '') && (
                 <div className="text-xs text-orange-600 bg-orange-50 p-2 rounded">
-                  ⚠️ 内容已修改，请点击"保存到文件"以保存更改
+                  ⚠️ Content has changed. Click "Save & Download" to persist your edits.
                 </div>
               )}
               
-              {/* 显示当前状态信息 */}
+              {/* Current state summary */}
               <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
                 <div className="flex justify-between">
                   <span>
-                    原始状态: {
+                    Original state:{' '}
+                    {
                       nodeActivationData.clerp === undefined 
-                        ? '无clerp字段' 
+                        ? 'no clerp field' 
                         : nodeActivationData.clerp === '' 
-                          ? '空字符串' 
-                          : `有内容 (${nodeActivationData.clerp.length} 字符)`
+                          ? 'empty string' 
+                          : `has content (${nodeActivationData.clerp.length} chars)`
                     }
                   </span>
                   <span>
-                    当前编辑: {editingClerp === '' ? '空' : `${editingClerp.length} 字符`}
+                    Current edit: {editingClerp === '' ? 'empty' : `${editingClerp.length} chars`}
                   </span>
                 </div>
               </div>
               
-              {/* 使用说明 */}
+              {/* Usage instructions */}
               <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded border-l-4 border-blue-200">
-                <div className="font-medium mb-1">💡 文件更新工作流程:</div>
+                <div className="font-medium mb-1">💡 File update workflow:</div>
                 <ol className="list-decimal list-inside space-y-1 text-blue-700">
-                  <li>编辑clerp内容后点击"保存并下载"</li>
-                  <li>更新后的文件会自动下载到Downloads文件夹</li>
-                  <li>用新文件替换原文件，或重新拖拽到此页面</li>
-                  <li>文件名包含时间戳，避免意外覆盖</li>
+                  <li>Edit the clerp content and click "Save & Download".</li>
+                  <li>The updated file will be downloaded to your Downloads folder.</li>
+                  <li>Replace the original file with the new one, or drag-and-drop it back onto this page.</li>
+                  <li>The filename includes a timestamp to avoid accidental overwrites.</li>
                 </ol>
                 <div className="mt-2 text-xs">
-                  <strong>提示:</strong> 由于浏览器安全限制，无法直接修改原文件，但下载的文件包含所有更改。
+                  <strong>Note:</strong> Because of browser security restrictions, the original file cannot be modified in place, but the downloaded file contains all changes.
                 </div>
               </div>
             </div>
@@ -1390,21 +1404,21 @@ export const CircuitVisualization = () => {
 
         {/* Bottom Row: Feature Card below Link Graph Container */}
         {clickedId && (() => {
-          // 获取当前选中节点的信息
+          // Get info for currently selected node
           const currentNode = linkGraphData.nodes.find(node => node.nodeId === clickedId);
           
           if (!currentNode) {
             return null;
           }
           
-          // 从node_id解析真正的feature ID (格式: layer_featureId_ctxIdx)
-          // 注意：layer需要除以2得到实际的模型层数，因为M和A分别占一层
+          // Parse feature ID from nodeId (format: layer_featureId_ctxIdx)
+          // Note: divide layer index by 2 to get actual model layer (M and A occupy separate layers)
           const parseNodeId = (nodeId: string) => {
             const parts = nodeId.split('_');
             if (parts.length >= 2) {
               const rawLayer = parseInt(parts[0]) || 0;
               return {
-                layerIdx: Math.floor(rawLayer / 2), // 除以2得到实际模型层数
+                layerIdx: Math.floor(rawLayer / 2),
                 featureIndex: parseInt(parts[1]) || 0
               };
             }
@@ -1414,8 +1428,8 @@ export const CircuitVisualization = () => {
           const { layerIdx, featureIndex } = parseNodeId(currentNode.nodeId);
           const isLorsa = currentNode.feature_type?.toLowerCase() === 'lorsa';
           
-          // 调试节点连接信息
-          console.log('🔍 节点连接调试:', {
+          // Debug node connectivity
+          console.log('🔍 Node connectivity debug:', {
             nodeId: currentNode.nodeId,
             hasSourceLinks: !!currentNode.sourceLinks,
             sourceLinksCount: currentNode.sourceLinks?.length || 0,
@@ -1424,7 +1438,7 @@ export const CircuitVisualization = () => {
             totalLinksInData: linkGraphData.links.length
           });
           
-          // 根据节点类型构建正确的dictionary名
+          // Build dictionary name according to node type
           const dictionary = isLorsa 
             ? (linkGraphData?.metadata?.lorsa_analysis_name && linkGraphData.metadata.lorsa_analysis_name.includes('BT4')
                 ? `BT4_lorsa_L${layerIdx}A` 
@@ -1448,17 +1462,17 @@ export const CircuitVisualization = () => {
                       </span>
                     </div>
                   )}
-                  {/* 跳转到Feature页面的链接 */}
+                  {/* Link to Feature page */}
                   {currentNode && featureIndex !== undefined && (
                     <Link
                       to={`/features?dictionary=${encodeURIComponent(dictionary)}&featureIndex=${featureIndex}`}
                       className="inline-flex items-center px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 transition-colors"
-                      title={`跳转到L${layerIdx} ${nodeTypeDisplay} Feature #${featureIndex}`}
+                      title={`Go to L${layerIdx} ${nodeTypeDisplay} feature #${featureIndex}`}
                     >
                       <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                       </svg>
-                      查看L{layerIdx} {nodeTypeDisplay} #{featureIndex}
+                      View L{layerIdx} {nodeTypeDisplay} #{featureIndex}
                     </Link>
                   )}
                 </div>

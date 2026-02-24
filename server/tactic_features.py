@@ -42,7 +42,7 @@ def collect_activation_stats(
     transcoders: Dict[int, any],
     log_every: int = 25
 ) -> Tuple[List[collections.Counter], List[collections.Counter], int]:
-    """统计FEN数据集上各层LoRSA/TC特征是否激活"""
+    """统计FEN数据集上各层Lorsa/TC特征是否激活"""
     num_layers = len(lorsas)
     lorsa_counts: List[collections.Counter] = [collections.Counter() for _ in range(num_layers)]
     tc_counts: List[collections.Counter] = [collections.Counter() for _ in range(num_layers)]
@@ -57,7 +57,7 @@ def collect_activation_stats(
         num_ok += 1
 
         for layer in range(num_layers):
-            # LoRSA 激活
+            # Lorsa 激活
             try:
                 lorsa_input = cache[f'blocks.{layer}.hook_attn_in']
                 lorsa_dense = lorsas[layer].encode(lorsa_input)
@@ -97,20 +97,20 @@ def compute_all_diffs(
     n_random: int,
     n_tactic: int,
 ) -> Tuple[List[Tuple[int, int, float, float, float, str]], List[Tuple[int, int, float, float, float, str]]]:
-    """计算LoRSA和TC的所有差异"""
+    """计算Lorsa和TC的所有差异"""
     lorsa_results = []
     tc_results = []
     num_layers = len(rand_lorsa_counts)
     
     for layer in range(num_layers):
-        # LoRSA
+        # Lorsa
         c_r = rand_lorsa_counts[layer]
         c_t = tactic_lorsa_counts[layer]
         keys = set(c_r.keys()) | set(c_t.keys())
         for f in keys:
             pr = (c_r.get(f, 0) / max(1, n_random)) if n_random > 0 else 0.0
             pt = (c_t.get(f, 0) / max(1, n_tactic)) if n_tactic > 0 else 0.0
-            lorsa_results.append((layer, int(f), pt - pr, pr, pt, 'LoRSA'))
+            lorsa_results.append((layer, int(f), pt - pr, pr, pt, 'Lorsa'))
         
         # TC
         c_r = rand_tc_counts[layer]

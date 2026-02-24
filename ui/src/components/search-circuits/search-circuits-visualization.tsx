@@ -11,8 +11,6 @@ import { Zap, ChevronDown, ChevronRight, Maximize2, Download, Trash2, Play, Squa
 import { EdgeCircuitTracePanel, EdgeCircuitTraceResult } from "./edge-circuit-trace-panel";
 import { ModelLoadingStatus, useModelLoadingStatus } from "@/components/shared/model-loading-status";
 import { SaeComboLoader } from "@/components/common/SaeComboLoader";
-
-// 搜索追踪数据类型定义
 interface SearchNode {
   fen: string;
   moves: string[];
@@ -65,7 +63,7 @@ interface SearchTraceData {
   metadata: SearchMetadata;
 }
 
-// 用于可视化的树节点
+// for visualizing the tree node
 interface TreeNode {
   fen: string;
   shortFen: string;
@@ -89,13 +87,13 @@ export const SearchCircuitsVisualization = () => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [fileName, setFileName] = useState<string>("");
   
-  // Edge Circuit Trace 相关状态
+  // Edge Circuit Trace related states
   const [edgeTraceResults, setEdgeTraceResults] = useState<Map<string, EdgeCircuitTraceResult>>(new Map());
   const [selectedEdgeForTrace, setSelectedEdgeForTrace] = useState<SearchEdge | null>(null);
   const [showEdgeTraceDialog, setShowEdgeTraceDialog] = useState(false);
   const [expandedEdgeTraces, setExpandedEdgeTraces] = useState<Set<string>>(new Set());
   
-  // 批量 Trace 相关状态
+  // Batch Trace related states
   const [showBatchTraceDialog, setShowBatchTraceDialog] = useState(false);
   const [isBatchTracing, setIsBatchTracing] = useState(false);
   const [batchTraceProgress, setBatchTraceProgress] = useState({ current: 0, total: 0, currentEdge: '' });
@@ -106,20 +104,20 @@ export const SearchCircuitsVisualization = () => {
     max_act_times: null as number | null,
     side: 'both' as 'q' | 'k' | 'both',
     orderMode: 'positive' as 'positive' | 'negative',
-    skipExisting: true,  // 跳过已有结果的边
+    skipExisting: true,  // skip edges with existing results
   });
   const batchTraceAbortRef = useRef(false);
   const batchTraceControllerRef = useRef<AbortController | null>(null);
   
-  // 模型加载状态
+  // model loading status
   const { isLoading: isModelLoading, isLoaded: isModelLoaded } = useModelLoadingStatus();
 
-  // 生成边的唯一键
+  // generate the unique key of the edge
   const getEdgeKey = useCallback((edge: SearchEdge) => {
     return `${edge.parent}__${edge.child}__${edge.move}`;
   }, []);
 
-  // 构建树结构
+  // build the tree structure
   const treeData = useMemo(() => {
     if (!searchData) return null;
 
@@ -128,14 +126,14 @@ export const SearchCircuitsVisualization = () => {
       nodeMap.set(node.fen, node);
     });
 
-    // 聚合边信息：对于相同的 (parent, child, move) 组合，取最后一条边的信息
+    // aggregate edge information: for the same (parent, child, move) combination, take the last edge information
     const edgeMap = new Map<string, SearchEdge>();
     searchData.edges.forEach(edge => {
       const key = `${edge.parent}__${edge.child}__${edge.move}`;
       edgeMap.set(key, edge);
     });
 
-    // 构建子节点映射
+    // build the child node mapping
     const childrenMap = new Map<string, { child: string; edge: SearchEdge }[]>();
     edgeMap.forEach((edge) => {
       if (!childrenMap.has(edge.parent)) {
@@ -144,7 +142,7 @@ export const SearchCircuitsVisualization = () => {
       childrenMap.get(edge.parent)!.push({ child: edge.child, edge });
     });
 
-    // 递归构建树
+    // recursively build the tree
     const buildTree = (fen: string, depth: number, visited: Set<string>): TreeNode | null => {
       if (visited.has(fen)) return null;
       visited.add(fen);
@@ -155,13 +153,13 @@ export const SearchCircuitsVisualization = () => {
       const children: TreeNode[] = [];
       const childEdges = childrenMap.get(fen) || [];
 
-      // 计算该节点的总访问次数
+      // calculate the total visits of the node
       let totalVisits = 0;
       childEdges.forEach(({ edge }) => {
         totalVisits = Math.max(totalVisits, edge.visits);
       });
 
-      // 找出最佳移动（访问次数最多的）
+      // find the best move (the one with the most visits)
       let bestMove: string | undefined;
       let maxVisits = 0;
       childEdges.forEach(({ edge }) => {
@@ -171,7 +169,7 @@ export const SearchCircuitsVisualization = () => {
         }
       });
 
-      // 按访问次数排序子节点
+      // sort the children by the visits
       const sortedChildEdges = [...childEdges].sort((a, b) => b.edge.visits - a.edge.visits);
 
       sortedChildEdges.forEach(({ child, edge }) => {
@@ -182,7 +180,7 @@ export const SearchCircuitsVisualization = () => {
         }
       });
 
-      // 创建简短的FEN用于显示
+      // create a short FEN for displaying
       const shortFen = fen.split(' ')[0].slice(0, 20) + '...';
 
       return {
@@ -202,10 +200,10 @@ export const SearchCircuitsVisualization = () => {
     return buildTree(rootFen, 0, new Set());
   }, [searchData]);
 
-  // 处理文件上传
+  // handle the file upload
   const handleFileUpload = useCallback(async (file: File) => {
     if (!file.name.endsWith('.json')) {
-      setError('请上传 JSON 文件');
+      setError('Please upload a JSON file');
       return;
     }
 
@@ -216,9 +214,9 @@ export const SearchCircuitsVisualization = () => {
       const text = await file.text();
       const jsonData: SearchTraceData = JSON.parse(text);
 
-      // 验证数据格式
+      // Validate basic JSON structure
       if (!jsonData.nodes || !jsonData.edges || !jsonData.metadata) {
-        throw new Error('无效的搜索追踪 JSON 格式：缺少 nodes、edges 或 metadata 字段');
+        throw new Error('Invalid search trace JSON: missing "nodes", "edges", or "metadata" fields.');
       }
 
       setSearchData(jsonData);
@@ -228,13 +226,13 @@ export const SearchCircuitsVisualization = () => {
       setEdgeTraceResults(new Map());
       setExpandedEdgeTraces(new Set());
       
-      // 默认展开根节点
+      // By default, expand the root node
       if (jsonData.metadata.root_fen) {
         setExpandedNodes(new Set([jsonData.metadata.root_fen]));
       }
     } catch (err) {
-      console.error('加载搜索追踪数据失败:', err);
-      setError(err instanceof Error ? err.message : '加载搜索追踪数据失败');
+      console.error('Failed to load search trace data:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load search trace data.');
     } finally {
       setIsLoading(false);
     }
@@ -267,7 +265,7 @@ export const SearchCircuitsVisualization = () => {
     }
   }, [handleFileUpload]);
 
-  // 切换节点展开/折叠
+  // Toggle node expanded/collapsed
   const toggleNode = useCallback((fen: string) => {
     setExpandedNodes(prev => {
       const next = new Set(prev);
@@ -280,7 +278,7 @@ export const SearchCircuitsVisualization = () => {
     });
   }, []);
 
-  // 选择节点
+  // Select a node in the search tree
   const selectNode = useCallback((fen: string) => {
     if (!searchData) return;
     const node = searchData.nodes.find(n => n.fen === fen);
@@ -288,16 +286,16 @@ export const SearchCircuitsVisualization = () => {
     setSelectedNodeFen(fen);
   }, [searchData]);
 
-  // 获取节点的入边信息
+  // Get incoming edges for a node
   const getNodeInEdges = useCallback((fen: string) => {
     if (!searchData) return [];
     return searchData.edges.filter(e => e.child === fen);
   }, [searchData]);
 
-  // 获取节点的出边信息
+  // Get outgoing edges for a node (aggregated by (parent, child, move))
   const getNodeOutEdges = useCallback((fen: string) => {
     if (!searchData) return [];
-    // 聚合相同 (parent, child, move) 的边
+    // Aggregate edges with the same (parent, child, move) combination
     const edgeMap = new Map<string, SearchEdge>();
     searchData.edges.filter(e => e.parent === fen).forEach(edge => {
       const key = `${edge.child}__${edge.move}`;
@@ -306,7 +304,7 @@ export const SearchCircuitsVisualization = () => {
     return Array.from(edgeMap.values()).sort((a, b) => b.visits - a.visits);
   }, [searchData]);
 
-  // 处理边的 Circuit Trace 完成
+  // Handle completion of a single edge Circuit Trace
   const handleEdgeTraceComplete = useCallback((result: EdgeCircuitTraceResult) => {
     setEdgeTraceResults(prev => {
       const next = new Map(prev);
@@ -315,7 +313,7 @@ export const SearchCircuitsVisualization = () => {
     });
   }, []);
 
-  // 切换边 trace 展开状态
+  // Toggle edge trace expanded/collapsed state
   const toggleEdgeTraceExpand = useCallback((edgeKey: string) => {
     setExpandedEdgeTraces(prev => {
       const next = new Set(prev);
@@ -328,16 +326,16 @@ export const SearchCircuitsVisualization = () => {
     });
   }, []);
 
-  // 打开边 trace 对话框
+  // Open edge trace dialog
   const openEdgeTraceDialog = useCallback((edge: SearchEdge) => {
     setSelectedEdgeForTrace(edge);
     setShowEdgeTraceDialog(true);
   }, []);
 
-  // 导出所有边 trace 结果
+  // Export all edge trace results
   const exportAllEdgeTraces = useCallback(() => {
     if (edgeTraceResults.size === 0) {
-      alert('没有可导出的边 Trace 结果');
+      alert('No edge trace results to export');
       return;
     }
 
@@ -368,15 +366,15 @@ export const SearchCircuitsVisualization = () => {
     URL.revokeObjectURL(url);
   }, [edgeTraceResults, searchData]);
 
-  // 清除所有边 trace 结果
+  // Clear all edge trace results
   const clearAllEdgeTraces = useCallback(() => {
-    if (confirm('确定要清除所有边 Trace 结果吗？')) {
+    if (confirm('Are you sure you want to clear all edge trace results?')) {
       setEdgeTraceResults(new Map());
       setExpandedEdgeTraces(new Set());
     }
   }, []);
 
-  // 获取所有唯一的边
+  // Get all unique edges in the search trace
   const getAllUniqueEdges = useCallback((): SearchEdge[] => {
     if (!searchData) return [];
     
@@ -389,23 +387,23 @@ export const SearchCircuitsVisualization = () => {
     return Array.from(edgeMap.values());
   }, [searchData]);
 
-  // 批量 Trace 所有边
+  // Run Circuit Trace in batch for all edges
   const startBatchTrace = useCallback(async () => {
     if (!searchData || !isModelLoaded) return;
     
-    // 先检查后端是否有正在进行的circuit tracing进程
+    // First, check whether the backend is already running another circuit tracing job
     try {
       const statusResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
       if (statusResponse.ok) {
         const status = await statusResponse.json();
         if (status.is_tracing) {
-          alert('后端正在执行另一个circuit tracing进程，请等待完成后再试');
+          alert('The backend is already running another circuit tracing job. Please wait for it to finish and try again.');
           return;
         }
       }
     } catch (error) {
-      console.error('检查circuit tracing状态失败:', error);
-      // 如果检查失败，仍然继续执行（避免因为网络问题阻止用户操作）
+      console.error('Failed to check circuit tracing status:', error);
+      // If the status check fails, still proceed (avoid blocking user due to network errors)
     }
     
     const allEdges = getAllUniqueEdges();
@@ -414,7 +412,7 @@ export const SearchCircuitsVisualization = () => {
       : allEdges;
     
     if (edgesToTrace.length === 0) {
-      alert('没有需要 Trace 的边（所有边都已有结果）');
+      alert('No edges to trace (all edges already have results).');
       return;
     }
     
@@ -424,27 +422,27 @@ export const SearchCircuitsVisualization = () => {
     setShowBatchTraceDialog(false);
     
     for (let i = 0; i < edgesToTrace.length; i++) {
-      // 检查是否被中止
+      // Check if batch tracing has been aborted
       if (batchTraceAbortRef.current) {
-        console.log('🛑 批量 Trace 被用户中止');
+        console.log('🛑 Batch trace aborted by user');
         break;
       }
       
-      // 在每次循环迭代前也检查一次状态（防止在批量trace过程中用户启动了另一个trace）
+      // For each iteration, also check status to ensure no concurrent tracing job was started
       try {
         const statusResponse = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace/status`);
         if (statusResponse.ok) {
           const status = await statusResponse.json();
           if (status.is_tracing && i > 0) {
-            // 如果不是第一个请求，说明有新的trace开始了，中止批量trace
-            console.log('🛑 检测到新的circuit tracing进程，中止批量 Trace');
+            // If this is not the first request and a new trace started, abort this batch
+            console.log('🛑 Detected a new circuit tracing job, aborting batch trace');
             batchTraceAbortRef.current = true;
             break;
           }
         }
       } catch (error) {
-        console.error('检查circuit tracing状态失败:', error);
-        // 如果检查失败，继续执行
+        console.error('Failed to check circuit tracing status:', error);
+        // If the status check fails, continue
       }
       
       const edge = edgesToTrace[i];
@@ -457,9 +455,9 @@ export const SearchCircuitsVisualization = () => {
       });
       
       try {
-        console.log(`🔍 批量 Trace [${i + 1}/${edgesToTrace.length}]: ${edge.move}`);
+        console.log(`🔍 Batch Trace [${i + 1}/${edgesToTrace.length}]: ${edge.move}`);
         
-        // 为当前请求创建 AbortController，便于用户中止
+        // Create an AbortController so the user can abort the current request
         const controller = new AbortController();
         batchTraceControllerRef.current = controller;
 
@@ -493,7 +491,7 @@ export const SearchCircuitsVisualization = () => {
             childFen: edge.child,
             move: edge.move,
             traceResult: data,
-            visualizationData: null,  // 批量模式不预处理可视化数据
+            visualizationData: null,  // In batch mode we do not precompute visualization data
             timestamp: Date.now(),
             params: {
               max_feature_nodes: batchTraceParams.max_feature_nodes,
@@ -511,20 +509,20 @@ export const SearchCircuitsVisualization = () => {
             return next;
           });
           
-          console.log(`✅ 批量 Trace 完成 [${i + 1}/${edgesToTrace.length}]: ${edge.move}`);
+          console.log(`✅ Batch Trace completed [${i + 1}/${edgesToTrace.length}]: ${edge.move}`);
         } else {
           const errorText = await response.text();
-          console.error(`❌ 批量 Trace 失败 [${i + 1}/${edgesToTrace.length}]: ${edge.move}`, errorText);
+          console.error(`❌ Batch Trace failed [${i + 1}/${edgesToTrace.length}]: ${edge.move}`, errorText);
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
-          console.warn(`⏹️ 当前 Trace 已被中止: ${edge.move}`);
+          console.warn(`⏹️ Current trace aborted: ${edge.move}`);
           break;
         }
-        console.error(`❌ 批量 Trace 出错 [${i + 1}/${edgesToTrace.length}]: ${edge.move}`, error);
+        console.error(`❌ Batch Trace error [${i + 1}/${edgesToTrace.length}]: ${edge.move}`, error);
       }
       
-      // 短暂延迟，避免请求过快
+      // Short delay to avoid sending requests too quickly
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     
@@ -533,7 +531,7 @@ export const SearchCircuitsVisualization = () => {
     batchTraceControllerRef.current = null;
   }, [searchData, isModelLoaded, batchTraceParams, edgeTraceResults, getAllUniqueEdges, getEdgeKey]);
 
-  // 中止批量 Trace
+  // Abort batch trace
   const abortBatchTrace = useCallback(() => {
     batchTraceAbortRef.current = true;
     if (batchTraceControllerRef.current) {
@@ -542,18 +540,18 @@ export const SearchCircuitsVisualization = () => {
     setIsBatchTracing(false);
   }, []);
 
-  // 渲染树节点
+  // Render a single tree node in the search tree
   const renderTreeNode = useCallback((node: TreeNode, isRoot: boolean = false): React.ReactNode => {
     const isExpanded = expandedNodes.has(node.fen);
     const isSelected = selectedNodeFen === node.fen;
     const hasChildren = node.children.length > 0;
 
-    // 根据访问次数确定颜色强度
+    // Determine background intensity based on visit count
     const maxVisits = treeData?.totalVisits || 1;
     const visitRatio = node.totalVisits / Math.max(maxVisits, 1);
     const bgOpacity = Math.max(0.1, Math.min(0.8, visitRatio));
 
-    // 检查该节点的父边是否有 trace 结果
+    // Check whether this node's parent edge already has a trace result
     const parentEdgeKey = node.parentEdge ? getEdgeKey(node.parentEdge) : null;
     const hasParentEdgeTrace = parentEdgeKey ? edgeTraceResults.has(parentEdgeKey) : false;
 
@@ -571,7 +569,7 @@ export const SearchCircuitsVisualization = () => {
           }}
           onClick={() => selectNode(node.fen)}
         >
-          {/* 展开/折叠按钮 */}
+          {/* Expand / collapse toggle */}
           {hasChildren && (
             <button
               onClick={(e) => {
@@ -585,11 +583,11 @@ export const SearchCircuitsVisualization = () => {
           )}
           {!hasChildren && <div className="w-6" />}
 
-          {/* 节点信息 */}
+          {/* Node info */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center space-x-2">
               {isRoot && (
-                <span className="px-2 py-0.5 bg-green-500 text-white text-xs rounded-full">根节点</span>
+                <span className="px-2 py-0.5 bg-green-500 text-white text-xs rounded-full">Root</span>
               )}
               {node.parentEdge && (
                 <span className={`px-2 py-0.5 text-white text-xs rounded font-mono ${hasParentEdgeTrace ? 'bg-purple-500' : 'bg-blue-500'}`}>
@@ -602,24 +600,24 @@ export const SearchCircuitsVisualization = () => {
               </span>
             </div>
             <div className="flex items-center space-x-3 mt-1 text-xs text-gray-500">
-              <span>深度: {node.depth}</span>
-              <span>移动数: {node.moves.length}</span>
+              <span>Depth: {node.depth}</span>
+              <span>Moves: {node.moves.length}</span>
               {node.parentEdge && (
                 <>
-                  <span>访问: {node.parentEdge.visits}</span>
+                  <span>Visits: {node.parentEdge.visits}</span>
                   <span>Q: {node.parentEdge.q.toFixed(3)}</span>
-                  <span>得分: {node.parentEdge.score.toFixed(3)}</span>
+                  <span>Score: {node.parentEdge.score.toFixed(3)}</span>
                 </>
               )}
               {node.is_tt_hit !== null && (
                 <span className={node.is_tt_hit ? 'text-green-600' : 'text-gray-400'}>
-                  {node.is_tt_hit ? 'TT命中' : ''}
+                  {node.is_tt_hit ? 'TT hit' : ''}
                 </span>
               )}
             </div>
           </div>
 
-          {/* Circuit Trace 按钮 */}
+          {/* Circuit Trace button */}
           {node.parentEdge && (
             <button
               onClick={(e) => {
@@ -631,21 +629,21 @@ export const SearchCircuitsVisualization = () => {
                   ? 'bg-purple-100 text-purple-600 hover:bg-purple-200' 
                   : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
               }`}
-              title="Circuit Trace 此边"
+              title="Circuit Trace this edge"
             >
               <Zap className="w-4 h-4" />
             </button>
           )}
 
-          {/* 最佳移动标记 */}
+          {/* Best move tag */}
           {node.bestMove && (
             <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded border border-yellow-300">
-              最佳: {node.bestMove}
+              Best: {node.bestMove}
             </span>
           )}
         </div>
 
-        {/* 子节点 */}
+        {/* Child nodes */}
         {isExpanded && hasChildren && (
           <div className="border-l-2 border-gray-200 ml-3">
             {node.children.map(child => renderTreeNode(child, false))}
@@ -655,7 +653,7 @@ export const SearchCircuitsVisualization = () => {
     );
   }, [expandedNodes, selectedNodeFen, selectNode, toggleNode, treeData, edgeTraceResults, getEdgeKey, openEdgeTraceDialog]);
 
-  // 渲染边 trace 列表
+  // Render edge trace result list
   const renderEdgeTraceList = () => {
     if (edgeTraceResults.size === 0) return null;
 
@@ -664,16 +662,16 @@ export const SearchCircuitsVisualization = () => {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold flex items-center">
             <Zap className="w-5 h-5 mr-2 text-purple-500" />
-            边 Circuit Trace 结果 ({edgeTraceResults.size})
+            Edge Circuit Trace results ({edgeTraceResults.size})
           </h3>
           <div className="flex space-x-2">
             <Button variant="outline" size="sm" onClick={exportAllEdgeTraces}>
               <Download className="w-4 h-4 mr-1" />
-              导出全部
+              Export all
             </Button>
             <Button variant="outline" size="sm" onClick={clearAllEdgeTraces}>
               <Trash2 className="w-4 h-4 mr-1" />
-              清除全部
+              Clear all
             </Button>
           </div>
         </div>
@@ -699,8 +697,8 @@ export const SearchCircuitsVisualization = () => {
                     <span className="text-xs text-gray-500">
                       {result.parentFen.split(' ')[0].slice(0, 15)}...
                     </span>
-                    <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">
-                      {result.traceResult?.nodes?.length || 0} 节点
+                            <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">
+                      {result.traceResult?.nodes?.length || 0} nodes
                     </span>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -712,7 +710,6 @@ export const SearchCircuitsVisualization = () => {
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
-                        // 找到对应的边并打开对话框
                         const edge: SearchEdge = {
                           parent: result.parentFen,
                           child: result.childFen,
@@ -737,7 +734,7 @@ export const SearchCircuitsVisualization = () => {
                   <div className="p-4 border-t">
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
-                        <span className="font-medium text-gray-700">参数:</span>
+                        <span className="font-medium text-gray-700">Parameters:</span>
                         <div className="mt-1 text-xs space-y-1">
                           <div>Side: {result.side}</div>
                           <div>Order Mode: {result.orderMode}</div>
@@ -747,11 +744,11 @@ export const SearchCircuitsVisualization = () => {
                         </div>
                       </div>
                       <div>
-                        <span className="font-medium text-gray-700">结果统计:</span>
+                        <span className="font-medium text-gray-700">Summary:</span>
                         <div className="mt-1 text-xs space-y-1">
-                          <div>节点数: {result.traceResult?.nodes?.length || 0}</div>
-                          <div>连接数: {result.traceResult?.links?.length || 0}</div>
-                          <div>目标移动: {result.traceResult?.metadata?.target_move || result.move}</div>
+                          <div>Nodes: {result.traceResult?.nodes?.length || 0}</div>
+                          <div>Links: {result.traceResult?.links?.length || 0}</div>
+                          <div>Target move: {result.traceResult?.metadata?.target_move || result.move}</div>
                         </div>
                       </div>
                     </div>
@@ -765,22 +762,22 @@ export const SearchCircuitsVisualization = () => {
     );
   };
 
-  // 错误状态
+  // Error state
   if (error) {
     return (
       <div className="space-y-6">
-        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+        {/* Global BT4 SAE combo selection (Lorsa / Transcoder), shares backend cache and loading logs */}
         <SaeComboLoader />
 
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
-            <h3 className="text-lg font-semibold text-red-600 mb-2">加载失败</h3>
+            <h3 className="text-lg font-semibold text-red-600 mb-2">Failed to load</h3>
             <p className="text-gray-600">{error}</p>
             <button
               onClick={() => setError(null)}
               className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
             >
-              重试
+              Retry
             </button>
           </div>
         </div>
@@ -788,28 +785,28 @@ export const SearchCircuitsVisualization = () => {
     );
   }
 
-  // 加载状态
+  // Loading state
   if (isLoading) {
     return (
       <div className="space-y-6">
-        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+        {/* Global BT4 SAE combo selection (Lorsa / Transcoder), shares backend cache and loading logs */}
         <SaeComboLoader />
 
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-            <p className="text-gray-600">正在加载搜索追踪数据...</p>
+            <p className="text-gray-600">Loading search trace data...</p>
           </div>
         </div>
       </div>
     );
   }
 
-  // 未上传文件状态
+  // Initial state (no file uploaded yet)
   if (!searchData) {
     return (
       <div className="space-y-6">
-        {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+        {/* Global BT4 SAE combo selection (Lorsa / Transcoder), shares backend cache and loading logs */}
         <SaeComboLoader />
 
         <div
@@ -830,10 +827,10 @@ export const SearchCircuitsVisualization = () => {
             </div>
             <div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">
-                上传搜索追踪数据
+                Upload search trace data
               </h3>
               <p className="text-gray-600 mb-4">
-                拖拽 JSON 文件到此处，或点击选择文件
+                Drag and drop a JSON file here, or click to select one
               </p>
               <input
                 type="file"
@@ -846,11 +843,11 @@ export const SearchCircuitsVisualization = () => {
                 htmlFor="search-file-upload"
                 className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 cursor-pointer transition-colors"
               >
-                选择文件
+                Select file
               </label>
             </div>
             <p className="text-sm text-gray-500">
-              支持 search_trace_*.json 格式的搜索追踪文件
+              Supports search_trace_*.json formatted search trace files
             </p>
           </div>
         </div>
@@ -858,28 +855,28 @@ export const SearchCircuitsVisualization = () => {
     );
   }
 
-  // 主视图
+  // Main view (file loaded)
   return (
     <div className="space-y-6">
-      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder），共享后端缓存与加载日志 */}
+      {/* Global BT4 SAE combo selection (Lorsa / Transcoder), shares backend cache and loading logs */}
       <SaeComboLoader />
 
-      {/* 头部信息 */}
+      {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-4">
-          <span className="text-sm text-gray-600">文件: {fileName}</span>
+          <span className="text-sm text-gray-600">File: {fileName}</span>
           <span className="px-2 py-1 bg-green-100 text-green-800 text-sm rounded">
-            最佳移动: {searchData.metadata.search_results.best_move}
+            Best move: {searchData.metadata.search_results.best_move}
           </span>
           {edgeTraceResults.size > 0 && (
             <span className="px-2 py-1 bg-purple-100 text-purple-800 text-sm rounded flex items-center">
               <Zap className="w-3 h-3 mr-1" />
-              {edgeTraceResults.size} 边已 Trace
+              {edgeTraceResults.size} edges traced
             </span>
           )}
         </div>
         <div className="flex items-center space-x-2">
-          {/* 批量 Trace 按钮 */}
+          {/* Batch Trace button */}
           {isBatchTracing ? (
             <Button
               variant="destructive"
@@ -887,7 +884,7 @@ export const SearchCircuitsVisualization = () => {
               onClick={abortBatchTrace}
             >
               <Square className="w-4 h-4 mr-1" />
-              停止批量 Trace
+              Stop batch Trace
             </Button>
           ) : (
             <Button
@@ -895,13 +892,13 @@ export const SearchCircuitsVisualization = () => {
               size="sm"
               onClick={() => setShowBatchTraceDialog(true)}
               disabled={!isModelLoaded || isModelLoading}
-              title={!isModelLoaded ? '请先加载模型' : '批量 Trace 所有边'}
+              title={!isModelLoaded ? 'Please load the model first' : 'Batch Trace all edges'}
             >
               <Play className="w-4 h-4 mr-1" />
-              批量 Trace 全部边
+              Batch Trace all edges
             </Button>
           )}
-          {/* 模型加载状态按钮 */}
+          {/* Model loading status button */}
           <ModelLoadingStatus 
             showButton={true} 
             buttonVariant="outline" 
@@ -919,23 +916,23 @@ export const SearchCircuitsVisualization = () => {
             }}
             className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
           >
-            上传新文件
+            Upload new file
           </button>
         </div>
       </div>
 
-      {/* 元数据卡片 */}
+      {/* Metadata cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* 搜索参数 */}
+        {/* Search parameters */}
         <div className="bg-white rounded-lg border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">搜索参数</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Search parameters</h3>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-500">最大 Playouts:</span>
+              <span className="text-gray-500">Max playouts:</span>
               <span className="font-mono">{searchData.metadata.search_params.max_playouts}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">最大深度:</span>
+              <span className="text-gray-500">Max depth:</span>
               <span className="font-mono">{searchData.metadata.search_params.max_depth}</span>
             </div>
             <div className="flex justify-between">
@@ -943,65 +940,65 @@ export const SearchCircuitsVisualization = () => {
               <span className="font-mono">{searchData.metadata.search_params.cpuct}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Minibatch 大小:</span>
+              <span className="text-gray-500">Minibatch size:</span>
               <span className="font-mono">{searchData.metadata.search_params.target_minibatch_size}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">FPU 值:</span>
+              <span className="text-gray-500">FPU value:</span>
               <span className="font-mono">{searchData.metadata.search_params.fpu_value}</span>
             </div>
           </div>
         </div>
 
-        {/* 搜索结果 */}
+        {/* Search results */}
         <div className="bg-white rounded-lg border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">搜索结果</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Search results</h3>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-500">最佳移动:</span>
+              <span className="text-gray-500">Best move:</span>
               <span className="font-mono font-bold text-green-600">{searchData.metadata.search_results.best_move}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">总 Playouts:</span>
+              <span className="text-gray-500">Total playouts:</span>
               <span className="font-mono">{searchData.metadata.search_results.total_playouts}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">达到深度:</span>
+              <span className="text-gray-500">Reached depth:</span>
               <span className="font-mono">{searchData.metadata.search_results.max_depth}</span>
             </div>
           </div>
         </div>
 
-        {/* 追踪统计 */}
+        {/* Trace statistics */}
         <div className="bg-white rounded-lg border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">追踪统计</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Trace statistics</h3>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-500">节点数:</span>
+              <span className="text-gray-500">Nodes:</span>
               <span className="font-mono">{searchData.nodes.length}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">边记录数:</span>
+              <span className="text-gray-500">Edge records:</span>
               <span className="font-mono">{searchData.metadata.trace_stats.num_edge_records}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">扩展记录数:</span>
+              <span className="text-gray-500">Expansion records:</span>
               <span className="font-mono">{searchData.metadata.trace_stats.num_expansion_records}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">导出时间:</span>
+              <span className="text-gray-500">Exported at:</span>
               <span className="font-mono text-xs">{searchData.metadata.export_timestamp}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 主要内容区域 */}
+      {/* Main content area */}
       <div className="flex gap-6 h-[700px]">
-        {/* 左侧：搜索树 */}
+        {/* Left: search tree */}
         <div className="flex-1 bg-white rounded-lg border p-4 overflow-hidden flex flex-col">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold">搜索树</h3>
+            <h3 className="text-lg font-semibold">Search tree</h3>
             <div className="flex space-x-2">
               <button
                 onClick={() => {
@@ -1012,7 +1009,7 @@ export const SearchCircuitsVisualization = () => {
                 }}
                 className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
               >
-                全部展开
+                Expand all
               </button>
               <button
                 onClick={() => {
@@ -1022,7 +1019,7 @@ export const SearchCircuitsVisualization = () => {
                 }}
                 className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
               >
-                全部折叠
+                Collapse all
               </button>
             </div>
           </div>
@@ -1031,12 +1028,12 @@ export const SearchCircuitsVisualization = () => {
           </div>
         </div>
 
-        {/* 右侧：节点详情 */}
+        {/* Right: node details */}
         <div className="w-[500px] bg-white rounded-lg border p-4 overflow-hidden flex flex-col">
-          <h3 className="text-lg font-semibold mb-4">节点详情</h3>
+          <h3 className="text-lg font-semibold mb-4">Node details</h3>
           {selectedNode ? (
             <div className="flex-1 overflow-y-auto space-y-4">
-              {/* 棋盘显示 */}
+              {/* Board display */}
               <div className="flex justify-center">
                 <ChessBoard
                   fen={selectedNode.fen}
@@ -1046,18 +1043,18 @@ export const SearchCircuitsVisualization = () => {
                 />
               </div>
 
-              {/* FEN 字符串 */}
+              {/* FEN string */}
               <div className="bg-gray-50 rounded p-3">
-                <div className="text-sm font-medium text-gray-700 mb-1">FEN 字符串:</div>
+                <div className="text-sm font-medium text-gray-700 mb-1">FEN string:</div>
                 <div className="font-mono text-xs break-all select-all">
                   {selectedNode.fen}
                 </div>
               </div>
 
-              {/* 入边信息 */}
+              {/* Incoming edges */}
               {getNodeInEdges(selectedNode.fen).length > 0 && (
                 <div className="bg-blue-50 rounded p-3">
-                  <div className="text-sm font-medium text-blue-700 mb-2">入边信息:</div>
+                  <div className="text-sm font-medium text-blue-700 mb-2">Incoming edges:</div>
                   <div className="space-y-2">
                     {getNodeInEdges(selectedNode.fen).slice(0, 5).map((edge, idx) => {
                       const edgeKey = getEdgeKey(edge);
@@ -1082,10 +1079,10 @@ export const SearchCircuitsVisualization = () => {
                             </div>
                           </div>
                           <div className="grid grid-cols-4 gap-1 mt-1 text-gray-600">
-                            <span>Visits:{edge.visits}</span>
-                            <span>Q:{edge.q.toFixed(3)}</span>
-                            <span>U:{edge.u.toFixed(3)}</span>
-                            <span>S:{edge.score.toFixed(3)}</span>
+                            <span>Visits: {edge.visits}</span>
+                            <span>Q: {edge.q.toFixed(3)}</span>
+                            <span>U: {edge.u.toFixed(3)}</span>
+                            <span>S: {edge.score.toFixed(3)}</span>
                           </div>
                         </div>
                       );
@@ -1094,11 +1091,11 @@ export const SearchCircuitsVisualization = () => {
                 </div>
               )}
 
-              {/* 可选移动和策略 */}
+              {/* Available moves and policies */}
               {selectedNode.moves.length > 0 && (
                 <div className="bg-green-50 rounded p-3">
                   <div className="text-sm font-medium text-green-700 mb-2">
-                    可选移动 ({selectedNode.moves.length}):
+                    Available moves ({selectedNode.moves.length}):
                   </div>
                   <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto">
                     {selectedNode.moves.map((move, idx) => {
@@ -1120,11 +1117,11 @@ export const SearchCircuitsVisualization = () => {
                 </div>
               )}
 
-              {/* 出边信息 */}
+              {/* Outgoing edges */}
               {getNodeOutEdges(selectedNode.fen).length > 0 && (
                 <div className="bg-orange-50 rounded p-3">
                   <div className="text-sm font-medium text-orange-700 mb-2">
-                    出边信息 ({getNodeOutEdges(selectedNode.fen).length}):
+                    Outgoing edges ({getNodeOutEdges(selectedNode.fen).length}):
                   </div>
                   <div className="space-y-2 max-h-40 overflow-y-auto">
                     {getNodeOutEdges(selectedNode.fen).map((edge, idx) => {
@@ -1143,7 +1140,7 @@ export const SearchCircuitsVisualization = () => {
                               {hasTrace && <Zap className="inline w-3 h-3 ml-1" />}
                             </span>
                             <div className="flex items-center space-x-2">
-                              <span className="text-orange-600">→ 跳转</span>
+                              <span className="text-orange-600">→ Go to child</span>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1157,10 +1154,10 @@ export const SearchCircuitsVisualization = () => {
                             </div>
                           </div>
                           <div className="grid grid-cols-4 gap-1 mt-1 text-gray-600">
-                            <span>V:{edge.visits}</span>
-                            <span>Q:{edge.q.toFixed(3)}</span>
-                            <span>U:{edge.u.toFixed(3)}</span>
-                            <span>S:{edge.score.toFixed(3)}</span>
+                            <span>V: {edge.visits}</span>
+                            <span>Q: {edge.q.toFixed(3)}</span>
+                            <span>U: {edge.u.toFixed(3)}</span>
+                            <span>S: {edge.score.toFixed(3)}</span>
                           </div>
                         </div>
                       );
@@ -1175,20 +1172,22 @@ export const SearchCircuitsVisualization = () => {
                 <svg className="w-12 h-12 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
                 </svg>
-                <p>点击搜索树中的节点查看详情</p>
-                <p className="text-sm mt-2">点击 <Zap className="inline w-4 h-4 text-purple-500" /> 按钮进行 Circuit Trace</p>
+                <p>Click a node in the search tree to view details.</p>
+                <p className="text-sm mt-2">
+                  Click the <Zap className="inline w-4 h-4 text-purple-500" /> button to run Circuit Trace on an edge.
+                </p>
               </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* 边 Trace 结果列表 */}
+      {/* Edge trace result list */}
       {renderEdgeTraceList()}
 
-      {/* 根节点棋盘 */}
+      {/* Root position board */}
       <div className="bg-white rounded-lg border p-4">
-        <h3 className="text-lg font-semibold mb-4">根节点局面</h3>
+        <h3 className="text-lg font-semibold mb-4">Root position</h3>
         <div className="flex justify-center">
           <ChessBoard
             fen={searchData.metadata.root_fen}
@@ -1199,13 +1198,13 @@ export const SearchCircuitsVisualization = () => {
         </div>
       </div>
 
-      {/* Edge Circuit Trace 对话框 */}
+      {/* Edge Circuit Trace dialog */}
       <Dialog open={showEdgeTraceDialog} onOpenChange={setShowEdgeTraceDialog}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center space-x-2">
               <Zap className="w-5 h-5 text-purple-500" />
-              <span>边 Circuit Trace</span>
+              <span>Edge Circuit Trace</span>
             </DialogTitle>
           </DialogHeader>
           
@@ -1222,31 +1221,31 @@ export const SearchCircuitsVisualization = () => {
         </DialogContent>
       </Dialog>
 
-      {/* 批量 Trace 配置对话框 */}
+      {/* Batch Trace configuration dialog */}
       <Dialog open={showBatchTraceDialog} onOpenChange={setShowBatchTraceDialog}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center space-x-2">
               <Settings className="w-5 h-5" />
-              <span>批量 Circuit Trace 配置</span>
+              <span>Batch Circuit Trace configuration</span>
             </DialogTitle>
           </DialogHeader>
           
           <div className="space-y-4 py-4">
-            {/* 统计信息 */}
+            {/* Summary */}
             <Card>
               <CardContent className="pt-4">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <span className="text-gray-500">总边数:</span>
+                    <span className="text-gray-500">Total unique edges:</span>
                     <span className="ml-2 font-mono">{getAllUniqueEdges().length}</span>
                   </div>
                   <div>
-                    <span className="text-gray-500">已 Trace:</span>
+                    <span className="text-gray-500">Traced:</span>
                     <span className="ml-2 font-mono">{edgeTraceResults.size}</span>
                   </div>
                   <div>
-                    <span className="text-gray-500">待 Trace:</span>
+                    <span className="text-gray-500">Pending:</span>
                     <span className="ml-2 font-mono text-blue-600">
                       {batchTraceParams.skipExisting 
                         ? getAllUniqueEdges().filter(e => !edgeTraceResults.has(getEdgeKey(e))).length
@@ -1257,11 +1256,11 @@ export const SearchCircuitsVisualization = () => {
               </CardContent>
             </Card>
 
-            {/* 参数设置 */}
+            {/* Parameter settings */}
             <div className="space-y-3">
               <div className="flex items-center space-x-4">
                 <div className="flex-1">
-                  <Label htmlFor="batch-side">分析侧</Label>
+                  <Label htmlFor="batch-side">Side</Label>
                   <Select 
                     value={batchTraceParams.side} 
                     onValueChange={(v) => setBatchTraceParams(p => ({ ...p, side: v as 'q' | 'k' | 'both' }))}
@@ -1277,7 +1276,7 @@ export const SearchCircuitsVisualization = () => {
                   </Select>
                 </div>
                 <div className="flex-1">
-                  <Label htmlFor="batch-order">排序模式</Label>
+                  <Label htmlFor="batch-order">Ordering mode</Label>
                   <Select 
                     value={batchTraceParams.orderMode} 
                     onValueChange={(v) => setBatchTraceParams(p => ({ ...p, orderMode: v as 'positive' | 'negative' }))}
@@ -1295,7 +1294,7 @@ export const SearchCircuitsVisualization = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="batch-max-nodes">最大特征节点数</Label>
+                  <Label htmlFor="batch-max-nodes">Max feature nodes</Label>
                   <Input
                     id="batch-max-nodes"
                     type="number"
@@ -1304,11 +1303,11 @@ export const SearchCircuitsVisualization = () => {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="batch-max-act">最大激活次数</Label>
+                  <Label htmlFor="batch-max-act">Max activation times</Label>
                   <Input
                     id="batch-max-act"
                     type="number"
-                    placeholder="无限制"
+                    placeholder="Unlimited"
                     value={batchTraceParams.max_act_times || ''}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1323,7 +1322,7 @@ export const SearchCircuitsVisualization = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="batch-node-threshold">节点阈值</Label>
+                  <Label htmlFor="batch-node-threshold">Node threshold</Label>
                   <Input
                     id="batch-node-threshold"
                     type="number"
@@ -1333,7 +1332,7 @@ export const SearchCircuitsVisualization = () => {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="batch-edge-threshold">边阈值</Label>
+                  <Label htmlFor="batch-edge-threshold">Edge threshold</Label>
                   <Input
                     id="batch-edge-threshold"
                     type="number"
@@ -1344,7 +1343,7 @@ export const SearchCircuitsVisualization = () => {
                 </div>
               </div>
 
-              {/* 跳过已有结果选项 */}
+              {/* Skip edges that already have results */}
               <div className="flex items-center space-x-2">
                 <input
                   type="checkbox"
@@ -1354,21 +1353,21 @@ export const SearchCircuitsVisualization = () => {
                   className="rounded border-gray-300"
                 />
                 <Label htmlFor="batch-skip-existing" className="text-sm">
-                  跳过已有 Trace 结果的边
+                  Skip edges that already have trace results
                 </Label>
               </div>
             </div>
 
-            {/* 警告信息 */}
+            {/* Warning / notes */}
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-yellow-700 text-sm flex items-start">
               <AlertCircle className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="font-medium">注意事项</p>
+                <p className="font-medium">Notes</p>
                 <ul className="mt-1 list-disc list-inside text-xs space-y-1">
-                  <li>批量 Trace 会依次处理每条边，耗时较长</li>
-                  <li>每条边大约需要 10-60 秒（取决于参数设置）</li>
-                  <li>处理过程中可以随时点击"停止"按钮中止</li>
-                  <li>已完成的结果会被保留</li>
+                  <li>Batch trace will process edges one by one and may take a long time.</li>
+                  <li>Each edge typically takes about 10–60 seconds, depending on parameters.</li>
+                  <li>You can click "Stop" at any time to abort the remaining edges.</li>
+                  <li>Results for already-processed edges are preserved.</li>
                 </ul>
               </div>
             </div>
@@ -1376,24 +1375,24 @@ export const SearchCircuitsVisualization = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowBatchTraceDialog(false)}>
-              取消
+              Cancel
             </Button>
             <Button onClick={startBatchTrace} disabled={!isModelLoaded}>
               <Play className="w-4 h-4 mr-1" />
-              开始批量 Trace
+              Start batch Trace
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* 批量 Trace 进度条（固定在底部） */}
+      {/* Batch Trace progress bar (fixed at bottom) */}
       {isBatchTracing && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4 z-50">
           <div className="max-w-4xl mx-auto">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-3">
                 <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
-                <span className="font-medium">批量 Circuit Trace 进行中...</span>
+                <span className="font-medium">Batch Circuit Trace in progress...</span>
               </div>
               <div className="flex items-center space-x-4">
                 <span className="text-sm text-gray-600">
@@ -1401,7 +1400,7 @@ export const SearchCircuitsVisualization = () => {
                 </span>
                 <Button variant="destructive" size="sm" onClick={abortBatchTrace}>
                   <Square className="w-4 h-4 mr-1" />
-                  停止
+                  Stop
                 </Button>
               </div>
             </div>
@@ -1410,9 +1409,9 @@ export const SearchCircuitsVisualization = () => {
               className="h-3"
             />
             <div className="mt-2 flex items-center justify-between text-sm text-gray-500">
-              <span>当前: {batchTraceProgress.currentEdge}</span>
+              <span>Current: {batchTraceProgress.currentEdge}</span>
               <span>
-                预计剩余: ~{Math.ceil((batchTraceProgress.total - batchTraceProgress.current) * 30 / 60)} 分钟
+                Estimated remaining: ~{Math.ceil((batchTraceProgress.total - batchTraceProgress.current) * 30 / 60)} minutes
               </span>
             </div>
           </div>

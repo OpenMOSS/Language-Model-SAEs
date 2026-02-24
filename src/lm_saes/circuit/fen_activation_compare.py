@@ -2,7 +2,7 @@
 
 This module is intentionally lightweight: it only relies on
 `ReplacementModel.setup_attribution(...)` to obtain the sparse activation matrices
-for LoRSA (attention) and TC (MLP transcoder) features, then performs a set-based
+for Lorsa (attention) and TC (MLP transcoder) features, then performs a set-based
 diff at a single board position (token position 0..63).
 """
 
@@ -20,7 +20,7 @@ class FeatureKey:
 
     - type: "lorsa" (attention) or "tc" (mlp transcoder)
     - layer: transformer block index
-    - feature_idx: head index for LoRSA, feature index for TC
+    - feature_idx: head index for Lorsa, feature index for TC
     """
 
     type: str
@@ -133,12 +133,12 @@ def compare_fens_position_activations(
         fen_b: Second FEN.
         position: Token position to compare (0..63).
         layers: Which layers to compare. Defaults to `range(model.cfg.n_layers)`.
-        include_lorsa: Whether to compare LoRSA (attention) activations.
+        include_lorsa: Whether to compare Lorsa (attention) activations.
         include_tc: Whether to compare TC (MLP transcoder) activations.
         top_k_deltas: For common features, return only the top-K by |delta|.
 
     Returns:
-        JSON-serializable dict containing per-layer diffs for LoRSA and/or TC.
+        JSON-serializable dict containing per-layer diffs for Lorsa and/or TC.
     """
 
     if position < 0:

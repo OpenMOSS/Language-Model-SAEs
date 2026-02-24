@@ -60,7 +60,7 @@ interface KLDivergence {
   to_layer: number;
   kl_forward: number | null;
   kl_backward: number | null;
-  jsd: number | null;  // Jensen-Shannon Divergence (真正的度量)
+  jsd: number | null;  // Jensen-Shannon Divergence (primary divergence metric)
 }
 
 interface LayerToFinalKL {
@@ -137,13 +137,11 @@ export const LogitLensVisualization: React.FC = () => {
   const [analysisResult, setAnalysisResult] = useState<LogitLensResult | null>(null);
   const [selectedLayer, setSelectedLayer] = useState<number>(0);
   
-  // Mean Ablation 相关状态
   const [isLoadingAblation, setIsLoadingAblation] = useState(false);
   const [ablationResult, setAblationResult] = useState<MeanAblationResult | null>(null);
   const [selectedHookType, setSelectedHookType] = useState<string>('attn_out');
   const [activeTab, setActiveTab] = useState<string>('logit-lens');
 
-  // 运行Logit Lens分析（固定使用BT4模型）
   const runAnalysis = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -162,21 +160,21 @@ export const LogitLensVisualization: React.FC = () => {
       if (response.ok) {
         const data = await response.json();
         setAnalysisResult(data);
-        setSelectedLayer(data.num_layers - 1); // 默认选择最后一层
+        setSelectedLayer(data.num_layers - 1); // Default to select the last layer
       } else {
         const errorText = await response.text();
-        console.error('分析失败:', errorText);
-        alert(`分析失败: ${errorText}`);
+        console.error('Analysis failed:', errorText);
+        alert(`Analysis failed: ${errorText}`);
       }
     } catch (error) {
-      console.error('运行分析失败:', error);
-      alert('运行分析失败，请检查后端服务');
+      console.error('Analysis failed:', error);
+      alert('Analysis failed, please check the backend service');
     } finally {
       setIsLoading(false);
     }
   }, [fen, targetMove]);
 
-  // 运行Mean Ablation分析（固定使用BT4模型）
+  // Run Mean Ablation analysis (fixed using BT4 model)
   const runMeanAblation = useCallback(async () => {
     setIsLoadingAblation(true);
     try {
@@ -199,54 +197,53 @@ export const LogitLensVisualization: React.FC = () => {
         setActiveTab('mean-ablation');
       } else {
         const errorText = await response.text();
-        console.error('Mean Ablation分析失败:', errorText);
-        alert(`Mean Ablation分析失败: ${errorText}`);
+        console.error('Mean Ablation analysis failed:', errorText);
+        alert(`Mean Ablation analysis failed: ${errorText}`);
       }
     } catch (error) {
-      console.error('运行Mean Ablation分析失败:', error);
-      alert('运行Mean Ablation分析失败，请检查后端服务');
+      console.error('Mean Ablation analysis failed:', error);
+      alert('Mean Ablation analysis failed, please check the backend service');
     } finally {
       setIsLoadingAblation(false);
     }
   }, [fen, targetMove]);
 
-  // 获取当前选中层的分析数据
+  // Get the analysis data for the currently selected layer
   const getLayerData = useCallback((layer: number): LayerAnalysis | null => {
     if (!analysisResult) return null;
     return analysisResult.layer_analysis[`layer_${layer}`] || null;
   }, [analysisResult]);
 
   const currentLayerData = getLayerData(selectedLayer);
-  // 直接使用后端返回的“all-legal softmax 概率”，不要对 TopN 再做 softmax
+  // Directly use the "all-legal softmax probability" returned by the backend, do not do softmax on TopN again
   const currentLayerProbs = currentLayerData?.top_legal_moves.map((m) => m.prob) ?? [];
   const finalLayerProbs = currentLayerData?.move_rankings.map((r) => r.final_prob ?? null) ?? [];
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {/* 全局 BT4 SAE 组合选择（LoRSA / Transcoder） */}
       <SaeComboLoader />
 
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold flex items-center gap-2">
           <Layers className="w-8 h-8" />
-          Logit Lens分析
+          Logit Lens analysis
         </h1>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 左侧：输入和控制 */}
+        {/* Left: input and control */}
         <div className="space-y-4">
 
-          {/* FEN输入 */}
+          {/* FEN input */}
           <Card>
             <CardHeader>
-              <CardTitle>局面设置</CardTitle>
+              <CardTitle>Position setup</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium">FEN字符串</label>
+                <label className="text-sm font-medium">FEN string</label>
                 <Textarea
-                  placeholder="输入FEN字符串..."
+                  placeholder="Enter FEN string..."
                   value={fen}
                   onChange={(e) => setFen(e.target.value)}
                   rows={3}
@@ -254,15 +251,15 @@ export const LogitLensVisualization: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">目标移动 (可选)</label>
+                <label className="text-sm font-medium">Target move (optional)</label>
                 <Input
-                  placeholder="例如: e2e4"
+                  placeholder="For example: e2e4"
                   value={targetMove}
                   onChange={(e) => setTargetMove(e.target.value)}
                   className="mt-1"
                 />
                 <div className="text-xs text-gray-500 mt-1">
-                  输入UCI格式的移动来追踪其在各层的排名
+                  Enter UCI format move to trace its ranking in each layer
                 </div>
               </div>
               <div className="space-y-2">
@@ -274,12 +271,12 @@ export const LogitLensVisualization: React.FC = () => {
                   {isLoading ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      分析中...
+                      Analyzing...
                     </>
                   ) : (
                     <>
                       <Play className="w-4 h-4 mr-2" />
-                      运行Logit Lens分析
+                      Run Logit Lens analysis
                     </>
                   )}
                 </Button>
@@ -292,12 +289,12 @@ export const LogitLensVisualization: React.FC = () => {
                   {isLoadingAblation ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Mean Ablation分析中...
+                      Mean Ablation analyzing...
                     </>
                   ) : (
                     <>
                       <Eraser className="w-4 h-4 mr-2" />
-                      运行Mean Ablation分析
+                      Run Mean Ablation analysis
                     </>
                   )}
                 </Button>
@@ -305,10 +302,10 @@ export const LogitLensVisualization: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* 棋盘显示 */}
+          {/* Chessboard display */}
           <Card>
             <CardHeader>
-              <CardTitle>当前局面</CardTitle>
+              <CardTitle>Current position</CardTitle>
             </CardHeader>
             <CardContent>
               <ChessBoard
@@ -322,7 +319,7 @@ export const LogitLensVisualization: React.FC = () => {
           </Card>
         </div>
 
-        {/* 右侧：分析结果 */}
+        {/* Right: analysis results */}
         <div className="lg:col-span-2 space-y-4">
           {(analysisResult || ablationResult) ? (
             <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -335,17 +332,17 @@ export const LogitLensVisualization: React.FC = () => {
                 </TabsTrigger>
               </TabsList>
               
-              {/* Logit Lens标签内容 */}
+              {/* Logit Lens tab content */}
               <TabsContent value="logit-lens" className="space-y-4">
               {analysisResult && (
             <>
-              {/* 层选择器 */}
+              {/* Layer selector */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between">
-                    <span>层级分析</span>
+                    <span>Layer analysis</span>
                     <Badge variant="outline">
-                      使用模型: {analysisResult.model_used.split('/')[1]}
+                      Model used: {analysisResult.model_used.split('/')[1]}
                     </Badge>
                   </CardTitle>
                 </CardHeader>
@@ -353,12 +350,12 @@ export const LogitLensVisualization: React.FC = () => {
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-sm font-medium">
-                        选择层级: Layer {selectedLayer}
+                        Select layer: Layer {selectedLayer}
                       </label>
                       {analysisResult.target_move && currentLayerData?.target && (
                         <Badge variant={currentLayerData.target.rank && currentLayerData.target.rank <= 3 ? "default" : "secondary"}>
-                          目标移动 {analysisResult.target_move}: 
-                          {currentLayerData.target.rank ? ` Rank #${currentLayerData.target.rank}` : ' 不在前列'}
+                          Target move {analysisResult.target_move}: 
+                          {currentLayerData.target.rank ? ` Rank #${currentLayerData.target.rank}` : ' Not in the top list'}
                         </Badge>
                       )}
                     </div>
@@ -371,18 +368,18 @@ export const LogitLensVisualization: React.FC = () => {
                       className="w-full"
                     />
                     <div className="flex justify-between text-xs text-gray-500 mt-1">
-                      <span>Layer 0</span>
-                      <span>Layer {analysisResult.num_layers - 1}</span>
+                      <span>Layer 0 (first layer)</span>
+                      <span>Layer {analysisResult.num_layers - 1} (last layer)</span>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* 当前层Top移动 */}
+              {/* Current layer Top moves */}
               {currentLayerData && (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Layer {selectedLayer} - Top 10合法移动</CardTitle>
+                    <CardTitle>Layer {selectedLayer} - Top 10 legal moves</CardTitle>
                   </CardHeader>
                   <CardContent>
                     {typeof currentLayerData.logit_entropy === 'number' && (
@@ -391,20 +388,20 @@ export const LogitLensVisualization: React.FC = () => {
                           variant={currentLayerData.logit_entropy < 2.0 ? "default" : currentLayerData.logit_entropy < 3.5 ? "secondary" : "outline"}
                           className={currentLayerData.logit_entropy < 2.0 ? "bg-green-600" : currentLayerData.logit_entropy < 3.5 ? "bg-yellow-600" : ""}
                         >
-                          Logit 熵: {currentLayerData.logit_entropy.toFixed(4)}
+                          Logit entropy: {currentLayerData.logit_entropy.toFixed(4)}
                         </Badge>
                       </div>
                     )}
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="w-16">排名</TableHead>
-                          <TableHead>移动</TableHead>
-                          <TableHead>当前层分数</TableHead>
-                          <TableHead>当前层概率</TableHead>
-                          <TableHead>最终层排名</TableHead>
-                          <TableHead>最终层分数</TableHead>
-                          <TableHead>最终层概率</TableHead>
+                          <TableHead className="w-16">Rank</TableHead>
+                          <TableHead>Move</TableHead>
+                          <TableHead>Current layer score</TableHead>
+                          <TableHead>Current layer probability</TableHead>
+                          <TableHead>Final layer rank</TableHead>
+                          <TableHead>Final layer score</TableHead>
+                          <TableHead>Final layer probability</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -454,22 +451,22 @@ export const LogitLensVisualization: React.FC = () => {
                 </Card>
               )}
 
-              {/* 每层Top 3移动 + 最终层Top在各层的表现 */}
+              {/* Each layer Top 3 moves + performance of final-layer Top in each layer */}
               <Card>
                 <CardHeader>
-                  <CardTitle>每层Top 3 及“最终层Top”在各层的排名/概率/分数</CardTitle>
+                  <CardTitle>Each layer Top 3 moves and "Final layer Top" in each layer's ranking/probability/score</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="w-24">层级</TableHead>
-                          <TableHead>Logit 熵<br/></TableHead>
+                          <TableHead className="w-24">Layer</TableHead>
+                          <TableHead>Logit Entropy<br/></TableHead>
                           <TableHead>Top 1</TableHead>
                           <TableHead>Top 2</TableHead>
                           <TableHead>Top 3</TableHead>
-                          <TableHead>最终Top@本层<br/>rank / prob / score</TableHead>
+                          <TableHead>Final layer Top@this layer<br/>rank / prob / score</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -501,9 +498,9 @@ export const LogitLensVisualization: React.FC = () => {
                                     {move ? (
                                       <div className={`space-between ${isTargetMove ? 'bg-yellow-100 p-2 rounded' : ''}`}>
                                         <div className={`font-mono text-sm ${isTargetMove ? 'font-bold text-yellow-700' : ''}`}>{move.uci}</div>
-                                        <div className="text-xs text-gray-600">分数: {move.score.toFixed(3)}</div>
+                                        <div className="text-xs text-gray-600">Score: {move.score.toFixed(3)}</div>
                                         {typeof prob === "number" ? (
-                                          <div className="text-xs text-gray-600">概率: {(prob * 100).toFixed(1)}%</div>
+                                          <div className="text-xs text-gray-600">Probability: {(prob * 100).toFixed(1)}%</div>
                                         ) : null}
                                       </div>
                                     ) : (
@@ -532,31 +529,31 @@ export const LogitLensVisualization: React.FC = () => {
                 </CardContent>
               </Card>
 
-              {/* JSD分析 - 检测相变 */}
+              {/* JSD analysis - detect phase transition */}
               {analysisResult.layer_kl_divergences && analysisResult.layer_kl_divergences.length > 0 && (
                 <Card>
                   <CardHeader>
-                    <CardTitle>层间KL和JSD</CardTitle>
+                    <CardTitle>Layer-to-layer KL and JSD</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {/* 相邻层之间的KL散度和JSD */}
+                    {/* KL divergence and JSD between adjacent layers */}
                     <div>
-                      <h4 className="text-sm font-semibold mb-2">相邻层之间的分布差异</h4>
+                      <h4 className="text-sm font-semibold mb-2">Distribution difference between adjacent layers</h4>
                       <div className="overflow-x-auto">
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead>从层</TableHead>
-                              <TableHead>到层</TableHead>
+                              <TableHead>From layer</TableHead>
+                              <TableHead>To layer</TableHead>
                               <TableHead>JSD<br/></TableHead>
-                              <TableHead>KL(当前→前一层)</TableHead>
-                              <TableHead>KL(前一层→当前)</TableHead>
+                              <TableHead>KL(Current→Previous layer)</TableHead>
+                              <TableHead>KL(Previous layer→Current)</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {analysisResult.layer_kl_divergences.map((kl, idx) => {
                               const jsd = kl.jsd;
-                              // 计算所有JSD的平均值和标准差，用于判断突变
+                              // Calculate the mean and standard deviation of all JSDs, used to detect phase transition
                               const allJSDs = analysisResult.layer_kl_divergences!
                                 .map(k => k.jsd)
                                 .filter((k): k is number => k !== null);
@@ -582,7 +579,7 @@ export const LogitLensVisualization: React.FC = () => {
                                         className={isPhaseTransition ? "bg-red-600 text-white" : ""}
                                       >
                                         {jsd.toFixed(4)}
-                                        {isPhaseTransition && <span className="ml-1">⚠️ 相变</span>}
+                                        {isPhaseTransition && <span className="ml-1">⚠️ Phase transition</span>}
                                       </Badge>
                                     ) : 'N/A'}
                                   </TableCell>
@@ -600,18 +597,18 @@ export const LogitLensVisualization: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* 每层相对于最终层的KL散度和JSD */}
+                    {/* KL divergence and JSD of each layer relative to the final layer */}
                     {analysisResult.layer_to_final_kl && analysisResult.layer_to_final_kl.length > 0 && (
                       <div>
-                        <h4 className="text-sm font-semibold mb-2">每层相对于最终层的分布差异</h4>
+                        <h4 className="text-sm font-semibold mb-2">Distribution difference of each layer relative to the final layer</h4>
                         <div className="overflow-x-auto">
                           <Table>
                             <TableHeader>
                               <TableRow>
-                                <TableHead>层级</TableHead>
-                                <TableHead>JSD<br/><span className="text-xs font-normal text-gray-500">(距离最终层)</span></TableHead>
-                                <TableHead>KL(最终→当前)</TableHead>
-                                <TableHead>KL(当前→最终)</TableHead>
+                                <TableHead>Layer</TableHead>
+                                <TableHead>JSD<br/><span className="text-xs font-normal text-gray-500">(Distance to final layer)</span></TableHead>
+                                <TableHead>KL(Final→Current)</TableHead>
+                                <TableHead>KL(Current→Final)</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -648,19 +645,19 @@ export const LogitLensVisualization: React.FC = () => {
                 </Card>
               )}
               
-              {/* 目标移动追踪 */}
+              {/* Target move tracking */}
               {analysisResult.target_move && (
                 <Card>
                   <CardHeader>
-                    <CardTitle>目标移动追踪: {analysisResult.target_move}</CardTitle>
+                    <CardTitle>Target move tracking: {analysisResult.target_move}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>层级</TableHead>
-                          <TableHead>排名</TableHead>
-                          <TableHead>分数</TableHead>
+                          <TableHead>Layer</TableHead>
+                          <TableHead>Rank</TableHead>
+                          <TableHead>Score</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -697,23 +694,23 @@ export const LogitLensVisualization: React.FC = () => {
           )}
               </TabsContent>
               
-              {/* Mean Ablation标签内容 */}
+              {/* Mean Ablation tab content */}
               <TabsContent value="mean-ablation" className="space-y-4">
               {ablationResult && (
                 <>
-                  {/* Hook类型选择器 */}
+                  {/* Hook type selector */}
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center justify-between">
-                        <span>Mean Ablation分析</span>
+                        <span>Mean Ablation analysis</span>
                         <Badge variant="outline">
-                          使用模型: {ablationResult.model_used.split('/')[1]}
+                          Model used: {ablationResult.model_used.split('/')[1]}
                         </Badge>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div>
-                        <label className="text-sm font-medium">选择Hook类型</label>
+                        <label className="text-sm font-medium">Select Hook type</label>
                         <Select value={selectedHookType} onValueChange={setSelectedHookType}>
                           <SelectTrigger className="mt-1">
                             <SelectValue />
@@ -725,33 +722,33 @@ export const LogitLensVisualization: React.FC = () => {
                         </Select>
                       </div>
                       <div className="text-sm">
-                        <Badge variant="outline">原始Top移动: {ablationResult.original_top_move_uci || 'N/A'}</Badge>
+                        <Badge variant="outline">Original Top move: {ablationResult.original_top_move_uci || 'N/A'}</Badge>
                       </div>
                     </CardContent>
                   </Card>
 
-                  {/* 每层Mean Ablation结果汇总 */}
+                  {/* Summary of Mean Ablation results in each layer */}
                   <Card>
                     <CardHeader>
-                      <CardTitle>各层Mean Ablation影响 ({selectedHookType})</CardTitle>
+                      <CardTitle>Mean Ablation impact in each layer ({selectedHookType})</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="overflow-x-auto">
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead>层级</TableHead>
-                              <TableHead>L2 Norm<br/><span className="text-xs font-normal text-gray-500">(影响程度)</span></TableHead>
-                              <TableHead>熵<br/><span className="text-xs font-normal text-gray-500">(越小越集中)</span></TableHead>
-                              <TableHead>Top 3移动</TableHead>
+                              <TableHead>Layer</TableHead>
+                              <TableHead>L2 Norm<br/><span className="text-xs font-normal text-gray-500">(Impact strength)</span></TableHead>
+                              <TableHead>Entropy<br/><span className="text-xs font-normal text-gray-500">(Lower means more concentrated)</span></TableHead>
+                              <TableHead>Top 3 moves</TableHead>
                               {ablationResult.target_move && (
-                                <TableHead>目标移动排名</TableHead>
+                                <TableHead>Target move ranking</TableHead>
                               )}
                               {ablationResult.target_move && (
-                                <TableHead>目标移动Δlogit/Δprob</TableHead>
+                                <TableHead>Target move Δlogit/Δprob</TableHead>
                               )}
                               {ablationResult.original_top_move_uci && (
-                                <TableHead>原Top移动排名</TableHead>
+                                <TableHead>Original top move ranking</TableHead>
                               )}
                             </TableRow>
                           </TableHeader>
@@ -765,7 +762,7 @@ export const LogitLensVisualization: React.FC = () => {
                                   <TableRow key={i}>
                                     <TableCell className="font-medium">Layer {i}</TableCell>
                                     <TableCell colSpan={5} className="text-red-500">
-                                      错误: {data?.error || '数据不可用'}
+                                      Error: {data?.error || 'Data unavailable'}
                                     </TableCell>
                                   </TableRow>
                                 );
@@ -862,21 +859,21 @@ export const LogitLensVisualization: React.FC = () => {
                     </CardContent>
                   </Card>
 
-                  {/* 目标移动追踪 - Mean Ablation版本 */}
+                  {/* Target move tracking - Mean Ablation version */}
                   {ablationResult.target_move && (
                     <Card>
                       <CardHeader>
-                        <CardTitle>目标移动追踪 (Mean Ablation): {ablationResult.target_move}</CardTitle>
+                        <CardTitle>Target move tracking (Mean Ablation): {ablationResult.target_move}</CardTitle>
                       </CardHeader>
                       <CardContent>
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead>层级</TableHead>
-                              <TableHead>Hook类型</TableHead>
-                              <TableHead>Ablation后排名</TableHead>
-                              <TableHead>Ablation后分数</TableHead>
-                              <TableHead>Logit差异(L2)</TableHead>
+                              <TableHead>Layer</TableHead>
+                              <TableHead>Hook type</TableHead>
+                              <TableHead>Rank after ablation</TableHead>
+                              <TableHead>Score after ablation</TableHead>
+                              <TableHead>Logit difference (L2)</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -926,7 +923,7 @@ export const LogitLensVisualization: React.FC = () => {
               <CardContent className="py-12">
                 <div className="text-center text-gray-500">
                   <Layers className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>输入FEN并点击"运行分析"开始Logit Lens或Mean Ablation分析</p>
+                  <p>Enter a FEN and click "Run analysis" to start Logit Lens or Mean Ablation.</p>
                 </div>
               </CardContent>
             </Card>

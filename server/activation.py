@@ -19,7 +19,7 @@ def get_activated_features_at_position(
     Args:
         model: HookedTransformer 模型
         transcoders: 字典，层号 -> Transcoder SAE
-        lorsas: 列表，LoRSA SAE（按层索引）
+        lorsas: 列表，Lorsa SAE（按层索引）
         fen: FEN 字符串
         layer: 层号（0-14）
         pos: 位置索引（0-63）
@@ -27,7 +27,7 @@ def get_activated_features_at_position(
     
     Returns:
         字典，包含：
-        - "attn_features": 如果是 attn，返回激活的 LoRSA features
+        - "attn_features": 如果是 attn，返回激活的 Lorsa features
         - "mlp_features": 如果是 mlp，返回激活的 Transcoder features
         每个 feature 包含：
         - "feature_index": feature 索引
@@ -48,10 +48,10 @@ def get_activated_features_at_position(
     
     result = {}
     
-    # 获取 Attention (LoRSA) 的激活 features
+    # 获取 Attention (Lorsa) 的激活 features
     if component_type == "attn":
         if layer >= len(lorsas):
-            raise ValueError(f"层 {layer} 超出 LoRSA 范围（共 {len(lorsas)} 层）")
+            raise ValueError(f"层 {layer} 超出 Lorsa 范围（共 {len(lorsas)} 层）")
         
         # 获取 attention 的输入激活值
         hook_name = f"blocks.{layer}.hook_attn_in"
@@ -68,7 +68,7 @@ def get_activated_features_at_position(
         if attn_input.dim() == 2:
             attn_input = attn_input.unsqueeze(0)  # [1, seq_len, d_model]
         
-        # 使用 LoRSA 编码
+        # 使用 Lorsa 编码
         lorsa = lorsas[layer]
         feature_acts = lorsa.encode(attn_input)  # [batch, seq_len, d_sae]
         

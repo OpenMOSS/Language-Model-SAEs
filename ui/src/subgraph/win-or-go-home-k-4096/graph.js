@@ -4,8 +4,8 @@ console.log('=== graph.js loaded ===');
 // === Feature ===
 class Feature {
     /**
-     * @param {string} id - Feature唯一标识
-     * @param {number} weight - Feature权重
+     * @param {string} id - Unique feature identifier
+     * @param {number} weight - Feature weight
      */
     constructor(id, weight = 1.0) {
         this.id = id;
@@ -16,18 +16,18 @@ class Feature {
 // === Node ===
 class Node {
     /**
-     * @param {string} id - 唯一标识
-     * @param {string} type - 节点类型: Embedding / Lorsa / Transcoder / Logit
-     * @param {Array<Feature>} [features=[]] - Feature列表
-     * @param {string} [clerp=''] - 节点解释字符串
-     * @param {number} position - 节点在棋盘上的位置
-     * @param {number} layer - 节点在模型上的层级
-     * @param {number} [display_layer] - 自定义显示层（可选）
+     * @param {string} id - Unique identifier
+     * @param {string} type - Node type: Embedding / Lorsa / Transcoder / Logit
+     * @param {Array<Feature>} [features=[]] - List of Feature objects
+     * @param {string} [clerp=''] - Node interpretation string
+     * @param {number} position - Node position on the chessboard
+     * @param {number} layer - Node layer in the model
+     * @param {number} [display_layer] - Optional custom display layer index
      */
     constructor(id, type, features = [], clerp = '', position, layer, display_layer = null) {
         this.id = id;
         this.type = type;
-        this.features = features; // 现在是Feature对象列表
+        this.features = features;
         this.clerp = clerp;
         this.position = position;
         this.layer = layer;
@@ -38,12 +38,12 @@ class Node {
         return this.features.length;
     }
 
-    // 为了向后兼容，保留childrenIds属性（从features中提取id）
+    // For backward compatibility, keep childrenIds (derived from feature ids)
     get childrenIds() {
         return this.features.map(feature => feature.id);
     }
 
-    // 添加feature
+    // Add a feature to this node
     addFeature(feature) {
         if (feature instanceof Feature) {
             this.features.push(feature);
@@ -52,12 +52,12 @@ class Node {
         }
     }
 
-    // 根据id获取feature
+    // Get feature by id
     getFeatureById(id) {
         return this.features.find(feature => feature.id === id);
     }
 
-    // 获取总权重
+    // Get total feature weight
     getTotalWeight() {
         return this.features.reduce((sum, feature) => sum + feature.weight, 0);
     }
@@ -66,10 +66,10 @@ class Node {
 // === Edge ===
 class Edge{
     /**
-     * @param {string} sourceId - 源节点id
-     * @param {string} targetId - 目标节点id
-     * @param {number} weight - 权重
-     * @param {boolean} isVirtual - 是否为虚拟边（默认为false）
+     * @param {string} sourceId - Source node id
+     * @param {string} targetId - Target node id
+     * @param {number} weight - Edge weight
+     * @param {boolean} isVirtual - Whether this is a virtual edge (default false)
      */
     constructor(sourceId, targetId, weight, isVirtual = false){
         this.sourceId = sourceId;
@@ -84,7 +84,7 @@ class Graph {
     constructor(){
         this.nodes = [];
         this.edges = [];
-        this.nodeMap = new Map(); // id -> Node 快速查找
+        this.nodeMap = new Map(); // id -> Node for fast lookup
     }
 
     addNode(node){
@@ -189,8 +189,8 @@ const node_M0_12 = new Node(
 );
 
 const node_M0_48 = new Node(
-    'M0#0@48',                  // 节点 id
-    'transcoder',               // 节点类型（奇数第一个数字 -> Transcoder）
+    'M0#0@48',                  // Node id
+    'transcoder',               // Node type
     [
         new Feature('1_3026_48', 1.0),
         new Feature('1_5170_48', 0.8),
@@ -301,14 +301,14 @@ const node_A12_34 = new Node(
     5     // custom display_layer
 );
 
-// 新增 Logit 节点
+// Additional Logit node
 const node_L_34 = new Node(
     'L#0@34',
     'logit',
     [],
     "Output: 'a2a4'",
     34,   // position
-    30,   // layer（高于现有最高层）
+    30,   // layer (higher than the current maximum layer)
     6     // custom display_layer
 );
 
@@ -336,48 +336,48 @@ const edges = [
     { source: 'A5#0@34', target: 'A11#0@34', weight: 1.0 },
     { source: 'A8#0@10', target: 'A12#0@34', weight: 1.0 },
 
-    // 指向 Logit 输出节点
+    // Edges pointing to the final Logit output node
     { source: 'A11#0@34', target: 'L#0@34', weight: 1.0 },
     { source: 'A12#0@34', target: 'L#0@34', weight: 1.0 },
 
 ];
 
-// 虚拟边 - 表示位置对应关系
+// Virtual edges - indicate positional correspondence
 const virtualEdges = [
     { source: 'E@10', target: 'A8#0@10', weight: 1.0, isVirtual: true },
     { source: 'E@34', target: 'A5#0@34', weight: 1.0, isVirtual: true },
 ];
 
-// 修改边的创建方式，传入 source, target 和 weight
+// Create edges from (source, target, weight)
 edges.forEach(e => {
     graph.addEdge(new Edge(e.source, e.target, e.weight));
 });
 
-// 添加虚拟边
+// Add virtual edges
 virtualEdges.forEach(e => {
     graph.addEdge(new Edge(e.source, e.target, e.weight, e.isVirtual));
 });
 
-// 使用示例：创建带有不同权重feature的节点
+// Usage examples: working with features on a node
 console.log('=== Feature Usage Examples ===');
 
-// 示例1：获取节点的feature信息
+// Example 1: inspect all features on a node
 const m0_2_node = graph.getNodeById('M0#0@2');
 console.log(`Node ${m0_2_node.id} has ${m0_2_node.features.length} features:`);
 m0_2_node.features.forEach(feature => {
     console.log(`  - ${feature.id}: weight=${feature.weight}`);
 });
 
-// 示例2：计算总权重
+// Example 2: compute total feature weight
 console.log(`Total weight for ${m0_2_node.id}: ${m0_2_node.getTotalWeight()}`);
 
-// 示例3：查找特定feature
+// Example 3: find a specific feature by id
 const feature = m0_2_node.getFeatureById('1_7372_2');
 if (feature) {
     console.log(`Found feature: ${feature.id} with weight ${feature.weight}`);
 }
 
-// 示例4：向后兼容性测试
+// Example 4: backward-compatibility test for childrenIds
 console.log(`childrenIds (backward compatibility): ${m0_2_node.childrenIds.join(', ')}`);
 
 console.log('========================');

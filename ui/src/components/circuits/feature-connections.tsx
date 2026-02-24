@@ -256,10 +256,10 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
     });
   }, []);
 
-  // 批量同步所有节点的解释
+  // Batch sync interpretations for all nodes
   const syncAllInterpretations = useCallback(async () => {
     if (!data || !data.nodes.length) {
-      alert('⚠️ 没有可用的节点数据');
+      alert('⚠️ No available node data');
       return;
     }
 
@@ -476,7 +476,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
               onClick={() => cancelEditing(clickedNode.nodeId)}
               className="px-3 py-1 bg-gray-300 text-gray-700 rounded text-xs hover:bg-gray-400"
             >
-              取消
+              Cancel
             </button>
           </div>
         </div>
@@ -541,7 +541,7 @@ export const FeatureConnections: React.FC<FeatureConnectionsProps> = ({
         </div>
       </div>
 
-      {/* Input Features 和 Output Features */}
+      {/* Input Features and Output Features */}
       <div className="flex-1 flex gap-4">
         {/* Input Features */}
         <div className="flex-1">

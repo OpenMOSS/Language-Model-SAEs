@@ -497,7 +497,7 @@ export const CircuitVisualization = () => {
     setMultiGraphActivationData({});
   }, [clickedId]);
 
-  /** Fetch z_pattern from backend when a LoRSA node is clicked (single-file, single-position mode). */
+  /** Fetch z_pattern from backend when a Lorsa node is clicked (single-file, single-position mode). */
   useEffect(() => {
     setBackendZPatternByNode(null);
 
@@ -913,8 +913,8 @@ export const CircuitVisualization = () => {
     // Check backend state directly rather than global state
     const saeLoaded = await checkSaeLoaded();
     if (!saeLoaded) {
-      console.warn("TC/LoRSA not loaded; skipping steering_analysis call");
-      alert("Please load TC/LoRSA combo (SaeComboLoader) above first, then use steering.");
+      console.warn("TC/Lorsa not loaded; skipping steering_analysis call");
+      alert("Please load TC/Lorsa combo (SaeComboLoader) above first, then use steering.");
       setTokenPredictions(null);
       return;
     }
@@ -968,7 +968,7 @@ export const CircuitVisualization = () => {
         const errorText = await response.text();
         // 503 means model not loaded
         if (response.status === 503) {
-          alert("Please load TC/LoRSA combo (SaeComboLoader) above first.");
+          alert("Please load TC/Lorsa combo (SaeComboLoader) above first.");
         }
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
@@ -2713,7 +2713,7 @@ export const CircuitVisualization = () => {
             ) : (
               <div className="text-center py-8 text-gray-500">
                 <p>Click "Start Analysis" button to run Token Predictions analysis</p>
-                <p className="text-sm mt-2">Please load TC/LoRSA combination (SaeComboLoader) above</p>
+                <p className="text-sm mt-2">Please load TC/Lorsa combination (SaeComboLoader) above</p>
               </div>
             )}
           </div>

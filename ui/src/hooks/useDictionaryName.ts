@@ -76,7 +76,7 @@ export const useDictionaryName = ({ linkGraphData }: UseDictionaryNameOptions) =
             dictionary = `BT4_lorsa_L${layerIdx}A_${suffix}`;
           }
         } else {
-          console.warn(`⚠️ LoRSA analysis_name "${lorsaAnalysisName}" is not in known combinations, using default combo k128_e128`);
+          console.warn(`⚠️ Lorsa analysis_name "${lorsaAnalysisName}" is not in known combinations, using default combo k128_e128`);
           dictionary = `BT4_lorsa_L${layerIdx}A`;
           usingDefault = true;
         }

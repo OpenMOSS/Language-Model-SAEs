@@ -118,14 +118,14 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
         if cached_transcoders is None or cached_lorsas is None:
             raise HTTPException(
                 status_code=503,
-                detail=f"Transcoders/LoRSAs not loaded. Please call /circuit/preload_models first with combo_id={sae_combo_id}"
+                detail=f"Transcoders/Lorsas not loaded. Please call /circuit/preload_models first with combo_id={sae_combo_id}"
             )
         
         # 检查transcoders和lorsas是否完整（应该有15层）
         if len(cached_transcoders) != 15 or len(cached_lorsas) != 15:
             raise HTTPException(
                 status_code=503,
-                detail=f"Transcoders/LoRSAs incomplete. Expected 15 layers, got transcoders={len(cached_transcoders)}, lorsas={len(cached_lorsas)}"
+                detail=f"Transcoders/Lorsas incomplete. Expected 15 layers, got transcoders={len(cached_transcoders)}, lorsas={len(cached_lorsas)}"
             )
         
         model = cached_hooked_model

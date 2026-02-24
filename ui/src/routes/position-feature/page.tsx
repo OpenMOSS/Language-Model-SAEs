@@ -24,7 +24,6 @@ export const PositionFeaturePage = () => {
   const [loadingAllPos, setLoadingAllPos] = useState(false);
   const [allPosError, setAllPosError] = useState<string | null>(null);
 
-  // 从 localStorage 读取 sae_combo_id
   useEffect(() => {
     const stored = window.localStorage.getItem(LOCAL_STORAGE_KEY);
     if (stored) {
@@ -32,7 +31,6 @@ export const PositionFeaturePage = () => {
     }
   }, []);
 
-  // 监听 localStorage 变化（当 SaeComboLoader 更新时）
   useEffect(() => {
     const handleStorageChange = () => {
       const stored = window.localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -44,7 +42,7 @@ export const PositionFeaturePage = () => {
     };
 
     window.addEventListener("storage", handleStorageChange);
-    // 也监听同页面的更新（通过自定义事件）
+    // Also watch for updates within the same page (via polling)
     const interval = setInterval(() => {
       const stored = window.localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored !== saeComboId) {
@@ -58,18 +56,18 @@ export const PositionFeaturePage = () => {
     };
   }, [saeComboId]);
 
-  // 解析位置输入（支持范围语法如0-5,8）
+  // Parse position input (supports range syntax like 0-5,8)
   const handlePositionsChange = (value: string) => {
     setPositionsInput(value);
 
-    // 解析位置字符串，支持范围语法
+    // Parse positions string, supporting range syntax
     const result: number[] = [];
     const parts = value.split(',');
 
     for (const part of parts) {
       const trimmed = part.trim();
       if (trimmed.includes('-')) {
-        // 处理范围，如"0-5"
+        // Handle ranges like "0-5"
         const rangeParts = trimmed.split('-');
         if (rangeParts.length === 2) {
           const start = parseInt(rangeParts[0].trim(), 10);
@@ -83,7 +81,7 @@ export const PositionFeaturePage = () => {
           }
         }
       } else {
-        // 处理单个数字，如"8"
+        // Handle a single number like "8"
         const num = parseInt(trimmed, 10);
         if (!isNaN(num) && !result.includes(num)) {
           result.push(num);
@@ -91,7 +89,7 @@ export const PositionFeaturePage = () => {
       }
     }
 
-    // 过滤并排序
+    // Filter and sort
     const parsed = result
       .filter(pos => pos >= 0 && pos <= 63)
       .sort((a, b) => a - b);
@@ -119,7 +117,7 @@ export const PositionFeaturePage = () => {
       try {
         const dictionary = getDictionaryName();
         const response = await fetch(
-          // 与 CustomFenInput / circuit-visualization 保持一致：统一用 analyze_fen
+          // Keep consistent with CustomFenInput / circuit-visualization: always use analyze_fen
           `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}/analyze_fen`,
           {
             method: "POST",
@@ -142,8 +140,8 @@ export const PositionFeaturePage = () => {
           z_pattern_indices?: number[] | number[][];
           z_pattern_values?: number[];
         };
-
-        // activations: 稀疏 -> 64 稠密
+       
+        // activations: sparse representation -> dense length-64 array
         let activations: number[] | undefined = undefined;
         if (Array.isArray(data.feature_acts_indices) && Array.isArray(data.feature_acts_values)) {
           activations = new Array(64).fill(0);
@@ -158,11 +156,11 @@ export const PositionFeaturePage = () => {
           }
         }
 
-        // z_pattern: 兼容 1D/2D
         let zPatternIndices: number[][] | undefined = undefined;
         let zPatternValues: number[] | undefined = undefined;
         if (data.z_pattern_indices && data.z_pattern_values) {
           const raw = data.z_pattern_indices;
+          // z_pattern: support both 1D and 2D formats
           zPatternIndices = Array.isArray(raw) && Array.isArray(raw[0]) ? (raw as number[][]) : [raw as number[]];
           zPatternValues = data.z_pattern_values;
         }
@@ -196,9 +194,9 @@ export const PositionFeaturePage = () => {
       <AppNavbar />
       <div className="container mx-auto p-4">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold">位置 Feature 分析</h1>
+          <h1 className="text-3xl font-bold">Position Feature Analysis</h1>
           <p className="text-gray-600 mt-2">
-            分析特定棋盘位置的激活特征，按位置分组显示每个位置激活的 features。
+            Analyze activation features at specific board positions, grouped by position to show which features fire at each square.
           </p>
         </div>
 
@@ -210,12 +208,12 @@ export const PositionFeaturePage = () => {
         {/* Position Feature Analysis Section */}
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>位置 Feature 分析配置</CardTitle>
+            <CardTitle>Position Feature Analysis Configuration</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
               <div className="space-y-2">
-                <Label htmlFor="fen-input">FEN 字符串</Label>
+                <Label htmlFor="fen-input">FEN string</Label>
                 <Input
                   id="fen-input"
                   value={fen}
@@ -225,7 +223,7 @@ export const PositionFeaturePage = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="layer-input">层 (Layer)</Label>
+                <Label htmlFor="layer-input">Layer</Label>
                 <Input
                   id="layer-input"
                   type="number"
@@ -237,7 +235,7 @@ export const PositionFeaturePage = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="positions-input">位置 (0-63，支持范围语法，如0-5,8)</Label>
+                <Label htmlFor="positions-input">Positions (0–63, supports ranges like 0-5,8)</Label>
                 <Input
                   id="positions-input"
                   value={positionsInput}
@@ -246,11 +244,11 @@ export const PositionFeaturePage = () => {
                   className="bg-white"
                 />
                 <p className="text-xs text-gray-500">
-                  当前选择: {positions.join(", ")}
+                  Current positions: {positions.join(", ")}
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="component-type">组件类型</Label>
+                <Label htmlFor="component-type">Component type</Label>
                 <Select
                   value={componentType}
                   onValueChange={(value: "attn" | "mlp") => setComponentType(value)}
@@ -270,7 +268,7 @@ export const PositionFeaturePage = () => {
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>棋盘</CardTitle>
+            <CardTitle>Chessboard</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex justify-center">
@@ -290,9 +288,9 @@ export const PositionFeaturePage = () => {
           <Card className="mb-6">
             <CardHeader>
               <CardTitle>
-                选中 Feature 全位置激活与 Z-Pattern
+                Selected Feature: Activations Across All Positions and Z-Pattern
                 <div className="text-sm font-normal mt-2 text-gray-600">
-                  Feature #{selectedFeature.featureIndex} | 来自位置 {selectedFeature.position} | 字典{" "}
+                  Feature #{selectedFeature.featureIndex} | from position {selectedFeature.position} | dictionary{" "}
                   <code className="bg-gray-100 px-2 py-1 rounded text-xs">{getDictionaryName()}</code>
                 </div>
               </CardTitle>
@@ -300,7 +298,7 @@ export const PositionFeaturePage = () => {
             <CardContent>
               {allPosError && <div className="text-red-600 font-medium mb-3">{allPosError}</div>}
               {loadingAllPos ? (
-                <div className="text-gray-600">加载中...</div>
+                <div className="text-gray-600">Loading...</div>
               ) : (
                 <div className="flex justify-center">
                   <ChessBoard
@@ -327,7 +325,7 @@ export const PositionFeaturePage = () => {
             <PosFeatureCard
               fen={fen}
               layer={layer}
-              positions={positionsInput}  // 传递原始字符串，让组件内部解析范围语法
+              positions={positionsInput}  // Pass the raw string so the component can parse range syntax internally
               componentType={componentType}
               modelName="lc0/BT4-1024x15x32h"
               saeComboId={saeComboId}

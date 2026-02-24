@@ -16,9 +16,9 @@ export interface Node {
   remoteClerp?: string;
   sourceLinks?: Link[];
   targetLinks?: Link[];
-  // 节点来源：当多文件合并时，记录该节点来自哪些源文件（索引）
-  sourceIndex?: number; // 单一来源
-  sourceIndices?: number[]; // 多个来源
+  // Node origin: when multiple files are merged, record which source file indices this node comes from
+  sourceIndex?: number; // Single source
+  sourceIndices?: number[]; // Multiple sources
 }
 
 export interface Link {
@@ -29,8 +29,8 @@ export interface Link {
   strokeWidth: number;
   weight?: number;
   pctInput?: number;
-  // 多文件：每个来源文件的权重与占比
-  sources?: number[]; // 出现于哪些源文件索引
+  // Multi-file: per-source weights and percentages
+  sources?: number[]; // Indices of source files in which this link appears
   weightsBySource?: Record<number, number>;
   pctBySource?: Record<number, number>;
 }
@@ -43,7 +43,7 @@ export interface LinkGraphData {
     lorsa_analysis_name?: string;
     clt_analysis_name?: string;
     tc_analysis_name?: string;
-    // 多文件上传时，记录各文件名，index 与 Node.sourceIndex 对应
+    // When uploading multiple files, record file names; indices correspond to Node.sourceIndex
     sourceFileNames?: string[];
   };
 }

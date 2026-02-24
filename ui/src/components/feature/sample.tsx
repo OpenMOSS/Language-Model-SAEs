@@ -32,15 +32,11 @@ export const FeatureSampleGroup = ({
   const [page, setPage] = useState<number>(1);
   const [visibleRange, setVisibleRange] = useState<number>(50);
   
-  // 计算每个样本的最大激活值并排序
-  // 使用与 findHighestActivatingToken 相同的逻辑：找到原始值的最大值
+  // Get the sorted samples by max activation value
   const sortedSamples = useMemo(() => {
     return [...sampleGroup.samples].sort((a, b) => {
-      // 计算样本 a 的最大激活值（使用与显示的 Max 值相同的逻辑）
       const maxActA = getMaxActivation(a.featureActsValues);
-      // 计算样本 b 的最大激活值（使用与显示的 Max 值相同的逻辑）
       const maxActB = getMaxActivation(b.featureActsValues);
-      // 按从大到小排序（使用绝对值比较，确保最大的激活值排在前面）
       return Math.abs(maxActB) - Math.abs(maxActA);
     });
   }, [sampleGroup.samples]);
