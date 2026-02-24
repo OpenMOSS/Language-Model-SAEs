@@ -34,6 +34,12 @@ plugins:
 nav:
   - Home: index.md
   - Train SAEs: train-saes.md
+  - Sparse Dictionaries:
+    - Overview: models/overview.md
+    - Sparse Autoencoder: models/sae.md
+    - Transcoder: models/transcoder.md
+    - Cross Layer Transcoder: models/clt.md
+    - Low-Rank Sparse Attention: models/lorsa.md
   - Analyze SAEs: analyze-saes.md
   - Distributed Guidelines: distributed-guidelines.md
   - Key Concepts: concepts.md

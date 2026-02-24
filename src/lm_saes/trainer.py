@@ -52,9 +52,13 @@ class TrainerConfig(BaseConfig):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     l1_coefficient: float | None = 0.00008
+    """Coefficient for the L1 sparsity loss. This loss is used to penalize the sparsity of the feature activations."""
     l1_coefficient_warmup_steps: int | float = 0.1
+    """Steps (int) or fraction of total steps (float) to warm up the sparsity coefficient from 0."""
     lp_coefficient: float | None = None
+    """Coefficient for the Lp sparsity loss. This loss is used to . To use the JumpReLU $L^p$ penalty, set lp_coefficient to a positive value."""
     auxk_coefficient: float | None = None
+    """Coefficient for the Aux-K auxiliary loss. This loss is used to revive dead latents during training. To use the Aux-K loss, set auxk_coefficient to a positive value."""
     amp_dtype: Annotated[
         torch.dtype | None,
         BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),

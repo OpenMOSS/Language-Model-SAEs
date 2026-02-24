@@ -633,21 +633,47 @@ To use tanh-quadratic, set `#!python sparsity_loss_type="tanh-quad"` in `Trainer
 
 ### JumpReLU Pre-act Loss
 
-For JumpReLU SAEs, an additional $L_p$ penalty proposed by [Anthropic](https://transformer-circuits.pub/2025/january-update/index.html) can encourage the threshold to stay above the pre-activation values:
+For JumpReLU SAEs, an additional $L_p$ penalty (called the "pre-act loss") proposed by [Anthropic](https://transformer-circuits.pub/2025/january-update/index.html) applies a small penalty to features which don't fire:
 
 $$L_p = \lambda_p \sum_i \text{ReLU}(e^{\theta_i} - h_i) \| W_{\text{dec},i} \|_2$$
 
-where $\theta_i$ is the log-threshold and $h_i$ is the pre-activation. This loss pushes the threshold higher, reducing the number of active features.
+where $\theta_i$ is the log-threshold and $h_i$ is the pre-activation. This loss has been found extremely helpful in reducing dead features by providing a gradient signal whenever a feature is inactive, pushing the threshold lower.
 
-To use the JumpReLU $L^p$ penalty, set `lp_coefficient` to a positive value in `TrainerConfig`:
+!!! note
+
+    Since this loss provides a gradient signal whenever a feature is inactive, the appropriate scale for `lp_coefficient` should be a factor of the typical feature activation density lower than other loss terms (e.g., `l1_coefficient`).
+
+To use the JumpReLU pre-act loss, set `lp_coefficient` to a positive value in `TrainerConfig`:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `lp_coefficient` | Coefficient $\lambda_p$ for the JumpReLU $L^p$ penalty. Set to `None` to disable. | `None` |
+| `lp_coefficient` | Coefficient $\lambda_p$ for the JumpReLU pre-act loss. Recommended value is `3e-6`. Set to `None` to disable. | `None` |
 
 ### Aux-K Loss
 
-WIP @Junxuan Wang
+For TopK activation function, an additional auxiliary loss (AuxK) proposed in [Scaling and evaluating sparse autoencoders](https://arxiv.org/abs/2406.04093) helps revive dead latents during training, similar to [Ghost Grads](https://transformer-circuits.pub/2024/jan-update/index.html#dict-learning-resampling).
+
+A latent is flagged as "dead" during training if it has not activated for a predetermined number of tokens (typically 10 million). Given the reconstruction error from the main model $e = x - \hat{x}$, the auxiliary loss models this error using the top-$k_{\text{aux}}$ dead latents:
+
+$$L_{\text{aux}} = \| e - \hat{e} \|_2^2$$
+
+where $\hat{e} = W_{\text{dec}} z_{\text{dead}}$ is the reconstruction using only the top-$k_{\text{aux}}$ dead latents. The full loss is then:
+
+$$L = L_{\text{rec}} + \alpha L_{\text{aux}}$$
+
+where $\alpha$ is a small coefficient (typically $1/32$). Since the encoder forward pass can be shared (and dominates decoder cost and encoder backwards cost), adding this auxiliary loss only increases the computational cost by about 10%.
+
+To use the Aux-K loss, set `auxk_coefficient` to a positive value in `TrainerConfig`:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `auxk_coefficient` | Coefficient $\alpha$ for the Aux-K loss. Set to `None` to disable. Typical value is `1/32` (~0.03125). | `None` |
+| `k_aux` | Number of top dead latents $k_{\text{aux}}$ to use for auxiliary reconstruction. | `512` |
+| `dead_threshold` | Number of tokens a latent must not activate for to be considered dead. | `10_000_000` |
+
+!!! note
+
+    Aux-K loss is specifically designed for TopK SAEs. It will not have effect on other activation functions like ReLU or JumpReLU.
 
 ## Legacy Stategies
 
