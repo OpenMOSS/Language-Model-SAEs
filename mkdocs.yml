@@ -23,23 +23,32 @@ plugins:
           options:
             show_source: true
             heading_level: 2
-            # show_root_heading: true
-            # show_root_full_path: false
+            show_root_heading: true
+            show_root_full_path: false
             docstring_style: google
-            # merge_init_into_class: true
+            merge_init_into_class: true
             show_submodules: false
             show_signature_annotations: true
+            separate_signature: true
+            signature_crossrefs: true
+            unwrap_annotated: true
+            modernize_annotations: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            extensions:
+              - griffe_pydantic
   - glightbox
 
 nav:
   - Home: index.md
   - Train SAEs: train-saes.md
   - Sparse Dictionaries:
-    - Overview: models/overview.md
-    - Sparse Autoencoder: models/sae.md
-    - Transcoder: models/transcoder.md
-    - Cross Layer Transcoder: models/clt.md
-    - Low-Rank Sparse Attention: models/lorsa.md
+      - Overview: models/overview.md
+      - Sparse Autoencoder: models/sae.md
+      - Transcoder: models/transcoder.md
+      - Cross Layer Transcoder: models/clt.md
+      - Low-Rank Sparse Attention: models/lorsa.md
   - Analyze SAEs: analyze-saes.md
   - Distributed Guidelines: distributed-guidelines.md
   - Key Concepts: concepts.md
