@@ -17,7 +17,7 @@ except ImportError:
 
 
 def validate_fens(fens: List[str]) -> Tuple[List[str], List[str]]:
-    """验证FEN字符串列表，返回有效和无效的FEN"""
+    """Validate a list of FEN strings and return (valid_fens, invalid_fens)."""
     valid_fens = []
     invalid_fens = []
     
@@ -42,7 +42,7 @@ def collect_activation_stats(
     transcoders: Dict[int, any],
     log_every: int = 25
 ) -> Tuple[List[collections.Counter], List[collections.Counter], int]:
-    """统计FEN数据集上各层Lorsa/TC特征是否激活"""
+    """Collect activation statistics for Lorsa/TC features over a FEN dataset."""
     num_layers = len(lorsas)
     lorsa_counts: List[collections.Counter] = [collections.Counter() for _ in range(num_layers)]
     tc_counts: List[collections.Counter] = [collections.Counter() for _ in range(num_layers)]
@@ -57,7 +57,7 @@ def collect_activation_stats(
         num_ok += 1
 
         for layer in range(num_layers):
-            # Lorsa 激活
+            # Lorsa activations
             try:
                 lorsa_input = cache[f'blocks.{layer}.hook_attn_in']
                 lorsa_dense = lorsas[layer].encode(lorsa_input)
@@ -69,7 +69,7 @@ def collect_activation_stats(
             except Exception:
                 pass
 
-            # TC 激活
+            # TC activations
             try:
                 tc_input = cache[f'blocks.{layer}.resid_mid_after_ln']
                 tc_dense = transcoders[layer].encode(tc_input)
@@ -97,7 +97,7 @@ def compute_all_diffs(
     n_random: int,
     n_tactic: int,
 ) -> Tuple[List[Tuple[int, int, float, float, float, str]], List[Tuple[int, int, float, float, float, str]]]:
-    """计算Lorsa和TC的所有差异"""
+    """Compute activation frequency differences for Lorsa and TC between random and tactic sets."""
     lorsa_results = []
     tc_results = []
     num_layers = len(rand_lorsa_counts)
@@ -125,7 +125,7 @@ def compute_all_diffs(
 
 
 def get_random_fens(n: int = 500, dataset_path: str = None) -> List[str]:
-    """从数据集中随机采样FEN"""
+    """Sample random FEN strings from a dataset."""
     if dataset_path is None:
         dataset_path = "/inspire/hdd/global_user/hezhengfu-240208120186/data/rlin_data/Chess/chess_master_data"
     
@@ -149,8 +149,8 @@ def analyze_tactic_features(
     n_random: int = 500,
     dataset_path: str = None,
 ) -> Dict[str, any]:
-    """分析战术特征，返回差异最大的特征"""
-    # 验证FEN
+    """Analyze tactic-related features and return the most differentiated features."""
+    # Validate FENs
     valid_tactic_fens, invalid_tactic_fens = validate_fens(tactic_fens)
     
     if not valid_tactic_fens:
@@ -159,14 +159,14 @@ def analyze_tactic_features(
             "invalid_fens": invalid_tactic_fens
         }
     
-    # 获取随机FEN
+    # Get random FENs
     random_fens = get_random_fens(n_random, dataset_path)
     if not random_fens:
         return {
             "error": "Could not load random FEN dataset"
         }
     
-    # 收集激活统计
+    # Collect activation statistics
     print("Collecting activation stats on random_fens...")
     rand_lorsa_counts, rand_tc_counts, rand_ok = collect_activation_stats(
         random_fens, model, lorsas, transcoders
@@ -177,7 +177,7 @@ def analyze_tactic_features(
         valid_tactic_fens, model, lorsas, transcoders
     )
     
-    # 计算差异
+    # Compute differences
     lorsa_diffs, tc_diffs = compute_all_diffs(
         rand_lorsa_counts, rand_tc_counts,
         tactic_lorsa_counts, tactic_tc_counts,
@@ -191,5 +191,6 @@ def analyze_tactic_features(
         "tactic_fens": tactic_ok,
         "lorsa_diffs": lorsa_diffs,
         "tc_diffs": tc_diffs,
-        "invalid_fens_list": invalid_tactic_fens[:10]  # 只返回前10个无效FEN作为示例
+        # Only return the first 10 invalid FENs as examples
+        "invalid_fens_list": invalid_tactic_fens[:10],
     }

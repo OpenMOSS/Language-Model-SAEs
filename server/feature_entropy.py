@@ -1,8 +1,3 @@
-"""
-Feature Entropy Calculation Module
-计算每层TC feature的平均熵
-"""
-
 from typing import List, Dict, Set, Any, Optional
 import numpy as np
 import chess
@@ -12,7 +7,6 @@ from lm_saes.database import MongoClient
 
 
 class FeatureEntropyCalculator:
-    """计算特征熵的工具类"""
     
     def __init__(self, mongo_client: MongoClient, sae_series: str = "BT4-exp128"):
         self.mongo_client = mongo_client
@@ -125,10 +119,10 @@ class FeatureEntropyCalculator:
                 sample = dataset[int(context_idx)]
             
             prompt = sample.get("prompt") or sample.get("text") or sample.get("fen") or sample
-            # 尝试多种方式获取FEN
+            # try multiple ways to get FEN
             if isinstance(prompt, str):
                 prompt_stripped = prompt.strip()
-                # 检查是否是有效的FEN格式（至少4个空格分隔的部分）
+                # check if it is a valid FEN format (at least 4 spaces separated parts)
                 if len(prompt_stripped.split()) >= 4:
                     fen = prompt_stripped
                 else:
@@ -138,14 +132,14 @@ class FeatureEntropyCalculator:
             else:
                 fen = None
             
-            # 获取piece_type_category
+            # get piece_type_category
             piece_type_category = None
             if pos is not None and fen is not None:
                 try:
                     piece_type_category = self.get_piece_type_category(pos, fen)
                 except Exception:
                     pass
-            # 如果从pos和fen无法获取，尝试从sample中直接获取
+            # if cannot get from pos and fen, try to get from sample directly
             if piece_type_category is None and isinstance(sample, dict):
                 piece_type_category = sample.get("piece_type_category")
 
@@ -184,8 +178,8 @@ class FeatureEntropyCalculator:
     
     def extract_tc_features_from_graph(self, graph_data: Dict) -> List[Dict[str, Any]]:
         """
-        从图数据中提取TC feature列表
-        返回格式: [{"layer": 0, "features": [3026, 3113, ...]}, ...]
+        Extract TC feature list from graph data
+        Returns format: [{"layer": 0, "features": [3026, 3113, ...]}, ...]
         """
         nodes = graph_data.get("nodes", [])
         layer_features: Dict[int, Set[int]] = {}
@@ -197,7 +191,7 @@ class FeatureEntropyCalculator:
                     parts = node_id.split("_")
                     if len(parts) >= 2:
                         try:
-                            layer = int(parts[0]) // 2  # 原始layer除以2
+                            layer = int(parts[0]) // 2  # original layer divided by 2
                             feature_num = int(parts[1])
                             
                             if layer not in layer_features:
@@ -206,7 +200,7 @@ class FeatureEntropyCalculator:
                         except (ValueError, IndexError):
                             continue
         
-        # 转换为列表格式
+        # convert to list format
         result = []
         for layer in sorted(layer_features.keys()):
             result.append({
@@ -223,12 +217,12 @@ class FeatureEntropyCalculator:
         analysis_name: str = "default"
     ) -> Dict[str, Any]:
         """
-        计算每层TC feature的平均熵
+        Calculate the average entropy for each layer of TC features
         
         Args:
-            graph_data: 图数据
-            top_k: 每个feature使用的top k个激活样本
-            analysis_name: 分析名称
+            graph_data: graph data
+            top_k: top k activation samples for each feature
+            analysis_name: analysis name
         
         Returns:
             {
@@ -247,7 +241,7 @@ class FeatureEntropyCalculator:
                 "total_features": 150
             }
         """
-        # 提取TC features
+        # extract TC features
         tc_feature_layers = self.extract_tc_features_from_graph(graph_data)
         
         layer_stats = []
@@ -258,7 +252,7 @@ class FeatureEntropyCalculator:
             layer = layer_info["layer"]
             features = layer_info["features"]
             
-            # 计算该层每个feature的熵
+            # calculate the entropy for each feature in this layer
             layer_entropies = []
             for feature_idx in features:
                 try:
@@ -270,7 +264,7 @@ class FeatureEntropyCalculator:
                     print(f"Error computing entropy for L{layer} F{feature_idx}: {e}")
                     continue
             
-            # 计算该层的统计信息
+            # calculate the statistics for this layer
             if layer_entropies:
                 avg_entropy = float(np.mean(layer_entropies))
                 min_entropy = float(np.min(layer_entropies))
@@ -289,7 +283,7 @@ class FeatureEntropyCalculator:
                 all_entropies.extend(layer_entropies)
                 total_features += len(features)
         
-        # 计算总体统计
+        # calculate the overall statistics
         overall_avg_entropy = float(np.mean(all_entropies)) if all_entropies else 0.0
         
         return {

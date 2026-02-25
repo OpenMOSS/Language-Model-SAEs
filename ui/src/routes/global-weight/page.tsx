@@ -1667,7 +1667,7 @@ export const GlobalWeightPage: React.FC = () => {
                       const rank = featureInfo?.rank || 0;
                       const parsed = parseFeatureName(feature.name);
                       const featureTypeLabel = parsed?.featureType === 'lorsa' ? 'Lorsa' : 'TC';
-                      
+                    
                       const isSearchResult = searchResult && (
                         (searchResult.foundInFeaturesIn && searchResult.featuresInInfo?.name === feature.name)
                       );

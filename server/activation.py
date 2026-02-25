@@ -14,76 +14,76 @@ def get_activated_features_at_position(
     component_type: str  # "attn" or "mlp"
 ) -> Dict[str, List[Dict[str, float]]]:
     """
-    获取指定层和位置激活的所有 features
+    get all features activated at the specified layer and position
     
     Args:
-        model: HookedTransformer 模型
-        transcoders: 字典，层号 -> Transcoder SAE
-        lorsas: 列表，Lorsa SAE（按层索引）
-        fen: FEN 字符串
-        layer: 层号（0-14）
-        pos: 位置索引（0-63）
-        component_type: 组件类型，"attn" 或 "mlp"
+        model: HookedTransformer model
+        transcoders: dictionary, layer number -> Transcoder SAE
+        lorsas: list, Lorsa SAE (indexed by layer)
+        fen: FEN string
+        layer: layer number (0-14)
+        pos: position index (0-63)
+        component_type: component type, "attn" or "mlp"
     
     Returns:
-        字典，包含：
-        - "attn_features": 如果是 attn，返回激活的 Lorsa features
-        - "mlp_features": 如果是 mlp，返回激活的 Transcoder features
-        每个 feature 包含：
-        - "feature_index": feature 索引
-        - "activation_value": 激活值
+        dictionary, containing:
+        - "attn_features": if attn, return activated Lorsa features
+        - "mlp_features": if mlp, return activated Transcoder features
+        each feature contains:
+        - "feature_index": feature index
+        - "activation_value": activation value
     """
     if layer < 0 or layer >= 15:
-        raise ValueError(f"层号必须在 0-14 之间，当前值: {layer}")
+        raise ValueError(f"layer number must be between 0-14, current value: {layer}")
     
     if pos < 0 or pos >= 64:
-        raise ValueError(f"位置索引必须在 0-63 之间，当前值: {pos}")
+        raise ValueError(f"position index must be between 0-63, current value: {pos}")
     
     if component_type not in ["attn", "mlp"]:
-        raise ValueError(f"component_type 必须是 'attn' 或 'mlp'，当前值: {component_type}")
+        raise ValueError(f"component_type must be 'attn' or 'mlp', current value: {component_type}")
     
-    # 运行模型获取激活值
+    # run model to get activation values
     with torch.no_grad():
         _, cache = model.run_with_cache(fen, prepend_bos=False)
     
     result = {}
     
-    # 获取 Attention (Lorsa) 的激活 features
+    # get activated features of Attention (Lorsa)
     if component_type == "attn":
         if layer >= len(lorsas):
-            raise ValueError(f"层 {layer} 超出 Lorsa 范围（共 {len(lorsas)} 层）")
+            raise ValueError(f"layer {layer} out of Lorsa range (total {len(lorsas)} layers)")
         
-        # 获取 attention 的输入激活值
+        # get input activation value of attention
         hook_name = f"blocks.{layer}.hook_attn_in"
         if hook_name not in cache:
             available_hooks = [k for k in cache.keys() if f"blocks.{layer}" in str(k)]
             raise ValueError(
-                f"无法找到 hook 点 {hook_name}。"
-                f"可用的 hook 点: {available_hooks[:10]}"
+                f"cannot find hook point {hook_name}."
+                f"available hook points: {available_hooks[:10]}"
             )
         
         attn_input = cache[hook_name]  # [batch, seq_len, d_model]
         
-        # 确保有 batch 维度
+        # ensure batch dimension
         if attn_input.dim() == 2:
             attn_input = attn_input.unsqueeze(0)  # [1, seq_len, d_model]
         
-        # 使用 Lorsa 编码
+        # use Lorsa to encode
         lorsa = lorsas[layer]
         feature_acts = lorsa.encode(attn_input)  # [batch, seq_len, d_sae]
         
-        # 获取指定位置的激活值
+        # get activation value at the specified position
         if feature_acts.dim() == 3:
             pos_activations = feature_acts[0, pos, :]  # [d_sae]
         else:
             pos_activations = feature_acts[pos, :]  # [d_sae]
         
-        # 找出非零激活的 features
+        # find non-zero activated features
         nonzero_mask = pos_activations != 0
         nonzero_indices = torch.nonzero(nonzero_mask, as_tuple=False).squeeze(-1)
         nonzero_values = pos_activations[nonzero_mask]
         
-        # 构建结果列表
+        # build result list
         attn_features = []
         for idx, val in zip(nonzero_indices.cpu().numpy(), nonzero_values.cpu().numpy()):
             attn_features.append({
@@ -91,52 +91,52 @@ def get_activated_features_at_position(
                 "activation_value": float(val)
             })
         
-        # 按激活值绝对值排序（从大到小）
+        # sort by activation value absolute value (from largest to smallest)
         attn_features.sort(key=lambda x: abs(x["activation_value"]), reverse=True)
         
         result["attn_features"] = attn_features
     
-    # 获取 MLP (Transcoder) 的激活 features
+    # get activated features of MLP (Transcoder)
     if component_type == "mlp":
         if layer not in transcoders:
-            raise ValueError(f"层 {layer} 不在 transcoders 中")
+            raise ValueError(f"layer {layer} not in transcoders")
         
-        # 获取 MLP 的输入激活值（resid_mid_after_ln）
+        # get input activation value of MLP (resid_mid_after_ln)
         hook_name = f"blocks.{layer}.resid_mid_after_ln"
         if hook_name not in cache:
-            # 尝试备用 hook 点
+            # try alternative hook points
             alt_hook_name = f"blocks.{layer}.ln2.hook_normalized"
             if alt_hook_name in cache:
                 hook_name = alt_hook_name
             else:
                 available_hooks = [k for k in cache.keys() if f"blocks.{layer}" in str(k)]
                 raise ValueError(
-                    f"无法找到 hook 点 {hook_name} 或 {alt_hook_name}。"
-                    f"可用的 hook 点: {available_hooks[:10]}"
+                    f"cannot find hook point {hook_name} or {alt_hook_name}."
+                    f"available hook points: {available_hooks[:10]}"
                 )
         
         mlp_input = cache[hook_name]  # [batch, seq_len, d_model]
         
-        # 确保有 batch 维度
+        # ensure batch dimension
         if mlp_input.dim() == 2:
             mlp_input = mlp_input.unsqueeze(0)  # [1, seq_len, d_model]
         
-        # 使用 Transcoder 编码
+        # use Transcoder to encode
         transcoder = transcoders[layer]
         feature_acts = transcoder.encode(mlp_input)  # [batch, seq_len, d_sae]
         
-        # 获取指定位置的激活值
+        # get activation value at the specified position
         if feature_acts.dim() == 3:
             pos_activations = feature_acts[0, pos, :]  # [d_sae]
         else:
             pos_activations = feature_acts[pos, :]  # [d_sae]
         
-        # 找出非零激活的 features
+        # find non-zero activated features
         nonzero_mask = pos_activations != 0
         nonzero_indices = torch.nonzero(nonzero_mask, as_tuple=False).squeeze(-1)
         nonzero_values = pos_activations[nonzero_mask]
         
-        # 构建结果列表
+        # build result list
         mlp_features = []
         for idx, val in zip(nonzero_indices.cpu().numpy(), nonzero_values.cpu().numpy()):
             mlp_features.append({
@@ -144,7 +144,7 @@ def get_activated_features_at_position(
                 "activation_value": float(val)
             })
         
-        # 按激活值绝对值排序（从大到小）
+        # sort by activation value absolute value (from largest to smallest)
         mlp_features.sort(key=lambda x: abs(x["activation_value"]), reverse=True)
         
         result["mlp_features"] = mlp_features

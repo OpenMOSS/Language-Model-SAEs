@@ -121,7 +121,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     notifyListeners();
 
     try {
-      console.log('🔍 Start preloading Transcoders and LoRSAs for model:', modelName);
+      console.log('🔍 Start preloading Transcoders and Lorsas for model:', modelName);
 
       // Start polling logs
       pollIntervalRef.current = setInterval(async () => {
@@ -224,12 +224,12 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
       return 'Loading...';
     }
     if (isLoaded) {
-      return 'TC/LoRSA is ready';
+      return 'TC/Lorsa is ready';
     }
     if (error) {
       return 'Load failed';
     }
-    return 'TC/LoRSA not loaded';
+    return 'TC/Lorsa not loaded';
   };
 
   // Render logs list
@@ -349,7 +349,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
 
               {/* Helper text */}
               <div className="text-xs text-gray-500 space-y-1">
-                <p>• Transcoders (TC) and LoRSAs are model components required for circuit trace analysis.</p>
+                <p>• Transcoders (TC) and Lorsas are model components required for circuit trace analysis.</p>
                 <p>• The first load may take a few minutes; once loaded, the models are cached.</p>
                 <p>• This loading status is shared between the Play Game and Search Circuits pages.</p>
               </div>

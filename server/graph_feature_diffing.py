@@ -1,6 +1,6 @@
 """
 Graph Feature Diffing Service
-比较两个FEN的激活差异，找出在perturbed FEN中未激活的节点
+compare the activation differences between two FENs, find the inactive nodes in the perturbed FEN
 """
 
 import json
@@ -9,16 +9,6 @@ from typing import Dict, Any, List, Tuple, Optional
 from collections import defaultdict
 
 def parse_node_id(node_id: str) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[str]]:
-    """
-    解析 node_id 格式: {encoded_layer}_{feature_idx}_{pos}
-    
-    注意：layer 是编码后的：
-    - lorsa: encoded_layer = 2 * layer + 0 (偶数，如 28 -> layer 14)
-    - tc: encoded_layer = 2 * layer + 1 (奇数，如 29 -> layer 14)
-    
-    返回: (original_layer, feature_idx, position, feature_type)
-        feature_type: 'lorsa' 或 'tc' 或 None
-    """
     parts = node_id.split('_')
     if len(parts) >= 3:
         try:
@@ -26,7 +16,7 @@ def parse_node_id(node_id: str) -> Tuple[Optional[int], Optional[int], Optional[
             feature_idx = int(parts[1])
             position = int(parts[2])
             
-            # 解码 layer: layer = encoded_layer // 2
+            # decode layer: layer = encoded_layer // 2
             original_layer = encoded_layer // 2
             is_lorsa = (encoded_layer % 2 == 0)
             feature_type = 'lorsa' if is_lorsa else 'tc'
@@ -45,17 +35,17 @@ def find_inactive_nodes_in_perturbed(
     debug: bool = False
 ) -> List[Dict[str, Any]]:
     """
-    找出在 perturbed FEN 中没有激活的节点
+    find the inactive nodes in the perturbed FEN
     
     Args:
-        graph_json: 加载的 JSON 图数据
+        graph_json: loaded JSON graph data
         lorsa_feature_acts_perturbed: list of tensors, shape [batch, seq_len, n_features]
         tc_feature_acts_perturbed: list of tensors, shape [batch, seq_len, n_features]
-        activation_threshold: 激活阈值，低于此值视为未激活
-        debug: 是否打印调试信息
+        activation_threshold: activation threshold, below which is considered inactive
+        debug: whether to print debug information
     
     Returns:
-        未激活的节点列表，每个节点包含原始节点信息和未激活原因
+        list of inactive nodes, each node contains the original node information and the reason for inactivity
     """
     nodes = graph_json.get('nodes', [])
     inactive_nodes = []
@@ -66,28 +56,28 @@ def find_inactive_nodes_in_perturbed(
         feature_type_raw = node.get('feature_type', '')
         feature_type = feature_type_raw.lower()
         
-        # 跳过 logit 和 error 节点
+        # skip logit and error nodes
         if 'logit' in feature_type or 'error' in feature_type:
             if debug:
                 skipped_nodes.append({'node_id': node_id, 'reason': 'logit_or_error'})
             continue
         
-        # 解析 node_id 获取 layer, feature_idx, position, feature_type
+        # parse node_id to get layer, feature_idx, position, feature_type
         parsed_layer, parsed_feat_idx, parsed_pos, parsed_feat_type = parse_node_id(node_id)
         
-        # 必须能够解析 node_id，否则跳过
+        # must be able to parse node_id, otherwise skip
         if parsed_layer is None:
             if debug:
                 skipped_nodes.append({'node_id': node_id, 'reason': 'cannot_parse_node_id'})
             continue
         
-        # 使用解析出的值
+        # use the parsed values
         layer = parsed_layer
         feature_idx = parsed_feat_idx
         position = parsed_pos
         feat_type = parsed_feat_type
         
-        # 验证 feature_type 是否匹配
+        # verify if feature_type matches
         if feat_type == 'lorsa' and 'lorsa' not in feature_type:
             if debug:
                 skipped_nodes.append({
@@ -103,7 +93,7 @@ def find_inactive_nodes_in_perturbed(
                 })
             continue
         
-        # 检查在 perturbed FEN 中是否激活
+        # check if the node is activated in the perturbed FEN
         try:
             if feat_type == 'lorsa':
                 if layer < len(lorsa_feature_acts_perturbed):
@@ -146,7 +136,7 @@ def find_inactive_nodes_in_perturbed(
             continue
     
     if debug and skipped_nodes:
-        print(f"\n跳过的节点数量: {len(skipped_nodes)}")
+        print(f"\nnumber of skipped nodes: {len(skipped_nodes)}")
         for skip in skipped_nodes[:10]:
             print(f"  - {skip['node_id']}: {skip['reason']}")
     
@@ -165,26 +155,26 @@ def compare_fen_activations(
     n_layers: int = 15
 ) -> Dict[str, Any]:
     """
-    比较两个FEN的激活差异
+    compare the activation differences between two FENs
     
     Args:
-        graph_json: 原始图的JSON数据
-        original_fen: 原始FEN字符串
-        perturbed_fen: 扰动后的FEN字符串
-        model_name: 模型名称
-        transcoders: transcoders字典
-        lorsas: lorsas列表
-        replacement_model: replacement model实例
-        activation_threshold: 激活阈值
-        n_layers: 层数
+        graph_json: original graph JSON data
+        original_fen: original FEN string
+        perturbed_fen: perturbed FEN string
+        model_name: model name
+        transcoders: transcoders dictionary
+        lorsas: lorsas list
+        replacement_model: replacement model instance
+        activation_threshold: activation threshold
+        n_layers: number of layers
     
     Returns:
-        包含inactive nodes的字典
+        dictionary containing inactive nodes
     """
-    # 运行perturbed FEN并获取激活
+    # run perturbed FEN and get activations
     output_perturbed, cache_perturbed = replacement_model.run_with_cache(perturbed_fen, prepend_bos=False)
     
-    # 获取激活张量
+    # get activation tensors
     lorsa_feature_acts_perturbed = []
     tc_feature_acts_perturbed = []
     
@@ -197,7 +187,7 @@ def compare_fen_activations(
         tc_feature_act = transcoders[layer].encode(tc_input)
         tc_feature_acts_perturbed.append(tc_feature_act)
     
-    # 找出未激活的节点
+    # find inactive nodes
     inactive_nodes = find_inactive_nodes_in_perturbed(
         graph_json,
         lorsa_feature_acts_perturbed,
@@ -206,7 +196,7 @@ def compare_fen_activations(
         debug=True
     )
     
-    # 按 layer 和 feature_type 分组统计
+    # group by layer and feature_type
     by_layer = defaultdict(int)
     by_type = defaultdict(int)
     for node in inactive_nodes:

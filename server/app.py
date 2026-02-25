@@ -231,9 +231,9 @@ _loading_logs: Dict[str, list] = {}  # combo_key -> [log1, log2, ...]
 import threading
 
 _global_loading_lock = threading.Lock()
-_hooked_model_loading_lock = threading.Lock()  # 专门用于 HookedTransformer 模型加载的锁
+_hooked_model_loading_lock = threading.Lock()  # Lock specifically for HookedTransformer model loading
 _hooked_model_loading_status: Dict[str, bool] = {}  # model_name -> is_loading
-_hooked_model_loading_condition = threading.Condition(_hooked_model_loading_lock)  # 条件变量，用于等待加载完成
+_hooked_model_loading_condition = threading.Condition(_hooked_model_loading_lock)  # Condition variable used to wait for loading completion
 
 _loading_locks: Dict[str, threading.Lock] = {}  # combo_key -> Lock
 _loading_status: Dict[str, dict] = {}  # combo_key -> {"is_loading": bool}
@@ -263,12 +263,12 @@ def _save_trace_result_to_disk(trace_key: str, result: dict) -> None:
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(save_data, f, ensure_ascii=False, indent=2)
         
-        print(f"✅ Trace结果已保存到磁盘: {file_path}")
+        print(f"✅ Trace result saved to disk: {file_path}")
     except Exception as e:
-        print(f"⚠️ 保存trace结果到磁盘失败: {e}")
+        print(f"⚠️ Failed to save trace result to disk: {e}")
 
 def _load_trace_results_from_disk() -> None:
-    """从磁盘加载已保存的trace结果"""
+    """Load saved circuit trace results from disk."""
     global _circuit_trace_results
     
     try:
@@ -285,32 +285,32 @@ def _load_trace_results_from_disk() -> None:
                 result = save_data.get("result")
                 
                 if trace_key and result:
-                    # 只加载最近30天的结果（避免加载过多旧数据）
+                    # Only load results from the last 30 days (avoid loading too much stale data)
                     saved_at = save_data.get("saved_at", 0)
                     if time.time() - saved_at < 30 * 24 * 3600:
                         _circuit_trace_results[trace_key] = result
                         loaded_count += 1
                     else:
-                        # 删除过期文件
+                        # Delete expired files
                         file_path.unlink()
-                        print(f"🗑️ 删除过期的trace结果: {file_path}")
+                        print(f"🗑️ Deleted expired trace result: {file_path}")
             except Exception as e:
-                print(f"⚠️ 加载trace结果文件失败 {file_path}: {e}")
+                print(f"⚠️ Failed to load trace result file {file_path}: {e}")
         
         if loaded_count > 0:
-            print(f"✅ 从磁盘加载了 {loaded_count} 个trace结果")
+            print(f"✅ Loaded {loaded_count} trace results from disk")
     except Exception as e:
-        print(f"⚠️ 加载trace结果失败: {e}")
+        print(f"⚠️ Failed to load trace results from disk: {e}")
 
-# 服务器启动时加载已保存的结果
+# Load previously saved results when the server starts
 _load_trace_results_from_disk()
 
-# 使用统一的持久化存储（已在上方定义）
+# Unified persistent storage helpers (defined above)
 def _load_trace_result_from_disk(trace_key: str) -> dict | None:
-    """从磁盘加载trace结果（使用统一的存储格式）"""
+    """Load a trace result from disk (using the unified storage format)."""
     import urllib.parse
     try:
-        # 使用安全的文件名
+        # Use a safe filename
         safe_key = trace_key.replace("::", "_").replace("/", "_").replace(" ", "_")
         file_path = TRACE_RESULTS_DIR / f"{safe_key}.json"
         
@@ -318,15 +318,15 @@ def _load_trace_result_from_disk(trace_key: str) -> dict | None:
             with open(file_path, "r", encoding="utf-8") as f:
                 save_data = json.load(f)
             
-            # 检查trace_key是否匹配
+            # Verify that the trace_key matches
             saved_trace_key = save_data.get("trace_key")
             if saved_trace_key == trace_key:
                 result = save_data.get("result")
                 if result:
-                    print(f"✅ 从磁盘加载trace结果: {file_path}")
+                    print(f"✅ Loaded trace result from disk: {file_path}")
                     return result
         
-        # 如果精确匹配失败，尝试遍历所有文件查找匹配的trace_key（处理编码差异）
+        # If an exact match is not found, try scanning all files for a matching trace_key (handle encoding differences)
         if TRACE_RESULTS_DIR.exists():
             for storage_file in TRACE_RESULTS_DIR.glob("*.json"):
                 try:
@@ -334,11 +334,13 @@ def _load_trace_result_from_disk(trace_key: str) -> dict | None:
                         save_data = json.load(f)
                     
                     saved_trace_key = save_data.get("trace_key")
-                    # 尝试解码比较（处理可能的编码差异）
+                    # Try decoding and comparing to handle possible encoding differences
                     if saved_trace_key == trace_key:
                         result = save_data.get("result")
                         if result:
-                            print(f"✅ 从磁盘加载trace结果（通过遍历查找）: {storage_file}")
+                            print(
+                                f"✅ Loaded trace result from disk (via iterative search): {storage_file}"
+                            )
                             return result
                 except Exception as e:
                     continue
@@ -347,84 +349,87 @@ def _load_trace_result_from_disk(trace_key: str) -> dict | None:
     except FileNotFoundError:
         return None
     except Exception as e:
-        print(f"⚠️ 从磁盘加载trace结果失败 ({trace_key}): {e}")
+        print(f"⚠️ Failed to load trace result from disk ({trace_key}): {e}")
         return None
 
 def get_hooked_model(model_name: str = 'lc0/BT4-1024x15x32h'):
-    """获取或加载HookedTransformer模型 - 仅支持BT4（带全局缓存和加载锁）"""
+    """Get or load a HookedTransformer model.
+
+    This currently only supports BT4 and uses a global cache plus loading locks.
+    """
     global _hooked_models, _hooked_model_loading_lock, _hooked_model_loading_status, _hooked_model_loading_condition
     
-    # 强制使用BT4模型
+    # Always use the BT4 model
     model_name = 'lc0/BT4-1024x15x32h'
     
-    # 先检查circuits_service的缓存（只对模型本身，不区分 SAE 组合）
+    # First check the circuits_service cache (only for the model itself; SAE combos are ignored)
     if CIRCUITS_SERVICE_AVAILABLE and get_cached_models is not None:
         cached_hooked_model, _, _, _ = get_cached_models(model_name)
         if cached_hooked_model is not None:
-            print(f"✅ 从circuits_service缓存获取HookedTransformer模型: {model_name}")
+            print(f"✅ Retrieved HookedTransformer model from circuits_service cache: {model_name}")
             return cached_hooked_model
     
-    # 使用条件变量和锁来保护模型加载过程
+    # Use the condition variable and lock to guard the model loading process
     with _hooked_model_loading_condition:
-        # 检查本地缓存（可能在等待期间已经被其他线程加载）
+        # Check local cache (another thread may have loaded the model while we were waiting)
         if model_name in _hooked_models:
-            print(f"✅ 从本地缓存获取HookedTransformer模型: {model_name}")
+            print(f"✅ Retrieved HookedTransformer model from local cache: {model_name}")
             return _hooked_models[model_name]
         
-        # 检查是否正在加载
+        # Check whether the model is already being loaded
         if _hooked_model_loading_status.get(model_name, False):
-            print(f"⏳ 检测到模型 {model_name} 正在加载中，等待加载完成...")
-            # 等待直到模型加载完成（最多等待60秒）
+            print(f"⏳ Detected that model {model_name} is currently loading; waiting for completion...")
+            # Wait until the model finishes loading (maximum 60 seconds)
             max_wait_time = 60
             start_time = time.time()
             while _hooked_model_loading_status.get(model_name, False) and (time.time() - start_time) < max_wait_time:
                 _hooked_model_loading_condition.wait(timeout=1.0)
             
-            # 再次检查缓存
+            # Check cache again
             if model_name in _hooked_models:
-                print(f"✅ 等待后从缓存获取HookedTransformer模型: {model_name}")
+                print(f"✅ Retrieved HookedTransformer model from cache after waiting: {model_name}")
                 return _hooked_models[model_name]
             elif (time.time() - start_time) >= max_wait_time:
-                raise TimeoutError(f"等待模型 {model_name} 加载超时（{max_wait_time}秒）")
+                raise TimeoutError(f"Timed out while waiting for model {model_name} to load ({max_wait_time} seconds)")
             
-            # 如果等待后仍然没有，继续加载流程
+            # If the model is still not available after waiting, continue with the loading process
             if model_name in _hooked_models:
                 return _hooked_models[model_name]
         
-        # 标记为正在加载
+        # Mark as loading
         _hooked_model_loading_status[model_name] = True
-        print(f"🔍 开始加载HookedTransformer模型: {model_name} (首次加载)")
+        print(f"🔍 Starting to load HookedTransformer model: {model_name} (first load)")
     
-    # 在锁外执行实际的加载操作（避免长时间持有锁）
+    # Perform the actual loading outside the lock (to avoid holding the lock for too long)
     try:
         if not HOOKED_TRANSFORMER_AVAILABLE:
-            raise ValueError("HookedTransformer不可用，请安装transformer_lens")
+            raise ValueError("HookedTransformer is not available; please install transformer_lens")
         
         model = HookedTransformer.from_pretrained_no_processing(
             model_name,
             dtype=torch.float32,
         ).eval()
         
-        # 加载完成后，使用条件变量保护缓存更新
+        # After loading completes, use the condition variable to safely update the cache
         with _hooked_model_loading_condition:
             _hooked_models[model_name] = model
             
-            # 如果circuits_service可用，也更新共享缓存
+            # If circuits_service is available, also update the shared cache
             if CIRCUITS_SERVICE_AVAILABLE and set_cached_models is not None:
-                # 需要transcoders和lorsas才能调用set_cached_models，这里只缓存模型
+                # set_cached_models usually also takes transcoders and LORSAs; here we only cache the model
                 _global_hooked_models[model_name] = model
             
-            # 标记加载完成
+            # Mark loading as finished
             _hooked_model_loading_status[model_name] = False
             
-            # 通知等待的线程
+            # Notify all waiting threads
             _hooked_model_loading_condition.notify_all()
         
-        print(f"✅ HookedTransformer模型 {model_name} 加载成功并已缓存")
+        print(f"✅ HookedTransformer model {model_name} loaded and cached successfully")
         return model
         
     except Exception as e:
-        # 加载失败，清除加载状态
+        # If loading fails, clear loading state
         with _hooked_model_loading_condition:
             _hooked_model_loading_status[model_name] = False
             _hooked_model_loading_condition.notify_all()
@@ -432,18 +437,18 @@ def get_hooked_model(model_name: str = 'lc0/BT4-1024x15x32h'):
 
 
 def get_cached_sae(sae_path: str, is_lorsa: bool, device: str = "cuda"):
-    """获取或加载单个SAE（带全局缓存）"""
+    """Get or load a single SAE instance (with global caching)."""
     global _single_sae_cache
     
-    # 使用路径作为缓存键
+    # Use the path as the cache key
     cache_key = f"{sae_path}::{is_lorsa}::{device}"
     
-    # 检查本地缓存
+    # Check local cache
     if cache_key not in _single_sae_cache:
         if not HOOKED_TRANSFORMER_AVAILABLE:
-            raise ValueError("HookedTransformer不可用，请安装transformer_lens")
+            raise ValueError("HookedTransformer is not available; please install transformer_lens")
         
-        print(f"🔍 正在加载SAE: {sae_path} (类型: {'Lorsa' if is_lorsa else 'Transcoder'})")
+        print(f"🔍 Loading SAE: {sae_path} (type: {'Lorsa' if is_lorsa else 'Transcoder'})")
         
         if is_lorsa:
             from lm_saes import LowRankSparseAttention
@@ -459,7 +464,7 @@ def get_cached_sae(sae_path: str, is_lorsa: bool, device: str = "cuda"):
             )
         
         _single_sae_cache[cache_key] = sae
-        print(f"✅ SAE加载成功: {sae_path}")
+        print(f"✅ SAE loaded successfully: {sae_path}")
     
     return _single_sae_cache[cache_key]
 
@@ -467,25 +472,26 @@ def get_cached_transcoders_and_lorsas(
     model_name: str,
     sae_combo_id: str | None = None,
 ) -> Tuple[Optional[Dict[int, SparseAutoEncoder]], Optional[List[LowRankSparseAttention]]]:
-    """获取缓存的 transcoders 和 lorsas（优先使用 circuits_service 的共享缓存）"""
+    """Get cached transcoders and LORSAs, preferring the shared circuits_service cache."""
 
     combo_id = sae_combo_id or CURRENT_BT4_SAE_COMBO_ID
     cache_key = _make_combo_cache_key(model_name, combo_id)
 
-    # 先检查circuits_service的缓存
+    # First check the circuits_service cache
     if CIRCUITS_SERVICE_AVAILABLE and get_cached_models is not None:
         _, cached_transcoders, cached_lorsas, _ = get_cached_models(cache_key)
         if cached_transcoders is not None and cached_lorsas is not None:
             return cached_transcoders, cached_lorsas
 
-    # 检查本地缓存
+    # Fallback to local cache
     global _transcoders_cache, _lorsas_cache
     return _transcoders_cache.get(cache_key), _lorsas_cache.get(cache_key)
 
+
 def get_available_models():
-    """获取可用的模型列表 - 仅支持BT4"""
+    """Get the available model list (BT4 only)."""
     return [
-        {'name': 'lc0/BT4-1024x15x32h', 'display_name': 'BT4-1024x15x32h'},
+        {"name": "lc0/BT4-1024x15x32h", "display_name": "BT4-1024x15x32h"},
     ]
 
 
@@ -514,21 +520,26 @@ def trim_minimum(
     Returns:
         list: List of trimmed arrays
     """
-    # 检查是否为国际象棋模型（通过检查origins中是否包含FEN数据）
+    # Check whether this is a chess model (by checking whether origins contain FEN data)
     has_fen_data = any(
-        origin is not None and origin.get("key") == "fen" 
-        for origin in origins if origin is not None
+        origin is not None and origin.get("key") == "fen"
+        for origin in origins
+        if origin is not None
     )
 
     if has_fen_data:
-        # 对于国际象棋模型，强制最小长度为64（棋盘格子数）
+        # For chess models, force the minimum length to be at least 64 (number of squares on the board)
         min_length = max(64, feature_acts_indices[-1] + 10)
     else:
-        # 对于其他模型，使用原有逻辑
+        # For other models, use the original logic
         min_length = min(len(origins), feature_acts_indices[-1] + 10)
-    
+
     feature_acts_indices_mask = feature_acts_indices <= min_length
-    return origins[:int(min_length)], feature_acts_indices[feature_acts_indices_mask], feature_acts_values[feature_acts_indices_mask]
+    return (
+        origins[: int(min_length)],
+        feature_acts_indices[feature_acts_indices_mask],
+        feature_acts_values[feature_acts_indices_mask],
+    )
 
 
 @app.exception_handler(AssertionError)
@@ -552,16 +563,17 @@ def list_dictionaries():
 
 
 ###############################################################################
-# BT4 SAE 组合相关 API
+# BT4 SAE combo APIs
 ###############################################################################
 
 
 @app.get("/sae/combos")
 def list_sae_combos() -> Dict[str, Any]:
     """
-    返回可选的 BT4 SAE 组合列表及默认组合。
+    Return the available BT4 SAE combos and the default combo.
 
-    这些组合来自 `exp/38mongoanalyses/组合.txt`，前端只能在这些组合中选择。
+    These combos are defined in `exp/38mongoanalyses/combos.txt`, and the
+    frontend can only select from this set.
     """
 
     combos = [
@@ -721,81 +733,86 @@ def get_feature(
             and feature_acts_values is not None
         ), "Origins and feature acts must not be None"
 
-        # 检查是否为国际象棋模型（多种检测方式）
+        # Detect whether this is a chess model (multiple checks)
         has_fen_data = any(
-            origin is not None and origin.get("key") == "fen" 
-            for origin in origins if origin is not None
+            origin is not None and origin.get("key") == "fen"
+            for origin in origins
+            if origin is not None
         )
-        
-        # 通过模型名称或数据集名称判断是否为棋类模型
+
+        # Determine whether this is a chess model from the model or dataset name
         is_chess_model = (
-            has_fen_data or 
-            "chess" in model_name.lower() or 
-            "lc0" in model_name.lower() or
-            "chess" in dataset_name.lower() or
-            "lc0" in dataset_name.lower()
+            has_fen_data
+            or "chess" in model_name.lower()
+            or "lc0" in model_name.lower()
+            or "chess" in dataset_name.lower()
+            or "lc0" in dataset_name.lower()
         )
-        
+
         if is_chess_model:
-            # 对于国际象棋模型，创建长度为64的密集激活数组
+            # For chess models, create a dense activation array of length 64
             dense_feature_acts = np.zeros(64)
-            
-            # 强制类型
+
+            # Enforce dtypes
             feature_acts_indices = np.asarray(feature_acts_indices, dtype=np.int64)
             feature_acts_values = np.asarray(feature_acts_values, dtype=np.float32)
 
-            # 可选：过滤非法索引
+            # Optionally filter out invalid indices
             valid_mask = (feature_acts_indices >= 0) & (feature_acts_indices < 64)
             feature_acts_indices = feature_acts_indices[valid_mask]
             feature_acts_values = feature_acts_values[valid_mask]
 
-            # 然后再 zip 循环或直接向量化写入
+            # Then either loop with zip or write in a vectorized way
             for idx, val in zip(feature_acts_indices, feature_acts_values):
-                        dense_feature_acts[idx] = val
-            
-            # 确保FEN数据存在
+                dense_feature_acts[idx] = val
+
+            # Ensure FEN data exists
             if "fen" not in data:
-                # 如果没有FEN数据，尝试从origins中提取
-                fen_origins = [origin for origin in origins if origin is not None and origin.get("key") == "fen"]
+                # If there is no FEN in the data, try to extract it from origins
+                fen_origins = [
+                    origin
+                    for origin in origins
+                    if origin is not None and origin.get("key") == "fen"
+                ]
                 if fen_origins:
-                    # 使用第一个FEN origin的范围来提取文本
+                    # Use the range from the first FEN origin to slice from the text
                     fen_origin = fen_origins[0]
                     if "range" in fen_origin and "text" in data:
                         start, end = fen_origin["range"]
                         data["fen"] = data["text"][start:end]
                     else:
-                        # 如果没有range信息，使用整个文本
+                        # If there is no range information, fall back to the full text
                         data["fen"] = data.get("text", "")
                 else:
-                    # 如果完全没有FEN信息，创建一个默认的
+                    # If there is no FEN information at all, create a default starting position
                     data["fen"] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-            
+
         else:
-            # 对于其他模型，使用原有逻辑
+            # For other models, use the original logic
             dense_feature_acts = np.zeros(len(origins))
-            
+
             for i, (idx, val) in enumerate(zip(feature_acts_indices, feature_acts_values)):
                 try:
-                    # 确保idx是有效的整数
-                    if hasattr(idx, 'item'):
+                    # Make sure idx is a valid integer
+                    if hasattr(idx, "item"):
                         idx = idx.item()
-                    elif hasattr(idx, '__int__'):
+                    elif hasattr(idx, "__int__"):
                         idx = int(idx)
                     else:
                         idx = int(float(idx))
-                    
-                    # 确保val是有效的数值
-                    if hasattr(val, 'item'):
+
+                    # Make sure val is a valid numeric value
+                    if hasattr(val, "item"):
                         val = val.item()
-                    elif hasattr(val, '__float__'):
+                    elif hasattr(val, "__float__"):
                         val = float(val)
                     else:
                         val = float(val)
-                    
-                    # 检查索引范围
+
+                    # Check index bounds
                     if 0 <= idx < len(origins):
                         dense_feature_acts[idx] = val
-                        
+
                 except (ValueError, TypeError, IndexError):
                     continue
 
@@ -809,14 +826,14 @@ def get_feature(
                 max_text_origin = max(text_ranges, key=lambda x: x[1])
                 data["text"] = data["text"][: max_text_origin[1]]
 
-        # 对于国际象棋模型，使用FEN作为文本
+        # For chess models, use the FEN string as the text
         if is_chess_model:
             data["text"] = data.get("fen", "No FEN data")
 
         return {
             **data,
             "origins": origins,
-            "feature_acts": dense_feature_acts,  # 返回密集激活数组
+            "feature_acts": dense_feature_acts,  # Dense activation array
             "feature_acts_indices": feature_acts_indices,
             "feature_acts_values": feature_acts_values,
             "z_pattern_indices": z_pattern_indices,
@@ -923,10 +940,10 @@ def get_feature(
                 }
             )
         except Exception as e:
-            # 返回400错误响应
+            # Return a 400 error response if processing this sampling fails
             return Response(
-                content=f"处理sampling '{sampling.name}' 时出错: {str(e)}", 
-                status_code=400
+                content=f"Error while processing sampling '{sampling.name}': {str(e)}",
+                status_code=400,
             )
 
     # Prepare response
@@ -1010,25 +1027,31 @@ def get_analyses(name: str):
 def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
     fen = request.get("fen")
     if not fen:
-        raise HTTPException(status_code=400, detail="FEN字符串不能为空")
+        raise HTTPException(status_code=400, detail="FEN string must not be empty")
     
     try:
         if not HOOKED_TRANSFORMER_AVAILABLE:
-            raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
-        
-        # 从SAE名称中提取层号和组合信息
+            raise HTTPException(
+                status_code=503,
+                detail="HookedTransformer is not available; please install transformer_lens",
+            )
+
+        # Extract layer index and combo information from the SAE name
         import re
-        layer_match = re.search(r'L(\d+)', name)
+        layer_match = re.search(r"L(\d+)", name)
         if not layer_match:
-            raise HTTPException(status_code=400, detail=f"无法从SAE名称 {name} 中提取层号")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot extract layer index from SAE name {name}",
+            )
         layer = int(layer_match.group(1))
         
-        # 判断是lorsa还是transcoder
+        # Determine whether this is a Lorsa or Transcoder SAE
         is_lorsa_name = 'lorsa' in name.lower()
         is_tc_name = 'tc' in name.lower() or 'transcoder' in name.lower()
         
-        # 从SAE名称中提取组合信息（例如 k30_e16 -> k_30_e_16）
-        # 或者尝试匹配所有已知的组合
+        # Extract combo information from the SAE name (e.g. k30_e16 -> k_30_e_16),
+        # or try to match against all known combos
         combo_id = None
         combo_match = re.search(r'k(\d+)_e(\d+)', name)
         if combo_match:
@@ -1036,36 +1059,38 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
             e_val = combo_match.group(2)
             combo_id = f"k_{k_val}_e_{e_val}"
         else:
-            # 如果没有找到组合信息，尝试通过匹配SAE名称模板来确定组合
-            # 遍历所有组合，看哪个模板匹配
+            # If we cannot find combo info directly, try to infer it by matching
+            # the SAE name against all known combo templates
             for test_combo_id, test_combo_cfg in BT4_SAE_COMBOS.items():
                 if is_lorsa_name:
                     template = test_combo_cfg.get("lorsa_sae_name_template", "")
                 else:
                     template = test_combo_cfg.get("tc_sae_name_template", "")
-                
-                # 尝试用层号替换模板，看是否匹配
+
+                # Try substituting the layer into the template and check for a match
                 if template:
                     template_with_layer = template.format(layer=layer)
-                    # 检查名称是否匹配（允许部分匹配，因为可能有其他后缀）
-                    if template_with_layer in name or name.startswith(template_with_layer.split('{')[0]):
+                    # Allow partial matches because there may be additional suffixes
+                    if template_with_layer in name or name.startswith(
+                        template_with_layer.split("{")[0]
+                    ):
                         combo_id = test_combo_id
                         break
-            
-            # 如果还是没找到，使用默认组合
+
+            # Fall back to the default combo if nothing matches
             if combo_id is None:
                 combo_id = BT4_DEFAULT_SAE_COMBO
         
-        # 获取组合配置
+        # Get combo configuration
         combo_cfg = get_bt4_sae_combo(combo_id)
         
-        # 获取模型
+        # Get model
         model_name = "lc0/BT4-1024x15x32h"
         model = get_hooked_model(model_name)
         
-        # 根据组合配置加载SAE（使用缓存）
+        # Load the SAE according to the combo configuration (using cache)
         if is_lorsa_name:
-            # 加载Lorsa
+            # Load Lorsa
             lorsa_base_path = combo_cfg["lorsa_base_path"]
             lorsa_path = f"{lorsa_base_path}/L{layer}"
             
@@ -1074,14 +1099,17 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
                     status_code=404,
                     detail=f"Lorsa not found at {lorsa_path} for layer {layer}"
                 )
-            
+
             if not HOOKED_TRANSFORMER_AVAILABLE:
-                raise HTTPException(status_code=503, detail="HookedTransformer不可用，无法加载Lorsa")
-            
-            # 使用缓存加载SAE
+                raise HTTPException(
+                    status_code=503,
+                    detail="HookedTransformer is not available; cannot load Lorsa",
+                )
+
+            # Load SAE from cache
             sae = get_cached_sae(lorsa_path, is_lorsa=True, device=device)
         elif is_tc_name:
-            # 加载Transcoder
+            # Load Transcoder
             tc_base_path = combo_cfg["tc_base_path"]
             tc_path = f"{tc_base_path}/L{layer}"
             
@@ -1090,31 +1118,34 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
                     status_code=404,
                     detail=f"Transcoder not found at {tc_path} for layer {layer}"
                 )
-            
-            # 使用缓存加载SAE
+
+            # Load SAE from cache
             sae = get_cached_sae(tc_path, is_lorsa=False, device=device)
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"无法确定SAE类型，名称应包含'lorsa'或'tc'/'transcoder'"
+                detail="Unable to determine SAE type; name should contain 'lorsa' or 'tc'/'transcoder'",
             )
         
-        # 运行模型获取激活值
+        # Run the model to obtain activations
         with torch.no_grad():
-            # 确定要hook的点
+            # Determine which hook to read from
             if is_lorsa_name:
-                # Lorsa 使用 hook_attn_in
+                # Lorsa uses hook_attn_in
                 hook_name = f"blocks.{layer}.hook_attn_in"
             else:
-                # Transcoder 使用 resid_mid_after_ln
+                # Transcoder uses resid_mid_after_ln
                 hook_name = f"blocks.{layer}.resid_mid_after_ln"
             
             _, cache = model.run_with_cache(fen, prepend_bos=False)            
-            
+
             if cache is None or len(cache) == 0:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"模型运行后cache为空，无法获取激活值。请检查FEN字符串是否有效。FEN: {fen}"
+                    detail=(
+                        "Cache is empty after running the model; cannot retrieve activations. "
+                        f"Please check whether the FEN string is valid. FEN: {fen}"
+                    ),
                 )
             print(f'{cache.keys() = }')
             try:
@@ -1124,177 +1155,189 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
             
             layer_hooks = [k for k in all_hooks if f"blocks.{layer}" in str(k)]
             if layer_hooks == []:
-                # 检查相邻层是否有hook点
-                for test_layer in [layer-1, layer+1, 0, model.cfg.n_layers-1]:
+                # Check whether neighbouring layers have any hooks
+                for test_layer in [layer - 1, layer + 1, 0, model.cfg.n_layers - 1]:
                     if 0 <= test_layer < model.cfg.n_layers:
                         test_hooks = [k for k in all_hooks if f"blocks.{test_layer}" in str(k)]
                         if test_hooks:
-                            print(f"   - 对比: 层 {test_layer} 有 {len(test_hooks)} 个hook点，示例: {test_hooks[:3]}")
+                            print(
+                                f"   - Comparison: layer {test_layer} has {len(test_hooks)} hooks, "
+                                f"examples: {test_hooks[:3]}"
+                            )
                             break
             
-            print(f"   - 期望的hook点: {hook_name}")
+            print(f"   - Expected hook name: {hook_name}")
             
-            # 检查hook点是否存在
+            # Check whether the expected hook exists
             hook_exists = False
             try:
                 hook_exists = hook_name in cache
-                print(f"   - Hook点是否存在: {hook_exists}")
+                print(f"   - Does hook exist: {hook_exists}")
             except Exception as e:
-                print(f"   - 检查hook点存在性时出错: {e}")
+                print(f"   - Error while checking hook existence: {e}")
             
             if not hook_exists:
-                # 尝试查找类似的hook点
+                # Try to find similar hooks
                 similar_hooks = [k for k in all_hooks if f"blocks.{layer}" in str(k)]
-                # 也尝试查找所有包含"attn"或"resid"的hook点（用于Lorsa和Transcoder）
+                # Also search for all hooks that contain "attn" or "resid" (for Lorsa and Transcoder)
                 if is_lorsa_name:
                     attn_hooks = [k for k in all_hooks if f"blocks.{layer}" in str(k) and "attn" in str(k).lower()]
-                    print(f"   - 包含'attn'的hook点: {attn_hooks[:10]}")
+                    print(f"   - Hooks containing 'attn': {attn_hooks[:10]}")
                 else:
                     resid_hooks = [k for k in all_hooks if f"blocks.{layer}" in str(k) and "resid" in str(k).lower()]
-                    print(f"   - 包含'resid'的hook点: {resid_hooks[:10]}")
+                    print(f"   - Hooks containing 'resid': {resid_hooks[:10]}")
                 
                 error_detail = (
-                    f"无法找到层 {layer} 的激活值。SAE类型: {'Lorsa' if is_lorsa_name else 'Transcoder'}。"
-                    f"期望的hook点: {hook_name}。"
-                    f"总hook点数量: {len(all_hooks)}。"
-                    f"包含'blocks.{layer}'的hook点: {similar_hooks[:20]}。"
-                    f"所有hook点示例: {all_hooks[:20] if len(all_hooks) > 0 else '无'}"
+                    f"Failed to find activations for layer {layer}. "
+                    f"SAE type: {'Lorsa' if is_lorsa_name else 'Transcoder'}. "
+                    f"Expected hook: {hook_name}. "
+                    f"Total number of hooks: {len(all_hooks)}. "
+                    f"Hooks containing 'blocks.{layer}': {similar_hooks[:20]}. "
+                    f"Example hooks: {all_hooks[:20] if len(all_hooks) > 0 else 'none'}"
                 )
                 raise HTTPException(status_code=500, detail=error_detail)
             
-            activations = cache[hook_name]  # shape: [batch, seq, ...] 通常是 [1, seq_len, d_model]
+            activations = cache[hook_name]  # shape: [batch, seq, ...], typically [1, seq_len, d_model]
             
-            # 确保activations有正确的维度
-            # Lorsa 和 Transcoder 的 encode 方法都需要 batch 维度
-            # 如果缺少 batch 维度，添加一个
+            # Ensure that activations have the correct number of dimensions.
+            # Both Lorsa and Transcoder encode methods expect a batch dimension.
+            # If the batch dimension is missing, add one.
             if activations.dim() == 1:
                 # [d_model] -> [1, d_model]
                 activations = activations.unsqueeze(0).unsqueeze(0)  # [1, 1, d_model]
             elif activations.dim() == 2:
                 # [seq_len, d_model] -> [1, seq_len, d_model]
                 activations = activations.unsqueeze(0)  # [1, seq_len, d_model]
-            # 如果已经是3维 [batch, seq_len, d_model]，直接使用
+            # If it is already 3D [batch, seq_len, d_model], use it directly
             
-            print(f"   - Activations形状: {activations.shape}")
+            print(f"   - Activations shape: {activations.shape}")
             
-            # 对于BT4模型，FEN输入后，seq_len通常是64（64个格子）
+            # For the BT4 model, seq_len is usually 64 squares after FEN input
             seq_len = activations.shape[1] if activations.dim() >= 2 else activations.shape[0]
-            print(f"   - 序列长度: {seq_len}")
+            print(f"   - Sequence length: {seq_len}")
         
-        # 使用SAE编码
-        # 检查SAE类型（我们已经知道是lorsa还是transcoder）
-        # 但为了安全，也检查一下类型
+        # Encode using the SAE
+        # We already know whether this should be Lorsa or Transcoder,
+        # but we also double-check the actual SAE type for safety.
         sae_type_str = str(type(sae))
-        is_lorsa = is_lorsa_name or 'LowRankSparseAttention' in sae_type_str
-        
+        is_lorsa = is_lorsa_name or "LowRankSparseAttention" in sae_type_str
+
         if is_lorsa:
-            # Lorsa编码，获取feature激活值
-            # Lorsa的encode方法期望输入是 [batch, seq_len, d_model] 形状
+            # Lorsa encoding: get feature activations.
+            # The Lorsa encode method expects input of shape [batch, seq_len, d_model].
             feature_acts = sae.encode(
-                activations,  # 使用带batch维度的activations
+                activations,  # Activations already include the batch dimension
                 return_hidden_pre=False,
-                return_attention_pattern=False
+                return_attention_pattern=False,
             )
-            
-            print(f"   - Feature acts形状（编码后）: {feature_acts.shape}")
-            
-            # 移除batch维度
+
+            print(f"   - Feature activations shape (after encoding): {feature_acts.shape}")
+
+            # Remove batch dimension
             if feature_acts.dim() == 3:
-                feature_acts = feature_acts[0]  # [seq_len, d_sae] - 使用索引而不是squeeze，更安全
+                feature_acts = feature_acts[0]  # [seq_len, d_sae] - index instead of squeeze for safety
             elif feature_acts.dim() == 2:
-                # 已经是 [seq_len, d_sae]，不需要处理
+                # Already [seq_len, d_sae]; nothing to do
                 pass
             else:
-                raise ValueError(f"意外的feature_acts维度: {feature_acts.shape}")
-            
-            # 获取指定feature的激活值
+                raise ValueError(f"Unexpected feature_acts shape: {feature_acts.shape}")
+
+            # Get activations for the given feature index
             # feature_acts shape: [seq_len, d_sae]
             if feature_acts.dim() == 2:
-                # 取所有位置的激活值，shape: [seq_len]
+                # Take activations across all positions, shape: [seq_len]
                 feature_activation_values = feature_acts[:, feature_index].detach().cpu().numpy()
             else:
-                feature_activation_values = feature_acts[feature_index].detach().cpu().unsqueeze(0).numpy()
-            
-            # 构建64个格子的激活值数组
+                feature_activation_values = (
+                    feature_acts[feature_index].detach().cpu().unsqueeze(0).numpy()
+                )
+
+            # Build an array of activations for 64 squares
             seq_len = len(feature_activation_values)
             if seq_len == 64:
                 activations_64 = feature_activation_values
             elif seq_len == 1:
-                # 如果只有1个值，复制到所有64个位置
-                # 这种情况通常发生在模型输出只有1个token时
+                # If there is only one value, broadcast it to all 64 positions
+                # This usually happens when the model output has only a single token
                 activations_64 = np.full(64, feature_activation_values[0])
             else:
-                # 如果长度不是64，填充或截断到64
+                # If the length is not 64, pad or truncate to 64
                 activations_64 = np.zeros(64)
                 min_len = min(seq_len, 64)
                 activations_64[:min_len] = feature_activation_values[:min_len]
-            
-            # 使用 encode_z_pattern_for_head 计算指定feature的z_pattern
-            # 这个方法会针对特定的head（feature_index）计算z_pattern，而不是对所有head取平均
+
+            # Use encode_z_pattern_for_head to compute the Z pattern for this feature.
+            # This method computes the Z pattern for the specific head (feature_index),
+            # instead of averaging across all heads.
             z_pattern_indices = None
             z_pattern_values = None
             try:
-                # 确保 activations 在正确的设备上
+                # Make sure activations are on the correct device
                 if activations.device != sae.cfg.device:
                     activations = activations.to(sae.cfg.device)
-                
-                # 使用 encode_z_pattern_for_head 计算该feature的z_pattern
-                # head_idx 是 feature_index（在Lorsa中，每个feature对应一个head）
+
+                # Compute the Z pattern for this feature using encode_z_pattern_for_head.
+                # head_idx is feature_index (for Lorsa, each feature corresponds to one head).
                 head_idx = torch.tensor([feature_index], device=activations.device)
                 z_pattern = sae.encode_z_pattern_for_head(activations, head_idx)
-                # z_pattern shape: [n_active_features, q_pos, k_pos]，这里是 [1, seq_len, seq_len]
-                
-                print(f"   - Z pattern形状: {z_pattern.shape}")
-                
-                # 获取该feature在所有位置的z_pattern
-                # z_pattern[0] shape: [q_pos, k_pos]，即 [seq_len, seq_len]
+                # z_pattern shape: [n_active_features, q_pos, k_pos], here [1, seq_len, seq_len]
+
+                print(f"   - Z pattern shape: {z_pattern.shape}")
+
+                # Get the Z pattern for all positions of this feature.
+                # z_pattern[0] shape: [q_pos, k_pos], i.e. [seq_len, seq_len]
                 z_pattern_2d = z_pattern[0]  # [seq_len, seq_len]
-                
-                # 找出所有激活的位置（非零激活值的位置）
+
+                # Find all active positions (non-zero activations)
                 active_positions = np.where(activations_64 != 0)[0]
-                
+
                 if len(active_positions) > 0:
-                    # 对于每个激活的位置，提取其z_pattern并合并
+                    # For each active position, extract and aggregate its Z pattern
                     all_z_pattern_indices = []
                     all_z_pattern_values = []
-                    
+
                     for pos in active_positions:
                         if pos < z_pattern_2d.shape[0]:
-                            # 获取该位置（作为query）对所有key位置的z_pattern
-                            z_pattern_for_pos = z_pattern_2d[pos, :].detach().cpu().numpy()  # [seq_len]
-                            
-                            # 找出非零值
-                            nonzero_mask = np.abs(z_pattern_for_pos) > 1e-6  # 过滤很小的值
+                            # Get the Z pattern from this query position to all key positions
+                            z_pattern_for_pos = (
+                                z_pattern_2d[pos, :].detach().cpu().numpy()
+                            )  # [seq_len]
+
+                            # Find non-zero values (filter out very small values)
+                            nonzero_mask = np.abs(z_pattern_for_pos) > 1e-6
                             if np.any(nonzero_mask):
                                 nonzero_indices = np.where(nonzero_mask)[0]
                                 nonzero_values = z_pattern_for_pos[nonzero_indices]
-                                
-                                # 添加 [query_pos, key_pos] 对
+
+                                # Add [query_pos, key_pos] pairs
                                 for key_pos, value in zip(nonzero_indices, nonzero_values):
                                     all_z_pattern_indices.append([int(pos), int(key_pos)])
                                     all_z_pattern_values.append(float(value))
-                    
+
                     if len(all_z_pattern_indices) > 0:
                         z_pattern_indices = all_z_pattern_indices
                         z_pattern_values = all_z_pattern_values
-                        print(f"   - Z pattern: 找到 {len(z_pattern_indices)} 个非零连接")
+                        print(
+                            f"   - Z pattern: found {len(z_pattern_indices)} non-zero connections"
+                        )
                     else:
-                        print(f"   - Z pattern: 未找到非零连接")
+                        print("   - Z pattern: no non-zero connections found")
                 else:
-                    print(f"   - Z pattern: 没有激活的位置")
-                    
+                    print("   - Z pattern: no active positions")
+
             except Exception as e:
-                print(f"   - 计算z_pattern时出错: {e}")
+                print(f"   - Error while computing Z pattern: {e}")
                 import traceback
+
                 traceback.print_exc()
                 z_pattern_indices = None
                 z_pattern_values = None
-            
-            # 构建稀疏格式的激活值（只返回非零值）
+
+            # Build a sparse representation of activations (return only non-zero values)
             non_zero_mask = activations_64 != 0
             feature_acts_indices = np.where(non_zero_mask)[0].tolist()
             feature_acts_values = activations_64[non_zero_mask].tolist()
-            
+
             return {
                 "feature_acts_indices": feature_acts_indices,
                 "feature_acts_values": feature_acts_values,
@@ -1302,47 +1345,49 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
                 "z_pattern_values": z_pattern_values,
             }
         else:
-            # Transcoder编码，也需要batch维度
-            # Transcoder的encode方法期望输入是 [batch, seq_len, d_model] 形状
-            encode_result = sae.encode(activations)  # 使用带batch维度的activations
-            feature_acts = encode_result  # shape: [batch, seq_len, d_sae]，通常是 [1, seq_len, d_sae]
-            
-            print(f"   - Feature acts形状（编码后）: {feature_acts.shape}")
-            
-            # 移除batch维度
+            # Transcoder encoding also requires a batch dimension.
+            # The Transcoder encode method expects input of shape [batch, seq_len, d_model].
+            encode_result = sae.encode(activations)  # Use activations with batch dimension
+            feature_acts = encode_result  # shape: [batch, seq_len, d_sae], usually [1, seq_len, d_sae]
+
+            print(f"   - Feature activations shape (after encoding): {feature_acts.shape}")
+
+            # Remove batch dimension
             if feature_acts.dim() == 3:
                 feature_acts = feature_acts[0]  # [seq_len, d_sae]
             elif feature_acts.dim() == 2:
-                # 已经是 [seq_len, d_sae]，不需要处理
+                # Already [seq_len, d_sae]; nothing to do
                 pass
             else:
-                raise ValueError(f"意外的feature_acts维度: {feature_acts.shape}")
-            
-            # 获取指定feature的激活值
+                raise ValueError(f"Unexpected feature_acts shape: {feature_acts.shape}")
+
+            # Get activations for the given feature index
             # feature_acts shape: [seq_len, d_sae]
             if feature_acts.dim() == 2:
                 feature_activation_values = feature_acts[:, feature_index].detach().cpu().numpy()
             else:
-                feature_activation_values = feature_acts[feature_index].detach().cpu().unsqueeze(0).numpy()
-            
-            # 构建64个格子的激活值数组
+                feature_activation_values = (
+                    feature_acts[feature_index].detach().cpu().unsqueeze(0).numpy()
+                )
+
+            # Build an array of activations for 64 squares
             seq_len = len(feature_activation_values)
             if seq_len == 64:
                 activations_64 = feature_activation_values
             elif seq_len == 1:
-                # 如果只有1个值，复制到所有64个位置
+                # If there is only one value, broadcast it to all 64 positions
                 activations_64 = np.full(64, feature_activation_values[0])
             else:
-                # 如果长度不是64，填充或截断到64
+                # If the length is not 64, pad or truncate to 64
                 activations_64 = np.zeros(64)
                 min_len = min(seq_len, 64)
                 activations_64[:min_len] = feature_activation_values[:min_len]
-            
-            # 构建稀疏格式
+
+            # Build sparse representation
             non_zero_mask = activations_64 != 0
             feature_acts_indices = np.where(non_zero_mask)[0].tolist()
             feature_acts_values = activations_64[non_zero_mask].tolist()
-            
+
             return {
                 "feature_acts_indices": feature_acts_indices,
                 "feature_acts_values": feature_acts_values,
@@ -1354,74 +1399,89 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
         raise
     except Exception as e:
         import traceback
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"分析FEN时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error while analyzing FEN: {str(e)}")
 
 
 @app.post("/activation/get_features_at_position")
 def get_features_at_position(request: dict):
     """
-    获取指定层和位置激活的所有 features
-    
+    Get all active features at a given layer and board position.
+
     Args:
-        request: 包含以下字段：
-            - fen: FEN 字符串
-            - layer: 层号（0-14）
-            - pos: 位置索引（0-63）
-            - component_type: 组件类型，"attn" 或 "mlp"
-            - model_name: 可选，模型名称，默认为 "lc0/BT4-1024x15x32h"
-            - sae_combo_id: 可选，SAE组合ID，默认使用当前组合
-    
+        request: A dictionary with the following fields:
+            - fen: FEN string
+            - layer: Layer index (0–14)
+            - pos: Position index (0–63)
+            - component_type: Component type, "attn" or "mlp"
+            - model_name: Optional model name, defaults to "lc0/BT4-1024x15x32h"
+            - sae_combo_id: Optional SAE combo ID, defaults to the current combo
+
     Returns:
-        字典，包含：
-        - "attn_features": 如果是 attn，返回激活的 Lorsa features（列表）
-        - "mlp_features": 如果是 mlp，返回激活的 Transcoder features（列表）
-        每个 feature 包含：
-        - "feature_index": feature 索引
-        - "activation_value": 激活值
+        A dictionary containing:
+        - "attn_features": if component_type is "attn", the active Lorsa features (list)
+        - "mlp_features": if component_type is "mlp", the active Transcoder features (list)
+        Each feature entry contains:
+        - "feature_index": feature index
+        - "activation_value": activation value
     """
     try:
         if not HOOKED_TRANSFORMER_AVAILABLE:
-            raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
-        
+            raise HTTPException(
+                status_code=503,
+                detail="HookedTransformer is not available; please install transformer_lens",
+            )
+
         fen = request.get("fen")
         layer = request.get("layer")
         pos = request.get("pos")
         component_type = request.get("component_type")
         model_name = request.get("model_name", "lc0/BT4-1024x15x32h")
         sae_combo_id = request.get("sae_combo_id")
-        
+
         if not fen:
-            raise HTTPException(status_code=400, detail="FEN字符串不能为空")
+            raise HTTPException(status_code=400, detail="FEN string must not be empty")
         if layer is None:
-            raise HTTPException(status_code=400, detail="层号不能为空")
+            raise HTTPException(status_code=400, detail="Layer index must not be empty")
         if pos is None:
-            raise HTTPException(status_code=400, detail="位置索引不能为空")
+            raise HTTPException(status_code=400, detail="Position index must not be empty")
         if not component_type:
-            raise HTTPException(status_code=400, detail="component_type不能为空，必须是'attn'或'mlp'")
-        
+            raise HTTPException(
+                status_code=400,
+                detail="component_type is required and must be 'attn' or 'mlp'",
+            )
+
         if component_type not in ["attn", "mlp"]:
-            raise HTTPException(status_code=400, detail="component_type必须是'attn'或'mlp'")
-        
-        # 获取模型
+            raise HTTPException(
+                status_code=400,
+                detail="component_type must be 'attn' or 'mlp'",
+            )
+
+        # Get model
         model = get_hooked_model(model_name)
-        
-        # 获取 transcoders 和 lorsas
-        cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(model_name, sae_combo_id)
-        
+
+        # Get transcoders and LORSAs
+        cached_transcoders, cached_lorsas = get_cached_transcoders_and_lorsas(
+            model_name, sae_combo_id
+        )
+
         if cached_transcoders is None or cached_lorsas is None:
             raise HTTPException(
                 status_code=503,
-                detail="Transcoders/Lorsas未加载，请先调用 /circuit/preload_models 预加载"
+                detail=(
+                    "Transcoders/LORSAs are not loaded; please call "
+                    "/circuit/preload_models to preload them first"
+                ),
             )
-        
+
         if not ACTIVATION_MODULE_AVAILABLE or get_activated_features_at_position is None:
             raise HTTPException(
                 status_code=503,
-                detail="activation模块不可用，无法获取激活features"
+                detail="The activation module is not available; cannot fetch active features",
             )
-        
-        # 调用函数获取激活的 features
+
+        # Call helper function to get the active features
         result = get_activated_features_at_position(
             model=model,
             transcoders=cached_transcoders,
@@ -1429,43 +1489,46 @@ def get_features_at_position(request: dict):
             fen=fen,
             layer=layer,
             pos=pos,
-            component_type=component_type
+            component_type=component_type,
         )
-        
+
         return result
-        
+
     except HTTPException:
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         import traceback
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"获取激活features失败: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get active features: {str(e)}"
+        )
 
 
 @app.post("/dictionaries/{name}/features/{feature_index}/analyze_fen_all_positions")
 def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
     fen = request.get("fen")
     if not fen:
-        raise HTTPException(status_code=400, detail="FEN字符串不能为空")
+        raise HTTPException(status_code=400, detail="FEN string must not be empty")
     
     try:
         if not HOOKED_TRANSFORMER_AVAILABLE:
-            raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
+            raise HTTPException(
+                status_code=503,
+                detail="HookedTransformer is not available; please install transformer_lens",
+            )
         
-        # 从SAE名称中提取层号和组合信息
         import re
         layer_match = re.search(r'L(\d+)', name)
         if not layer_match:
-            raise HTTPException(status_code=400, detail=f"无法从SAE名称 {name} 中提取层号")
+            raise HTTPException(status_code=400, detail=f"Cannot extract layer index from SAE name {name}")
         layer = int(layer_match.group(1))
         
-        # 判断是lorsa还是transcoder
         is_lorsa_name = 'lorsa' in name.lower()
         is_tc_name = 'tc' in name.lower() or 'transcoder' in name.lower()
         
-        # 从SAE名称中提取组合信息
         combo_id = None
         combo_match = re.search(r'k(\d+)_e(\d+)', name)
         if combo_match:
@@ -1473,7 +1536,6 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
             e_val = combo_match.group(2)
             combo_id = f"k_{k_val}_e_{e_val}"
         else:
-            # 尝试通过匹配SAE名称模板来确定组合
             for test_combo_id, test_combo_cfg in BT4_SAE_COMBOS.items():
                 if is_lorsa_name:
                     template = test_combo_cfg.get("lorsa_sae_name_template", "")
@@ -1489,14 +1551,11 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
             if combo_id is None:
                 combo_id = BT4_DEFAULT_SAE_COMBO
         
-        # 获取组合配置
         combo_cfg = get_bt4_sae_combo(combo_id)
         
-        # 获取模型
         model_name = "lc0/BT4-1024x15x32h"
         model = get_hooked_model(model_name)
         
-        # 根据组合配置加载SAE（使用缓存）
         if is_lorsa_name:
             lorsa_base_path = combo_cfg["lorsa_base_path"]
             lorsa_path = f"{lorsa_base_path}/L{layer}"
@@ -1507,7 +1566,6 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
                     detail=f"Lorsa not found at {lorsa_path} for layer {layer}"
                 )
             
-            # 使用缓存加载SAE
             sae = get_cached_sae(lorsa_path, is_lorsa=True, device=device)
         elif is_tc_name:
             tc_base_path = combo_cfg["tc_base_path"]
@@ -1519,105 +1577,85 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
                     detail=f"Transcoder not found at {tc_path} for layer {layer}"
                 )
             
-            # 使用缓存加载SAE
             sae = get_cached_sae(tc_path, is_lorsa=False, device=device)
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"无法确定SAE类型，名称应包含'lorsa'或'tc'/'transcoder'"
+                detail=f"Unable to determine SAE type; name should contain 'lorsa' or 'tc'/'transcoder'"
             )
         
-        # 一次性运行模型获取所有hook点的激活值（只运行一次前向传播）
         with torch.no_grad():
             if is_lorsa_name:
                 hook_name = f"blocks.{layer}.hook_attn_in"
             else:
                 hook_name = f"blocks.{layer}.resid_mid_after_ln"
             
-            # 运行模型，获取所有hook点的cache
             _, cache = model.run_with_cache(fen, prepend_bos=False)
             
             if hook_name not in cache:
                 available_hooks = [k for k in cache.keys() if f"blocks.{layer}" in str(k)]
                 raise HTTPException(
                     status_code=500,
-                    detail=f"无法找到层 {layer} 的激活值。SAE类型: {'Lorsa' if is_lorsa_name else 'Transcoder'}。期望的hook点: {hook_name}。可用的hook点: {available_hooks[:10]}"
+                    detail=f"Cannot find activations for layer {layer}. SAE type: {'Lorsa' if is_lorsa_name else 'Transcoder'}. Expected hook: {hook_name}. Available hooks: {available_hooks[:10]}"
                 )
             
-            activations = cache[hook_name]  # shape: [batch, seq_len, d_model]，通常是 [1, seq_len, d_model]
+            activations = cache[hook_name]  # shape: [batch, seq_len, d_model], typically [1, seq_len, d_model]
             
-            # 确保activations有正确的维度
             if activations.dim() == 1:
                 activations = activations.unsqueeze(0).unsqueeze(0)  # [1, 1, d_model]
             elif activations.dim() == 2:
                 activations = activations.unsqueeze(0)  # [1, seq_len, d_model]
             
             seq_len = activations.shape[1] if activations.dim() >= 2 else activations.shape[0]
-            print(f"🔍 分析所有位置: FEN={fen}, Layer={layer}, Feature={feature_index}, SeqLen={seq_len}")
+            print(f"Analyzing all positions: FEN={fen}, Layer={layer}, Feature={feature_index}, SeqLen={seq_len}")
         
-        # 使用SAE编码（一次性编码所有位置）
         sae_type_str = str(type(sae))
         is_lorsa = is_lorsa_name or 'LowRankSparseAttention' in sae_type_str
         
         if is_lorsa:
-            # Lorsa编码，获取feature激活值
             feature_acts = sae.encode(
                 activations,  # [1, seq_len, d_model]
                 return_hidden_pre=False,
                 return_attention_pattern=False
             )
             
-            # 移除batch维度
             if feature_acts.dim() == 3:
                 feature_acts = feature_acts[0]  # [seq_len, d_sae]
             
-            # 使用 encode_z_pattern_for_head 计算指定feature的z_pattern
             z_pattern_2d = None
             try:
-                # 确保 activations 在正确的设备上
                 if activations.device != sae.cfg.device:
                     activations = activations.to(sae.cfg.device)
                 
-                # 使用 encode_z_pattern_for_head 计算该feature的z_pattern
                 head_idx = torch.tensor([feature_index], device=activations.device)
                 z_pattern = sae.encode_z_pattern_for_head(activations, head_idx)
-                # z_pattern shape: [n_active_features, q_pos, k_pos]，这里是 [1, seq_len, seq_len]
                 z_pattern_2d = z_pattern[0]  # [seq_len, seq_len]
             except Exception as e:
-                print(f"   - 计算z_pattern时出错: {e}")
+                print(f"Error calculating z_pattern: {e}")
                 import traceback
                 traceback.print_exc()
             
-            # 提取所有位置的激活数据
             positions_data = []
-            for pos in range(min(seq_len, 64)):  # 最多64个位置
-                # 获取该位置的feature激活值
+            for pos in range(min(seq_len, 64)):
                 if feature_acts.dim() == 2:
                     pos_activations = feature_acts[pos, feature_index].detach().cpu().item()
                 else:
                     pos_activations = feature_acts[feature_index].detach().cpu().item()
                 
-                # 构建64个格子的激活值数组（当前只有这个位置有激活值）
                 activations_64 = np.zeros(64)
                 if pos < 64:
                     activations_64[pos] = pos_activations
                 
-                # 提取该位置的z_pattern（使用 encode_z_pattern_for_head 的结果）
                 z_pattern_indices = None
                 z_pattern_values = None
                 if z_pattern_2d is not None:
-                    # z_pattern_2d[query_pos, key_pos] 表示从query_pos到key_pos的z_pattern值
-                    # 对于位置pos作为query，我们提取从pos到所有key位置的z_pattern
                     query_pos = pos
                     if query_pos < z_pattern_2d.shape[0]:
-                        # 获取从当前query位置到所有key位置的z_pattern
                         key_z_patterns = z_pattern_2d[query_pos, :].detach().cpu().numpy()  # [seq_len]
                         
-                        # 找出非零的z_pattern值（过滤很小的值）
                         nonzero_mask = np.abs(key_z_patterns) > 1e-6
                         nonzero_indices = np.where(nonzero_mask)[0]
                         if len(nonzero_indices) > 0:
-                            # 格式：[query_pos, key_pos] 表示从query_pos到key_pos的z_pattern
                             z_pattern_indices = [[int(query_pos), int(k_pos)] for k_pos in nonzero_indices if k_pos < 64]
                             z_pattern_values = [float(key_z_patterns[k_pos]) for k_pos in nonzero_indices if k_pos < 64]
                 
@@ -1628,7 +1666,6 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
                     "z_pattern_values": z_pattern_values,
                 })
             
-            # 如果seq_len < 64，填充剩余位置为0
             for pos in range(seq_len, 64):
                 positions_data.append({
                     "position": pos,
@@ -1645,24 +1682,19 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
                 "sae_type": "Lorsa" if is_lorsa else "Transcoder"
             }
         else:
-            # Transcoder编码
             encode_result = sae.encode(activations)
             feature_acts = encode_result  # [1, seq_len, d_sae]
             
-            # 移除batch维度
             if feature_acts.dim() == 3:
                 feature_acts = feature_acts[0]  # [seq_len, d_sae]
             
-            # 提取所有位置的激活数据
             positions_data = []
             for pos in range(min(seq_len, 64)):
-                # 获取该位置的feature激活值
                 if feature_acts.dim() == 2:
                     pos_activations = feature_acts[pos, feature_index].detach().cpu().item()
                 else:
                     pos_activations = feature_acts[feature_index].detach().cpu().item()
                 
-                # 构建64个格子的激活值数组
                 activations_64 = np.zeros(64)
                 if pos < 64:
                     activations_64[pos] = pos_activations
@@ -1670,11 +1702,10 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
                 positions_data.append({
                     "position": pos,
                     "activations": activations_64.tolist(),
-                    "z_pattern_indices": None,  # Transcoder没有z_pattern
+                    "z_pattern_indices": None,
                     "z_pattern_values": None,
                 })
             
-            # 填充剩余位置
             for pos in range(seq_len, 64):
                 positions_data.append({
                     "position": pos,
@@ -1696,7 +1727,7 @@ def analyze_fen_all_positions(name: str, feature_index: int, request: dict):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"分析FEN所有位置时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error analyzing FEN all positions: {str(e)}")
 
 
 @app.post("/dictionaries/{name}/features/{feature_index}/bookmark")
@@ -1793,7 +1824,7 @@ def sync_clerps_to_interpretations(request: dict):
         if not isinstance(nodes, list):
             raise HTTPException(status_code=400, detail="nodes must be a list")
         
-        # 根据analysis_name找到对应的组合配置
+        # Find combo configuration by analysis_name (if provided)
         combo_cfg = None
         if lorsa_analysis_name or tc_analysis_name:
             for combo_id, cfg in BT4_SAE_COMBOS.items():
@@ -1802,14 +1833,14 @@ def sync_clerps_to_interpretations(request: dict):
                     combo_cfg = cfg
                     break
         
-        print(f"🔄 开始同步clerps到interpretations:")
-        print(f"   - 节点数量: {len(nodes)}")
+        print(f"🔄 Start syncing clerps to interpretations:")
+        print(f"   - Node count: {len(nodes)}")
         print(f"   - Lorsa analysis_name: {lorsa_analysis_name}")
         print(f"   - TC analysis_name: {tc_analysis_name}")
         if combo_cfg:
-            print(f"   - 找到组合配置: {combo_cfg.get('id')}")
-            print(f"   - Lorsa模板: {combo_cfg.get('lorsa_sae_name_template')}")
-            print(f"   - TC模板: {combo_cfg.get('tc_sae_name_template')}")
+            print(f"   - Found combo config: {combo_cfg.get('id')}")
+            print(f"   - Lorsa template: {combo_cfg.get('lorsa_sae_name_template')}")
+            print(f"   - TC template: {combo_cfg.get('tc_sae_name_template')}")
         
         synced_count = 0
         skipped_count = 0
@@ -1823,28 +1854,28 @@ def sync_clerps_to_interpretations(request: dict):
             layer = node.get('layer')
             feature_type = node.get('feature_type', '').lower()
             
-            # 跳过没有clerp或clerp为空的节点
+            # Skip nodes without a non-empty clerp string
             if not clerp or not isinstance(clerp, str) or clerp.strip() == '':
                 skipped_count += 1
                 continue
             
-            # 构建SAE名称（使用模板）
+            # Build SAE name (using template when available)
             sae_name = None
             if 'lorsa' in feature_type:
                 if combo_cfg and combo_cfg.get('lorsa_sae_name_template'):
-                    # 使用模板，替换{layer}为实际层号
+                    # Use template, replace {layer} with actual layer index
                     sae_name = combo_cfg['lorsa_sae_name_template'].format(layer=layer)
                 elif lorsa_analysis_name:
-                    # 向后兼容：如果没有找到组合配置，尝试使用旧的方式
+                    # Backward compatibility: if no combo config, fall back to legacy pattern
                     sae_name = lorsa_analysis_name.replace("{}", str(layer))
                 else:
                     sae_name = f"BT4_lorsa_L{layer}A"
             elif 'transcoder' in feature_type or 'cross layer transcoder' in feature_type:
                 if combo_cfg and combo_cfg.get('tc_sae_name_template'):
-                    # 使用模板，替换{layer}为实际层号
+                    # Use template, replace {layer} with actual layer index
                     sae_name = combo_cfg['tc_sae_name_template'].format(layer=layer)
                 elif tc_analysis_name:
-                    # 向后兼容：如果没有找到组合配置，尝试使用旧的方式
+                    # Backward compatibility: if no combo config, fall back to legacy pattern
                     sae_name = tc_analysis_name.replace("{}", str(layer))
                 else:
                     sae_name = f"BT4_tc_L{layer}M"
@@ -1854,18 +1885,18 @@ def sync_clerps_to_interpretations(request: dict):
                 continue
             
             try:
-                # 解码clerp（如果是URL编码的）
+                # Decode clerp (in case it is URL-encoded)
                 import urllib.parse
                 decoded_clerp = urllib.parse.unquote(clerp)
                 
-                # 创建interpretation字典
+                # Build interpretation dict
                 interpretation_dict = {
                     "text": decoded_clerp,
                     "method": "circuit_clerp",
                     "validation": []
                 }
                 
-                # 保存到MongoDB
+                # Save to MongoDB
                 client.update_feature(
                     sae_name=sae_name,
                     sae_series=sae_series,
@@ -1881,7 +1912,7 @@ def sync_clerps_to_interpretations(request: dict):
                     "status": "synced"
                 })
                 
-                print(f"✅ 已同步节点 {node_id}: {sae_name}[{feature_idx}]")
+                print(f"✅ Synced node {node_id}: {sae_name}[{feature_idx}]")
                 
             except Exception as e:
                 error_count += 1
@@ -1892,17 +1923,17 @@ def sync_clerps_to_interpretations(request: dict):
                     "status": "error",
                     "error": str(e)
                 })
-                print(f"❌ 同步节点 {node_id} 失败: {e}")
+                print(f"❌ Failed to sync node {node_id}: {e}")
         
         summary = {
             "total_nodes": len(nodes),
             "synced": synced_count,
             "skipped": skipped_count,
             "errors": error_count,
-            "results": results[:50]  # 只返回前50个详细结果
+            "results": results[:50],  # Only return first 50 detailed results
         }
         
-        print(f"✅ 同步完成: {synced_count} 成功, {skipped_count} 跳过, {error_count} 失败")
+        print(f"✅ Sync completed: {synced_count} success, {skipped_count} skipped, {error_count} failed")
         
         return summary
         
@@ -1911,7 +1942,7 @@ def sync_clerps_to_interpretations(request: dict):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Sync clerps to interpretations failed: {str(e)}")
 
 
 @app.post("/circuit/sync_interpretations_to_clerps")
@@ -1924,7 +1955,7 @@ def sync_interpretations_to_clerps(request: dict):
         if not isinstance(nodes, list):
             raise HTTPException(status_code=400, detail="nodes must be a list")
         
-        # 根据analysis_name找到对应的组合配置
+        # Find combo configuration by analysis_name (if provided)
         combo_cfg = None
         if lorsa_analysis_name or tc_analysis_name:
             for combo_id, cfg in BT4_SAE_COMBOS.items():
@@ -1933,14 +1964,14 @@ def sync_interpretations_to_clerps(request: dict):
                     combo_cfg = cfg
                     break
         
-        print(f"🔄 开始从interpretations同步到clerps:")
-        print(f"   - 节点数量: {len(nodes)}")
+        print(f"🔄 Start syncing from interpretations to clerps:")
+        print(f"   - Node count: {len(nodes)}")
         print(f"   - Lorsa analysis_name: {lorsa_analysis_name}")
         print(f"   - TC analysis_name: {tc_analysis_name}")
         if combo_cfg:
-            print(f"   - 找到组合配置: {combo_cfg.get('id')}")
-            print(f"   - Lorsa模板: {combo_cfg.get('lorsa_sae_name_template')}")
-            print(f"   - TC模板: {combo_cfg.get('tc_sae_name_template')}")
+            print(f"   - Found combo config: {combo_cfg.get('id')}")
+            print(f"   - Lorsa template: {combo_cfg.get('lorsa_sae_name_template')}")
+            print(f"   - TC template: {combo_cfg.get('tc_sae_name_template')}")
         
         updated_nodes = []
         found_count = 0
@@ -1952,32 +1983,33 @@ def sync_interpretations_to_clerps(request: dict):
             layer = node.get('layer')
             feature_type = node.get('feature_type', '').lower()
             
-            # 构建SAE名称（使用模板）
+            # Build SAE name (using template when available)
             sae_name = None
             if 'lorsa' in feature_type:
                 if combo_cfg and combo_cfg.get('lorsa_sae_name_template'):
-                    # 使用模板，替换{layer}为实际层号
+                    # Use template, replace {layer} with actual layer index
                     sae_name = combo_cfg['lorsa_sae_name_template'].format(layer=layer)
                 elif lorsa_analysis_name:
-                    # 向后兼容：如果没有找到组合配置，尝试使用旧的方式
+                    # Backward compatibility: if no combo config, fall back to legacy pattern
                     sae_name = lorsa_analysis_name.replace("{}", str(layer))
                 else:
                     sae_name = f"BT4_lorsa_L{layer}A"
             elif 'transcoder' in feature_type or 'cross layer transcoder' in feature_type:
                 if combo_cfg and combo_cfg.get('tc_sae_name_template'):
-                    # 使用模板，替换{layer}为实际层号
+                    # Use template, replace {layer} with actual layer index
                     sae_name = combo_cfg['tc_sae_name_template'].format(layer=layer)
                 elif tc_analysis_name:
-                    # 向后兼容：如果没有找到组合配置，尝试使用旧的方式
+                    # Backward compatibility: if no combo config, fall back to legacy pattern
                     sae_name = tc_analysis_name.replace("{}", str(layer))
                 else:
                     sae_name = f"BT4_tc_L{layer}M"
             
-            updated_node = {**node}  # 复制原节点数据
+            # Copy original node data so we do not mutate input
+            updated_node = {**node}
             
             if sae_name and feature_idx is not None:
                 try:
-                    # 从MongoDB读取feature
+                    # Read feature from MongoDB
                     feature = client.get_feature(
                         sae_name=sae_name,
                         sae_series=sae_series,
@@ -1994,14 +2026,14 @@ def sync_interpretations_to_clerps(request: dict):
                         if clerp_text:
                             updated_node["clerp"] = clerp_text
                             found_count += 1
-                            print(f"✅ 找到节点 {node_id} 的interpretation: {sae_name}[{feature_idx}]")
+                            print(f"✅ Found interpretation for node {node_id}: {sae_name}[{feature_idx}]")
                         else:
                             not_found_count += 1
                     else:
                         not_found_count += 1
                         
                 except Exception as e:
-                    print(f"⚠️ 读取节点 {node_id} 的interpretation失败: {e}")
+                    print(f"⚠️ Failed to read interpretation for node {node_id}: {e}")
                     not_found_count += 1
             else:
                 not_found_count += 1
@@ -2015,7 +2047,7 @@ def sync_interpretations_to_clerps(request: dict):
             "updated_nodes": updated_nodes
         }
         
-        print(f"✅ 同步完成: {found_count} 找到, {not_found_count} 未找到")
+        print(f"✅ Sync completed: {found_count} found, {not_found_count} not found")
         
         return summary
         
@@ -2024,7 +2056,7 @@ def sync_interpretations_to_clerps(request: dict):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Sync interpretations to clerps failed: {str(e)}")
 
 
 @app.post("/dictionaries/{name}/features/{feature_index}/interpret")
@@ -2032,22 +2064,22 @@ def interpret_feature(
     name: str,
     feature_index: int,
     type: str,
-    custom_interpretation: Optional[str] = None
+    custom_interpretation: Optional[str] = None,
 ):
     """
-    处理特征解释：自动生成、自定义保存或验证
+    Handle feature interpretation: auto-generate (not implemented), save custom, or validate.
     
     Args:
-        name: SAE名称
-        feature_index: 特征索引
-        type: 解释类型 (auto/custom/validate)
-        custom_interpretation: 自定义解释文本（type=custom时需要）
+        name: SAE name
+        feature_index: Feature index
+        type: Interpretation type ("auto" | "custom" | "validate")
+        custom_interpretation: Custom interpretation text (required when type=\"custom\")
     
     Returns:
-        Interpretation对象（字典格式）
+        Interpretation object as a dict
     """
     try:
-        # 获取特征
+        # Fetch feature
         feature = client.get_feature(
             sae_name=name,
             sae_series=sae_series,
@@ -2057,34 +2089,33 @@ def interpret_feature(
         if feature is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"Feature {feature_index} not found in SAE {name}"
+                detail=f"Feature {feature_index} not found in SAE {name}",
             )
         
         if type == "custom":
-            # 保存自定义解释
+            # Save custom interpretation
             if not custom_interpretation:
                 raise HTTPException(
                     status_code=400,
-                    detail="custom_interpretation is required for type=custom"
+                    detail="custom_interpretation is required for type=custom",
                 )
             
-            # FastAPI应该已经自动解码了URL编码的参数
-            # 如果仍有问题，可以使用 urllib.parse.unquote 解码
+            # FastAPI should already have URL-decoded params; decode again just in case
             import urllib.parse
             decoded_interpretation = urllib.parse.unquote(custom_interpretation)
             
-            print(f"📝 收到解释文本:")
-            print(f"   - 原始: {custom_interpretation}")
-            print(f"   - 解码: {decoded_interpretation}")
+            print("📝 Received interpretation text:")
+            print(f"   - Raw: {custom_interpretation}")
+            print(f"   - Decoded: {decoded_interpretation}")
             
-            # 创建解释字典（只包含必需字段，其他字段不返回以符合前端schema的optional定义）
+            # Build interpretation dict (only required fields, to match frontend optional schema)
             interpretation_dict = {
                 "text": decoded_interpretation,
                 "method": "custom",
                 "validation": []
             }
             
-            # 保存到数据库
+            # Save to database
             try:
                 client.update_feature(
                     sae_name=name,
@@ -2104,24 +2135,27 @@ def interpret_feature(
         elif type == "auto":
             raise HTTPException(
                 status_code=501,
-                detail="Automatic interpretation is not yet implemented. Please use custom interpretation."
+                detail="Automatic interpretation is not yet implemented. Please use custom interpretation.",
             )
         
         elif type == "validate":
             if not feature.interpretation:
                 raise HTTPException(
                     status_code=400,
-                    detail="No interpretation available to validate"
+                    detail="No interpretation available to validate",
                 )
             
             interp = feature.interpretation
-            print(f"📖 读取解释文本: {interp.get('text', '') if isinstance(interp, dict) else getattr(interp, 'text', '')}")
+            print(
+                "📖 Reading interpretation text: "
+                f"{interp.get('text', '') if isinstance(interp, dict) else getattr(interp, 'text', '')}"
+            )
             
             if isinstance(interp, dict):
                 result = {
                     "text": interp.get("text", ""),
                     "method": interp.get("method", "unknown"),
-                    "validation": interp.get("validation", [])
+                    "validation": interp.get("validation", []),
                 }
                 if interp.get("passed") is not None:
                     result["passed"] = interp.get("passed")
@@ -2131,13 +2165,13 @@ def interpret_feature(
                     result["consistency"] = interp.get("consistency")
                 return result
             else:
-                # 如果是对象，尝试访问属性
+                # If it is an object, try to access attributes
                 result = {
                     "text": getattr(interp, "text", ""),
                     "method": getattr(interp, "method", "unknown"),
-                    "validation": getattr(interp, "validation", [])
+                    "validation": getattr(interp, "validation", []),
                 }
-                # 只有当值不是None时才添加可选字段
+                # Only add optional fields when not None
                 passed = getattr(interp, "passed", None)
                 if passed is not None:
                     result["passed"] = passed
@@ -2188,7 +2222,7 @@ def update_bookmark(name: str, feature_index: int, tags: Optional[list[str]] = N
         return Response(content="Bookmark not found", status_code=404)
 
 
-# LC0 引擎类
+# LC0 engine wrapper
 class LC0Engine:
     def __init__(self, model):
         self.model = model
@@ -2196,13 +2230,13 @@ class LC0Engine:
 
     def play(self, chess_board):
         try:
-            # 使用 notebook 同款接口进行推理
+            # Use the same interface as the notebook for inference
             fen = chess_board.fen()
-            print(f"🔍 处理FEN: {fen}")
+            print(f"🔍 Processing FEN: {fen}")
 
-            # 创建 LeelaBoard 实例来处理映射
+            # Create a LeelaBoard instance to handle mapping
             lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
-            lboard.pc_board = chess_board  # 使用现有的棋盘状态
+            lboard.pc_board = chess_board  # Use the existing board state
 
             with torch.no_grad():
                 output, cache = self.model.run_with_cache(fen, prepend_bos=False)
@@ -2225,99 +2259,94 @@ class LC0Engine:
                 logit = float(policy_logits[idx].item())
                 top10.append((uci, logit))
             
-            print("🔍 模型输出调试信息:")
+            print("🔍 Model output debug info:")
             print(f"   - policy_logits shape: {tuple(policy_logits.shape)}")
-            print(f"   - 合法移动数量: {len(legal_moves)}")
-            print("   - 前10个最高概率move (uci, logit):")
+            print(f"   - number of legal moves: {len(legal_moves)}")
+            print("   - Top 10 highest-probability moves (uci, logit):")
             print("     " + ", ".join([f"{uci}:{logit:.4f}" for uci, logit in top10]))
 
-            # 依次尝试最高概率索引对应的 UCI，选择第一个合法移动
+            # Try moves in descending policy order and choose the first legal move
             for rank, idx in enumerate(sorted_indices.tolist(), start=1):
                 uci = lboard.idx2uci(idx)
                 if uci in legal_uci_set:
                     move = chess.Move.from_uci(uci)
-                    print(f"✅ 选择最大概率合法移动: {uci} (概率排名: {rank}, logit: {policy_logits[idx].item():.4f})")
+                    print(f"✅ Selected highest-probability legal move: {uci} (rank: {rank}, logit: {policy_logits[idx].item():.4f})")
                     return move
 
-            # 如果未找到合法移动，打印报错并抛异常
-            print("❌ 错误：模型未能找到任何合法移动！")
-            print(f"   - 当前局面 FEN: {fen}")
-            print(f"   - 示例合法移动: {[m.uci() for m in legal_moves[:10]]}")
-            print(f"   - 尝试了前 {min(len(sorted_indices), 50)} 个最高概率的token")
-            raise ValueError("模型未能找到任何合法移动")
+            # If no legal move is found, log and raise an error
+            print("❌ Error: model did not find any legal move!")
+            print(f"   - Current FEN: {fen}")
+            print(f"   - Sample legal moves: {[m.uci() for m in legal_moves[:10]]}")
+            print(f"   - Tried top {min(len(sorted_indices), 50)} highest-probability tokens")
+            raise ValueError("Model did not find any legal move")
 
         except Exception as e:
-            print(f"❌ LC0Engine.play() 出错: {e}")
+            print(f"❌ LC0Engine.play() failed: {e}")
             raise e
 
 
 @app.post("/play_game")
 def play_game(request: dict):
     """
-    与模型对战：输入当前局面 FEN，返回模型建议的下一步移动 (UCI 格式)
+    Play against the model: given a FEN, return the model's suggested next move (UCI).
     
-    支持两种模式：
-    1. 直接使用神经网络策略输出（use_search=False，默认）
-    2. 使用 MCTS 搜索（use_search=True）
+    Supported modes:
+        1. Directly use the neural network policy output (use_search=False, default)
+        2. Use MCTS search (use_search=True)
     
     Args:
-        request: 包含以下字段：
-            - fen: FEN 字符串（必需）
-            - use_search: 是否使用 MCTS 搜索（可选，默认 False）
-            - search_params: 搜索参数（可选，use_search=True 时有效）
-                - max_playouts: 最大模拟次数（默认 100）
-                - target_minibatch_size: minibatch 大小（默认 8）
-                - cpuct: UCT 探索系数（默认 1.0）
-                - max_depth: 最大搜索深度（默认 10）
+        request: JSON body with:
+            - fen: FEN string (required)
+            - use_search: whether to use MCTS search (optional, default False)
+            - search_params: search parameters (optional, used when use_search=True)
+                - max_playouts: max playouts (default 100)
+                - target_minibatch_size: minibatch size (default 8)
+                - cpuct: UCT exploration coefficient (default 1.0)
+                - max_depth: maximum search depth (default 10)
     """
     fen = request.get("fen")
     use_search = request.get("use_search", False)
     search_params = request.get("search_params", {})
-    # 强制使用BT4模型
     model_name = "lc0/BT4-1024x15x32h"
     
     save_trace = bool(request.get("save_trace", False))
     trace_output_dir = request.get("trace_output_dir") or str(SEARCH_TRACE_OUTPUT_DIR)
-    # trace_max_edges: 0 或 None 表示不限制（保存完整搜索树），其他值表示最大边数
     trace_max_edges_raw = request.get("trace_max_edges", 1000)
     trace_max_edges = None if (trace_max_edges_raw == 0 or trace_max_edges_raw is None) else int(trace_max_edges_raw)
 
     if not fen:
-        raise HTTPException(status_code=400, detail="FEN 字符串不能为空")
+        raise HTTPException(status_code=400, detail="FEN string must not be empty")
     
     try:
         board = chess.Board(fen)
     except Exception as e:
-        raise HTTPException(status_code=400, detail="无效的 FEN 字符串")
+        raise HTTPException(status_code=400, detail="Invalid FEN string")
     
     try:
-        # 检查HookedTransformer是否可用
+        # Check whether HookedTransformer is available
         if not HOOKED_TRANSFORMER_AVAILABLE:
-            print("❌ 错误：HookedTransformer不可用")
-            raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
+            print("❌ Error: HookedTransformer is not available")
+            raise HTTPException(
+                status_code=503,
+                detail="HookedTransformer is not available; please install transformer_lens",
+            )
         
         if use_search:
-            # 使用 MCTS 搜索
-            print(f"🔍 使用 MCTS 搜索模式: {fen[:50]}...")
+            print(f"🔍 Using MCTS search mode: {fen[:50]}...")
             
-            # 导入搜索模块
             try:
                 from search.model_interface import run_mcts_search, set_model_getter
-                # 设置模型获取器以复用缓存
                 set_model_getter(get_hooked_model)
             except ImportError as e:
-                print(f"❌ 导入搜索模块失败: {e}")
-                raise HTTPException(status_code=503, detail="MCTS 搜索模块不可用")
+                print(f"❌ Failed to import search module: {e}")
+                raise HTTPException(status_code=503, detail="MCTS search module not available")
             
-            # 解析搜索参数，使用默认值
             max_playouts = search_params.get("max_playouts", 100)
             target_minibatch_size = search_params.get("target_minibatch_size", 8)
             cpuct = search_params.get("cpuct", 1.0)
             max_depth = search_params.get("max_depth", 10)
             
-            print(f"   搜索参数: max_playouts={max_playouts}, cpuct={cpuct}, max_depth={max_depth}")
-            
-            # 运行搜索
+            print(f"   Search params: max_playouts={max_playouts}, cpuct={cpuct}, max_depth={max_depth}")
             search_result = run_mcts_search(
                 fen=fen,
                 max_playouts=max_playouts,
@@ -2329,9 +2358,9 @@ def play_game(request: dict):
             
             best_move = search_result.get("best_move")
             if not best_move:
-                raise ValueError("MCTS 搜索未能找到合法移动")
+                raise ValueError("MCTS search did not find a legal move")
             
-            print(f"✅ MCTS 搜索完成: {best_move}, playouts={search_result.get('total_playouts')}")
+            print(f"✅ MCTS search completed: {best_move}, playouts={search_result.get('total_playouts')}")
             
             return {
                 "move": best_move,
@@ -2345,49 +2374,47 @@ def play_game(request: dict):
                 }
             }
         else:
-            # 直接使用神经网络策略输出
             model = get_hooked_model(model_name)
             engine = LC0Engine(model)
             move = engine.play(board)
             return {"move": move.uci(), "model_used": model_name, "search_used": False}
         
     except ValueError as e:
-        print(f"❌ 模型找不到合法移动: {e}")
-        raise HTTPException(status_code=400, detail=f"模型找不到合法移动: {str(e)}")
+        print(f"❌ Model could not find a legal move: {e}")
+        raise HTTPException(status_code=400, detail=f"Model could not find a legal move: {str(e)}")
     except Exception as e:
-        print(f"❌ 处理移动时出错: {e}")
+        print(f"❌ Error while computing move: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"处理移动时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Move computation failed: {str(e)}")
 
 
 @app.post("/play_game_with_search")
 def play_game_with_search(request: dict):
     """
-    与模型对战（使用 MCTS 搜索）：输入当前局面 FEN 和搜索参数，返回模型建议的下一步移动 (UCI 格式)
+    Play against the model using MCTS search: given a FEN and search parameters,
+    return the model's suggested next move (UCI).
     
-    请求参数:
-        - fen: FEN 字符串
-        - max_playouts: 最大模拟次数（默认 100）
-        - target_minibatch_size: 目标 minibatch 大小（默认 8）
-        - cpuct: UCT 探索系数（默认 1.0）
-        - max_depth: 最大搜索深度（默认 10，0 表示不限制）
-        - low_q_exploration_enabled: 是否启用低Q值探索增强（默认 False）
-        - low_q_threshold: Q值阈值，低于此值认为是"低Q值"（默认 0.3）
-        - low_q_exploration_bonus: 探索奖励的基础值（默认 0.1）
-        - low_q_visit_threshold: 访问次数阈值，低于此值认为是"未充分探索"（默认 5）
+    Request body:
+        - fen: FEN string
+        - max_playouts: max playouts (default 100)
+        - target_minibatch_size: target minibatch size (default 8)
+        - cpuct: UCT exploration coefficient (default 1.0)
+        - max_depth: max search depth (default 10, 0 means unlimited)
+        - low_q_exploration_enabled: whether to enable low-Q exploration (default False)
+        - low_q_threshold: Q-value threshold for "low Q" (default 0.3)
+        - low_q_exploration_bonus: base exploration bonus (default 0.1)
+        - low_q_visit_threshold: visit threshold for "under-explored" (default 5)
     """
     fen = request.get("fen")
-    # 强制使用BT4模型
+    # Always use the BT4 model
     model_name = "lc0/BT4-1024x15x32h"
     
-    # 搜索参数（使用默认值）
     max_playouts = request.get("max_playouts", 100)
     target_minibatch_size = request.get("target_minibatch_size", 8)
     cpuct = request.get("cpuct", 1.0)
     max_depth = request.get("max_depth", 10)
     
-    # 低Q值探索增强参数（用于发现弃后连杀等隐藏走法）
     low_q_exploration_enabled = request.get("low_q_exploration_enabled", False)
     low_q_threshold = request.get("low_q_threshold", 0.3)
     low_q_exploration_bonus = request.get("low_q_exploration_bonus", 0.1)
@@ -2396,43 +2423,41 @@ def play_game_with_search(request: dict):
     save_trace = bool(request.get("save_trace", False))
     trace_slug = request.get("trace_slug")
     trace_output_dir = request.get("trace_output_dir") or str(SEARCH_TRACE_OUTPUT_DIR)
-    # trace_max_edges: 0 或 None 表示不限制（保存完整搜索树），其他值表示最大边数
     trace_max_edges_raw = request.get("trace_max_edges", 1000)
     trace_max_edges = None if (trace_max_edges_raw == 0 or trace_max_edges_raw is None) else int(trace_max_edges_raw)
     
     if not fen:
-        raise HTTPException(status_code=400, detail="FEN 字符串不能为空")
+        raise HTTPException(status_code=400, detail="FEN string must not be empty")
     
     try:
         board = chess.Board(fen)
     except Exception as e:
-        raise HTTPException(status_code=400, detail="无效的 FEN 字符串")
+        raise HTTPException(status_code=400, detail="Invalid FEN string")
     
     try:
-        # 检查HookedTransformer是否可用
+        # Check whether HookedTransformer is available
         if not HOOKED_TRANSFORMER_AVAILABLE:
-            print("❌ 错误：HookedTransformer不可用")
-            raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
+            print("❌ Error: HookedTransformer is not available")
+            raise HTTPException(
+                status_code=503,
+                detail="HookedTransformer is not available; please install transformer_lens",
+            )
         
-        # 导入搜索模块
         from search import (
             SearchParams, Search, SimpleBackend, Node, SearchTracer,
             get_wl, get_d, get_m, get_policy,
             policy_tensor_to_move_dict, set_model_getter,
         )
         
-        # 设置模型获取函数，使用共享缓存
         set_model_getter(get_hooked_model)
         
-        # 创建模型评估函数
         def model_eval_fn(fen_str: str) -> dict:
-            """模型评估函数，返回 q, d, m, p"""
+            """Model evaluation function returning q, d, m, p."""
             wl = get_wl(fen_str, model_name)
             d = get_d(fen_str, model_name)
             m_tensor = get_m(fen_str, model_name)
             m_value = m_tensor.item() if hasattr(m_tensor, 'item') else float(m_tensor)
             
-            # 获取策略
             policy_tensor = get_policy(fen_str, model_name)
             policy_dict = policy_tensor_to_move_dict(policy_tensor, fen_str)
             
@@ -2443,7 +2468,6 @@ def play_game_with_search(request: dict):
                 'p': policy_dict
             }
         
-        # 创建搜索参数
         params = SearchParams(
             max_playouts=max_playouts,
             target_minibatch_size=target_minibatch_size,
@@ -2455,12 +2479,10 @@ def play_game_with_search(request: dict):
             low_q_visit_threshold=low_q_visit_threshold,
         )
         
-        # 创建后端和根节点
         backend = SimpleBackend(model_eval_fn)
         root_node = Node(fen=fen)
         
         tracer = SearchTracer() if save_trace else None
-        # 创建搜索对象并运行
         search = Search(
             root_node=root_node,
             backend=backend,
@@ -2468,18 +2490,17 @@ def play_game_with_search(request: dict):
             tracer=tracer,
         )
         
-        print(f"🔍 开始 MCTS 搜索: max_playouts={max_playouts}, max_depth={max_depth}")
+        print(f"🔍 Starting MCTS search: max_playouts={max_playouts}, max_depth={max_depth}")
         search.run_blocking()
         
-        # 获取最佳移动
         best_move = search.get_best_move()
         total_playouts = search.get_total_playouts()
         current_max_depth = search.get_current_max_depth()
         
         if best_move is None:
-            raise ValueError("搜索未能找到合法移动")
+            raise ValueError("Search did not find a legal move")
         
-        print(f"✅ MCTS 搜索完成: playouts={total_playouts}, depth={current_max_depth}, best_move={best_move.uci()}")
+        print(f"✅ MCTS search completed: playouts={total_playouts}, depth={current_max_depth}, best_move={best_move.uci()}")
         
         trace_file_path = None
         if save_trace and tracer:
@@ -2504,18 +2525,18 @@ def play_game_with_search(request: dict):
         return response_data
         
     except ValueError as e:
-        print(f"❌ 搜索找不到合法移动: {e}")
-        raise HTTPException(status_code=400, detail=f"搜索找不到合法移动: {str(e)}")
+        print(f"❌ Search could not find a legal move: {e}")
+        raise HTTPException(status_code=400, detail=f"Search could not find a legal move: {str(e)}")
     except Exception as e:
-        print(f"❌ 搜索处理时出错: {e}")
+        print(f"❌ Error while running search: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"搜索处理时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
 @app.get("/search_trace/files/{filename}")
 def download_search_trace_file(filename: str):
-    """下载保存的MCTS搜索trace文件"""
+    """Download a saved MCTS search trace file."""
     safe_name = os.path.basename(filename)
     if safe_name != filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
@@ -2538,7 +2559,7 @@ def analyze_board(request: dict):
     model_name = "lc0/BT4-1024x15x32h"
     
     if not fen:
-        raise HTTPException(status_code=400, detail="FEN字符串不能为空")
+        raise HTTPException(status_code=400, detail="FEN string must not be empty")
     try:
         if not HOOKED_TRANSFORMER_AVAILABLE:
             raise HTTPException(status_code=503, detail="HookedTransformer不可用，请安装transformer_lens")
@@ -4065,23 +4086,24 @@ def logit_lens_mean_ablation(request: dict):
 @app.post("/evaluate_move")
 def evaluate_move(request: dict):
     """
-    评测一次移动：输入上一步之前的FEN与该步UCI，返回0-100评分、cp差、WDL等。
+    Evaluate a single move: given the previous-position FEN and the move UCI,
+    return a 0-100 score, centipawn difference, WDL, etc.
 
-    body: { "fen": str, "move": str, "time_limit": float? }
+    Body: { "fen": str, "move": str, "time_limit": float? }
     """
     fen = request.get("fen")
     move = request.get("move")
     time_limit = request.get("time_limit", 0.2)
     if not fen or not move:
-        raise HTTPException(status_code=400, detail="fen与move必填")
+        raise HTTPException(status_code=400, detail="Both 'fen' and 'move' are required")
     try:
         _ = chess.Board(fen)
     except Exception:
-        raise HTTPException(status_code=400, detail="无效的FEN")
+        raise HTTPException(status_code=400, detail="Invalid FEN")
 
     res = evaluate_move_quality(fen, move, time_limit=time_limit)
     if res is None:
-        raise HTTPException(status_code=400, detail="评测失败或走法不合法")
+        raise HTTPException(status_code=400, detail="Evaluation failed or move is illegal")
     return res
 
 
@@ -4113,7 +4135,7 @@ async def analyze_tactic_features_api(
         raise HTTPException(status_code=503, detail="Tactic features analysis not available")
     
     if not HOOKED_TRANSFORMER_AVAILABLE:
-        raise HTTPException(status_code=503, detail="HookedTransformer not available")
+        raise HTTPException(status_code=503, detail="HookedTransformer is not available")
     
     try:
         # 强制使用BT4模型
@@ -5249,24 +5271,17 @@ def analyze_node_interaction_api(request: dict):
         if analyze_node_interaction_impl is None:
             raise HTTPException(status_code=503, detail="Node interaction service not available")
         return analyze_node_interaction_impl(request)
+    except HTTPException:
+        # Re-raise HTTPException directly so FastAPI preserves status/detail
+        raise
     except ValueError as e:
+        # Map validation-style errors to 400
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"分析节点交互失败: {str(e)}")
-
-    except HTTPException:
-        raise
-    except Exception as e:
+        # Fallback: unexpected errors become 500
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"节点交互分析失败: {str(e)}")
-    finally:
-        # Clean up
-        try:
-            if 'model' in locals() and locals()['model'] is not None:
-                locals()['model'].reset_hooks()
-        except:
-            pass
 
 
 # 添加CORS中间件 - 必须在所有路由定义之后

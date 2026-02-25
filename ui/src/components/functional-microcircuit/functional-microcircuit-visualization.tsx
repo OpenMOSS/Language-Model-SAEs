@@ -798,14 +798,14 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       if (nodeAPos === undefined) {
         alert(
           `Please specify a position for the steering node ` +
-          `(${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}).`
+          `(${nodeA.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L${nodeA.data?.layer} #${nodeA.data?.featureIndex}).`
         );
         return;
       }
       if (nodeBPos === undefined) {
         alert(
           `Please specify a position for the target node ` +
-          `(${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}).`
+          `(${nodeB.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L${nodeB.data?.layer} #${nodeB.data?.featureIndex}).`
         );
         return;
       }
@@ -819,7 +819,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         const activation = await fetchNodeActivation(selectedNodeId, nodeAPos);
         if (activation === null || activation === 0) {
           alert(
-            `Steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+            `Steering node (${nodeA.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} ` +
             `L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) has activation 0 at position ${nodeAPos}, ` +
             `cannot run interaction analysis.`
           );
@@ -827,7 +827,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         }
       } else if (nodeAActivation === 0) {
         alert(
-          `Steering node (${nodeA.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+          `Steering node (${nodeA.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} ` +
           `L${nodeA.data?.layer} #${nodeA.data?.featureIndex}) has activation 0 at position ${nodeAPos}, ` +
           `cannot run interaction analysis.`
         );
@@ -839,7 +839,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         const activation = await fetchNodeActivation(selectedNodeId2, nodeBPos);
         if (activation === null || activation === 0) {
           alert(
-            `Target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+            `Target node (${nodeB.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} ` +
             `L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) has activation 0 at position ${nodeBPos}, ` +
             `cannot run interaction analysis.`
           );
@@ -847,7 +847,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         }
       } else if (nodeBActivation === 0) {
         alert(
-          `Target node (${nodeB.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+          `Target node (${nodeB.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} ` +
           `L${nodeB.data?.layer} #${nodeB.data?.featureIndex}) has activation 0 at position ${nodeBPos}, ` +
           `cannot run interaction analysis.`
         );
@@ -921,7 +921,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       if (pos === undefined) {
         alert(
           `Please specify a position for the steering node ` +
-          `(${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}).`
+          `(${node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}).`
         );
         return;
       }
@@ -932,7 +932,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       if (pos === undefined) {
         alert(
           `Please specify a position for the target node ` +
-          `(${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}).`
+          `(${node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} L${node.data?.layer} #${node.data?.featureIndex}).`
         );
         return;
       }
@@ -948,7 +948,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         const fetchedActivation = await fetchNodeActivation(node.id, pos);
         if (fetchedActivation === null || fetchedActivation === 0) {
           alert(
-            `Steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+            `Steering node (${node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} ` +
             `L${node.data?.layer} #${node.data?.featureIndex}) has activation 0 at position ${pos}, ` +
             `cannot run interaction analysis.`
           );
@@ -956,7 +956,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         }
       } else if (activation === 0) {
         alert(
-          `Steering node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+          `Steering node (${node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} ` +
           `L${node.data?.layer} #${node.data?.featureIndex}) has activation 0 at position ${pos}, ` +
           `cannot run interaction analysis.`
         );
@@ -973,7 +973,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         const fetchedActivation = await fetchNodeActivation(node.id, pos);
         if (fetchedActivation === null || fetchedActivation === 0) {
           alert(
-            `Target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+            `Target node (${node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} ` +
             `L${node.data?.layer} #${node.data?.featureIndex}) has activation 0 at position ${pos}, ` +
             `cannot run interaction analysis.`
           );
@@ -981,7 +981,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
         }
       } else if (activation === 0) {
         alert(
-          `Target node (${node.data?.featureType === 'lorsa' ? 'LoRSA' : 'TC'} ` +
+          `Target node (${node.data?.featureType === 'lorsa' ? 'Lorsa' : 'TC'} ` +
           `L${node.data?.layer} #${node.data?.featureIndex}) has activation 0 at position ${pos}, ` +
           `cannot run interaction analysis.`
         );

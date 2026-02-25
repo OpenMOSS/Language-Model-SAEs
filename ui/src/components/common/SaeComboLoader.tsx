@@ -263,7 +263,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-1">
           <div className="font-semibold">
-            {title ?? "BT4 SAE Combo Selection (LoRSA / Transcoder)"}
+            {title ?? "BT4 SAE Combo Selection (Lorsa / Transcoder)"}
           </div>
           <div className="text-xs text-blue-800">
             Current server combo:{" "}
@@ -347,7 +347,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       <div className="mt-2 max-h-40 overflow-y-auto rounded bg-blue-100 p-2 text-xs font-mono leading-relaxed">
         {logs.length === 0 ? (
           <div className="text-blue-700 opacity={0.8}">
-            No loading logs yet. Select a combo and click "Load / Reload" to start loading LoRSA / Transcoder.
+            No loading logs yet. Select a combo and click "Load / Reload" to start loading Lorsa / Transcoder.
           </div>
         ) : (
           logs.map((log, idx) => (

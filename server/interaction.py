@@ -2,7 +2,7 @@ import torch
 from typing import Dict, Any, Optional, List, Tuple
 from fastapi import HTTPException
 
-# 添加项目根目录到Python路径
+# add project root to Python path
 import sys
 from pathlib import Path
 project_root = Path(__file__).parent.parent
@@ -11,14 +11,14 @@ sys.path.insert(0, str(project_root))
 try:
     from src.feature_and_steering.interact import analyze_node_interaction
 except ImportError:
-    # 如果导入失败，尝试从当前目录导入
+    # if import fails, try to import from current directory
     try:
         from feature_and_steering.interact import analyze_node_interaction
     except ImportError:
         analyze_node_interaction = None
         print("WARNING: analyze_node_interaction not found, node interaction functionality will be disabled")
 
-# 全局常量
+# global constants
 try:
     from .constants import BT4_MODEL_NAME
 except ImportError:
@@ -36,27 +36,27 @@ except ImportError:
 
 def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
     """
-    实现节点交互分析的后端逻辑
+    implement the backend logic for node interaction analysis
     
     Args:
-        request: 请求体，包含：
-            - model_name: 模型名称（可选，默认使用BT4）
-            - sae_combo_id: SAE组合ID（必需）
-            - fen: FEN字符串（必需）
-            - steering_nodes: steering节点列表或单个节点（必需）
-                - 单个节点: dict with {feature_type, layer, feature, pos}
-                - 列表: list of dicts
-            - target_nodes: target节点列表或单个节点（必需）
-                - 单个节点: dict with {feature_type, layer, feature, pos}
-                - 列表: list of dicts
-            - steering_scale: steering scale factor（可选，默认2.0）
+        request: request body, containing:
+            - model_name: model name (optional, default is BT4)
+            - sae_combo_id: SAE combo ID (required)
+            - fen: FEN string (required)
+            - steering_nodes: steering nodes list or single node (required)
+                - single node: dict with {feature_type, layer, feature, pos}
+                - list: list of dicts
+            - target_nodes: target nodes list or single node (required)
+                - single node: dict with {feature_type, layer, feature, pos}
+                - list: list of dicts
+            - steering_scale: steering scale factor (optional, default is 2.0)
     
     Returns:
-        分析结果字典，包含：
+        dictionary containing the analysis results:
             - steering_scale: 使用的steering scale
-            - steering_nodes_count: steering nodes数量
-            - steering_details: steering nodes详情
-            - target_nodes: 每个target node的结果列表
+            - steering_nodes_count: number of steering nodes
+            - steering_details: details about each steering node
+            - target_nodes: list of results for each target node
     """
     if analyze_node_interaction is None:
         raise HTTPException(
@@ -70,7 +70,7 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
             detail="Circuits service not available. Please check if circuits_service.py is available."
         )
     
-    # 提取参数
+    # extract parameters
     model_name = request.get("model_name", BT4_MODEL_NAME)
     sae_combo_id = request.get("sae_combo_id")
     fen = request.get("fen")
@@ -78,7 +78,7 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
     target_nodes = request.get("target_nodes")
     steering_scale = request.get("steering_scale", 2.0)
     
-    # 验证必需参数
+    # validate required parameters
     if not sae_combo_id:
         raise HTTPException(status_code=400, detail="sae_combo_id is required")
     if not fen:
@@ -90,11 +90,11 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(steering_scale, (int, float)):
         raise HTTPException(status_code=400, detail="steering_scale must be a number")
     
-    # 确保steering_nodes是列表格式
+    # ensure steering_nodes is a list
     if not isinstance(steering_nodes, list):
         steering_nodes = [steering_nodes]
     
-    # 确保target_nodes是列表格式
+    # ensure target_nodes is a list
     if not isinstance(target_nodes, list):
         target_nodes = [target_nodes]
     
@@ -103,10 +103,10 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
     if len(target_nodes) == 0:
         raise HTTPException(status_code=400, detail="At least one target node is required")
     
-    # 构建cache_key
+    # build cache_key
     cache_key = f"{model_name}::{sae_combo_id}"
     
-    # 获取缓存的模型、transcoders和lorsas
+    # get cached model, transcoders and lorsas
     try:
         cached_hooked_model, cached_transcoders, cached_lorsas, _ = get_cached_models(cache_key)
         
@@ -121,7 +121,7 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
                 detail=f"Transcoders/Lorsas not loaded. Please call /circuit/preload_models first with combo_id={sae_combo_id}"
             )
         
-        # 检查transcoders和lorsas是否完整（应该有15层）
+        # check if transcoders and lorsas are complete (should have 15 layers)
         if len(cached_transcoders) != 15 or len(cached_lorsas) != 15:
             raise HTTPException(
                 status_code=503,
@@ -140,7 +140,7 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
             detail=f"Failed to get cached models: {str(e)}. Please call /circuit/preload_models first."
         )
     
-    # 运行模型获取cache
+    # run model and get cache
     try:
         _, cache = model.run_with_cache(fen, prepend_bos=False)
     except Exception as e:
@@ -149,7 +149,7 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
             detail=f"Failed to run model and get cache: {str(e)}"
         )
     
-    # 调用analyze_node_interaction函数
+    # call analyze_node_interaction function
     try:
         result = analyze_node_interaction(
             steering_nodes=steering_nodes,
@@ -162,7 +162,7 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
         )
         return result
     except ValueError as e:
-        # 层数验证等错误
+        # layer validation errors
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         import traceback
@@ -172,7 +172,7 @@ def analyze_node_interaction_impl(request: Dict[str, Any]) -> Dict[str, Any]:
             detail=f"Failed to analyze node interaction: {str(e)}"
         )
     finally:
-        # 清理hooks
+        # clean up hooks
         try:
             model.reset_hooks()
         except Exception:

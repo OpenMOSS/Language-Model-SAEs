@@ -405,7 +405,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 text-yellow-700 text-xs flex items-center">
             <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
             <span>
-              The TC/LoRSA model is not loaded yet. Please click the "Model Loading Status" button at the top of the page
+              The TC/Lorsa model is not loaded yet. Please click the "Model Loading Status" button at the top of the page
               to load the model before running a circuit trace.
             </span>
           </div>

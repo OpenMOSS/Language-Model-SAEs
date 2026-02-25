@@ -381,7 +381,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
         </span>
       </div>
 
-      {/* Connections */}
       <div className="connections flex-1 flex flex-col gap-3 min-h-0">
         {/* Global weight link button – shown above Input/Output sections */}
         {globalWeightParams && (
@@ -399,7 +398,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
           </div>
         )}
         
-        {/* Input Features and Output Features */}
         <div className="flex-1 flex gap-5 min-h-0">
           {connectionTypes.map(type => (
             <div

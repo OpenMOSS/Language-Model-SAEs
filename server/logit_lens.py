@@ -13,21 +13,20 @@ if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
 try:
-    # 统一“合法走法概率”的口径：复用 src/chess/move.py 的实现
     from src.chess_utils import get_move_from_policy_output_with_prob
 except Exception:
     get_move_from_policy_output_with_prob = None
 
 
 class IntegratedPolicyLens:
-    """集成的Policy Lens分析器，用于分析模型每一层对移动预测的贡献"""
+    """integrated Policy Lens analyzer, for analyzing the contribution of each layer to the model's output"""
     
     def __init__(self, model):
         """
-        初始化Policy Lens
+        initialize Policy Lens
         
         Args:
-            model: HookedTransformer模型实例
+            model: HookedTransformer model instance
         """
         self.model = model
         self.policy_head = self.model.policy_head
@@ -44,7 +43,7 @@ class IntegratedPolicyLens:
         print("Policy Lens initialized successfully!")
         
     def cache_layernorm(self):
-        """缓存LayerNorm的副本用于logit lens分析"""
+        """cache LayerNorm copies for logit lens analysis"""
         blocks = getattr(self.model, "blocks", None)
         if blocks is None:
             raise RuntimeError("Model does not have 'blocks' attribute!")
@@ -87,16 +86,16 @@ class IntegratedPolicyLens:
                 
     def apply_postln_truncation(self, h: torch.Tensor, layer_idx: int) -> torch.Tensor:
         """
-        给定h = resid_post_after_ln at layer_idx (即该层ln2之后),
-        应用后续层的alpha和其LN副本（b=0）同时将子层输出置零。
-        返回适合送入policy_head的转换表示。
+        given h = resid_post_after_ln at layer_idx (i.e. after ln2 in this layer),
+        apply the alpha of the subsequent layers and their LayerNorm copies (b=0) while zeroing out the sublayer outputs.
+        return the transformed representation suitable for input to policy_head.
         
         Args:
-            h: 残差激活
-            layer_idx: 当前层索引
+            h: residual activation
+            layer_idx: current layer index
             
         Returns:
-            转换后的表示
+            transformed representation
         """
         x = h
         for l in range(layer_idx + 1, self.num_layers):
@@ -115,16 +114,16 @@ class IntegratedPolicyLens:
         topk_vocab: int = 2000
     ) -> Dict[str, Any]:
         """
-        分析单个FEN位置。如果提供了`target_move`（UCI字符串），
-        则计算其在每一层的排名/分数。
+        analyze a single FEN position. if `target_move` (UCI string) is provided,
+        calculate its rank/score in each layer.
         
         Args:
-            fen: FEN字符串
-            target_move: 目标移动（UCI格式，可选）
-            topk_vocab: 考虑多少个顶部logits来搜索合法移动（用于效率）
+            fen: FEN string
+            target_move: target move (UCI format, optional)
+            topk_vocab: consider how many top logits to search for legal moves (for efficiency)
             
         Returns:
-            分析结果字典
+            dictionary containing the analysis results
         """
         print(f"Analyzing FEN: {fen}, target_move: {target_move}")
         
@@ -142,9 +141,9 @@ class IntegratedPolicyLens:
         legal_uci_set = set(move.uci() for move in chess_board.legal_moves)
 
         def _ensure_policy_2d(t: torch.Tensor) -> torch.Tensor:
-            """确保传入 get_move_from_policy_output_with_prob 的 tensor 形状为 [1, vocab]。"""
+            """ensure the tensor shape of the input to get_move_from_policy_output_with_prob is [1, vocab]."""
             if t.dim() == 3:
-                # [batch, seq, vocab] -> 取最后一个 token
+                # [batch, seq, vocab] -> take the last token
                 return t[:, -1, :]
             if t.dim() == 2:
                 return t
@@ -152,7 +151,7 @@ class IntegratedPolicyLens:
                 return t.unsqueeze(0)
             raise RuntimeError(f"Unexpected policy tensor shape: {tuple(t.shape)}")
 
-        # 用与 notebook 完全一致的方式取“最终层 policy logits”：直接用 run_with_cache 的 output[0]
+        # use the same way as in notebook to get the final layer policy logits: directly use output[0] of run_with_cache
         final_top_legal_moves: list[dict[str, Any]] = []
         final_all_legals: list[tuple[str, float, float]] = []
         uci2idx_fn = None
@@ -171,7 +170,7 @@ class IntegratedPolicyLens:
         else:
             return {"error": "get_move_from_policy_output_with_prob not available"}
 
-        # 预先构建最终层的全量信息：用于给任意走法提供“最终层 rank/score/prob”
+        # pre-build the full information of the final layer: for providing the final layer rank/score/prob for any move
         final_info_by_uci: dict[str, dict[str, float | int]] = {}
         for i, (uci, logit, prob) in enumerate(final_all_legals):
             final_info_by_uci[uci] = {
@@ -188,7 +187,7 @@ class IntegratedPolicyLens:
         
         # Analyze each layer using Post-LN logit-lens
         layer_analysis = {}
-        # 选择最终层的ground truth: final_top_legal_moves的第一个
+        # select the ground truth of the final layer: the first move in final_top_legal_moves
         final_top_move_uci = final_top_legal_moves[0]['uci'] if len(final_top_legal_moves) > 0 else None
         
         for layer in range(self.num_layers):
@@ -208,12 +207,12 @@ class IntegratedPolicyLens:
             else:
                 raise RuntimeError("Unexpected layer_policy_output shape")
 
-            # 与 notebook/模型输出保持一致：最终层直接使用 run_with_cache 的 output[0]
-            # （避免 policy_head 对 resid 的取 token 方式/实现细节导致的偏差）
+            # keep the same way as in notebook/model output: final layer directly uses output[0] of run_with_cache
+            # (to avoid the bias caused by the way policy_head takes the token of resid/implementation details)
             if layer == self.num_layers - 1:
                 logits_last = _ensure_policy_2d(output[0])[0]
 
-            # 完全复用 move.py 的实现：直接得到“全部合法走法”的 (uci, logit, prob)，并据此构建所有后续统计
+            # completely reuse the implementation of move.py: directly get the (uci, logit, prob) for all legal moves, and build all subsequent statistics based on it
             current_top_legal_moves: list[dict[str, Any]] = []
             legal_scores: list[tuple[str, float, int]] = []
             probs: list[float] = []
@@ -231,7 +230,7 @@ class IntegratedPolicyLens:
                             {"idx": idx_val, "uci": uci, "score": float(logit), "prob": float(prob)}
                         )
 
-            # 计算当前层在合法移动集合上的logit熵（概率越集中熵越小）
+            # calculate the logit entropy of the current layer on the legal move set (entropy is smaller when probability is more concentrated)
             def _entropy(p_list):
                 import math
                 eps = 1e-12
@@ -240,7 +239,7 @@ class IntegratedPolicyLens:
                 return float(-sum(p * math.log(max(p, eps)) for p in p_list))
             logit_entropy = _entropy(probs)
 
-            # Compute target rank if requested
+            # compute target rank if requested
             target_info = None
             if target_move is not None:
                 if target_move in legal_uci_set:
@@ -267,7 +266,7 @@ class IntegratedPolicyLens:
                         'error': 'Target move is not legal'
                     }
 
-            # 计算“最终层Top移动”在本层的rank/score/prob
+            # calculate the rank/score/prob of the final layer top move in this layer
             final_top_info = None
             if final_top_move_uci is not None:
                 f_rank = None
@@ -292,7 +291,7 @@ class IntegratedPolicyLens:
                 uci = move_data['uci']
                 layer_score = move_data['score']
                 
-                # find final layer rank/score/prob（来自最终层 all-legal 分布）
+                # find final layer rank/score/prob (from the final layer all-legal distribution)
                 finfo = final_info_by_uci.get(uci, {})
                 final_rank = finfo.get("rank") if isinstance(finfo, dict) else None
                 final_score = finfo.get("score") if isinstance(finfo, dict) else None
@@ -313,32 +312,32 @@ class IntegratedPolicyLens:
                 'target': target_info,
                 'final_top_move': final_top_info,
                 'logit_entropy': logit_entropy,
-                'legal_scores': legal_scores,  # 保存完整分数列表用于KL散度计算
-                'probs': probs,  # 保存概率分布用于KL散度计算
+                'legal_scores': legal_scores,  # save the complete score list for KL divergence calculation
+                'probs': probs,  # save the probability distribution for KL divergence calculation
             }
         
-        # 计算层间KL散度和JSD（用于检测相变）
+        # compute the KL divergence and JSD between layers (for detecting phase transitions)
         def _kl_divergence(p_probs, q_probs, p_legal_scores, q_legal_scores):
             """
-            计算KL散度 KL(P||Q)
+            calculate the KL divergence KL(P||Q)
             
             Args:
-                p_probs: P分布的概率列表（与p_legal_scores对应）
-                q_probs: Q分布的概率列表（与q_legal_scores对应）
-                p_legal_scores: P分布的(uci, score, idx)列表
-                q_legal_scores: Q分布的(uci, score, idx)列表
+                p_probs: P distribution probability list (corresponding to p_legal_scores)
+                q_probs: Q distribution probability list (corresponding to q_legal_scores)
+                p_legal_scores: P distribution (uci, score, idx) list
+                q_legal_scores: Q distribution (uci, score, idx) list
             
             Returns:
-                KL散度值
+                KL divergence value
             """
             import math
             eps = 1e-12
             
-            # 构建uci到概率的映射
+            # build the mapping from uci to probability
             p_dict = {uci: prob for (uci, _, _), prob in zip(p_legal_scores, p_probs)}
             q_dict = {uci: prob for (uci, _, _), prob in zip(q_legal_scores, q_probs)}
             
-            # 获取所有合法移动的并集
+            # get the union of all legal moves
             all_moves = set(p_dict.keys()) | set(q_dict.keys())
             
             if not all_moves:
@@ -346,10 +345,10 @@ class IntegratedPolicyLens:
             
             kl_sum = 0.0
             for uci in all_moves:
-                p_val = p_dict.get(uci, eps)  # 如果移动不在P中，使用很小的值
-                q_val = q_dict.get(uci, eps)  # 如果移动不在Q中，使用很小的值
+                p_val = p_dict.get(uci, eps)  # if the move is not in P, use a small value
+                q_val = q_dict.get(uci, eps)  # if the move is not in Q, use a small value
                 
-                # 避免log(0)和除以0
+                # avoid log(0) and division by zero
                 if p_val > eps and q_val > eps:
                     kl_sum += p_val * math.log(p_val / q_val)
             
@@ -357,43 +356,43 @@ class IntegratedPolicyLens:
         
         def _js_divergence(p_probs, q_probs, p_legal_scores, q_legal_scores):
             """
-            计算Jensen-Shannon散度 JSD(P||Q)
+            calculate the Jensen-Shannon divergence JSD(P||Q)
             
             JSD(P||Q) = 0.5 * KL(P||M) + 0.5 * KL(Q||M)
-            其中 M = 0.5 * (P + Q)
+            where M = 0.5 * (P + Q)
             
-            JSD是一个真正的度量（满足对称性、非负性、三角不等式），范围在[0, 1]之间（如果使用log2）或[0, ln(2)]之间（如果使用自然对数）
+            JSD is a true measure (satisfying symmetry, non-negativity, and triangle inequality), ranges between [0, 1] (if using log2) or [0, ln(2)] (if using natural logarithm)
             
             Args:
-                p_probs: P分布的概率列表（与p_legal_scores对应）
-                q_probs: Q分布的概率列表（与q_legal_scores对应）
-                p_legal_scores: P分布的(uci, score, idx)列表
-                q_legal_scores: Q分布的(uci, score, idx)列表
+                p_probs: P distribution probability list (corresponding to p_legal_scores)
+                q_probs: Q distribution probability list (corresponding to q_legal_scores)
+                p_legal_scores: P distribution (uci, score, idx) list
+                q_legal_scores: Q distribution (uci, score, idx) list
             
             Returns:
-                JSD值
+                JSD value
             """
             import math
             eps = 1e-12
             
-            # 构建uci到概率的映射
+            # build the mapping from uci to probability
             p_dict = {uci: prob for (uci, _, _), prob in zip(p_legal_scores, p_probs)}
             q_dict = {uci: prob for (uci, _, _), prob in zip(q_legal_scores, q_probs)}
             
-            # 获取所有合法移动的并集
+            # get the union of all legal moves
             all_moves = set(p_dict.keys()) | set(q_dict.keys())
             
             if not all_moves:
                 return None
             
-            # 计算平均分布 M = 0.5 * (P + Q)
+            # calculate the average distribution M = 0.5 * (P + Q)
             m_dict = {}
             for uci in all_moves:
                 p_val = p_dict.get(uci, eps)
                 q_val = q_dict.get(uci, eps)
                 m_dict[uci] = 0.5 * (p_val + q_val)
             
-            # 计算 JSD = 0.5 * KL(P||M) + 0.5 * KL(Q||M)
+            # calculate JSD = 0.5 * KL(P||M) + 0.5 * KL(Q||M)
             kl_pm = 0.0
             kl_qm = 0.0
             
@@ -402,18 +401,18 @@ class IntegratedPolicyLens:
                 q_val = q_dict.get(uci, eps)
                 m_val = m_dict[uci]
                 
-                # 计算 KL(P||M)
+                # calculate KL(P||M)
                 if p_val > eps and m_val > eps:
                     kl_pm += p_val * math.log(p_val / m_val)
                 
-                # 计算 KL(Q||M)
+                # calculate KL(Q||M)
                 if q_val > eps and m_val > eps:
                     kl_qm += q_val * math.log(q_val / m_val)
             
             jsd = 0.5 * kl_pm + 0.5 * kl_qm
             return float(jsd)
         
-        # 计算相邻层之间的KL散度
+        # compute the KL divergence between adjacent layers
         layer_kl_divergences = []
         for layer in range(1, self.num_layers):
             prev_layer_data = layer_analysis.get(f'layer_{layer-1}')
@@ -429,14 +428,14 @@ class IntegratedPolicyLens:
                     kl_forward = _kl_divergence(
                         curr_probs, prev_probs,
                         curr_legal_scores, prev_legal_scores
-                    )  # KL(当前层||前一层的分布)
+                    )  # KL(current layer||previous layer's distribution)
                     kl_backward = _kl_divergence(
                         prev_probs, curr_probs,
                         prev_legal_scores, curr_legal_scores
-                    )  # KL(前一层的分布||当前层)
+                    )  # KL(previous layer's distribution||current layer)
                     
-                    # 计算真正的Jensen-Shannon散度（JSD）
-                    # JSD是一个真正的度量，满足对称性、非负性和三角不等式
+                    # calculate the true Jensen-Shannon divergence (JSD)
+                    # JSD is a true measure, satisfying symmetry, non-negativity, and triangle inequality
                     jsd = _js_divergence(
                         prev_probs, curr_probs,
                         prev_legal_scores, curr_legal_scores
@@ -445,9 +444,9 @@ class IntegratedPolicyLens:
                     layer_kl_divergences.append({
                         'from_layer': layer - 1,
                         'to_layer': layer,
-                        'kl_forward': kl_forward,  # KL(当前||前一层)
-                        'kl_backward': kl_backward,  # KL(前一层||当前)
-                        'jsd': jsd,  # Jensen-Shannon散度（真正的度量）
+                        'kl_forward': kl_forward,  # KL(current layer||previous layer)
+                        'kl_backward': kl_backward,  # KL(previous layer||current layer)
+                        'jsd': jsd,  # Jensen-Shannon divergence (true measure)
                     })
                 else:
                     layer_kl_divergences.append({
@@ -466,7 +465,7 @@ class IntegratedPolicyLens:
                     'jsd': None,
                 })
         
-        # 计算每层相对于最终层的KL散度
+        # compute the KL divergence of each layer relative to the final layer
         final_layer_data = layer_analysis.get(f'layer_{self.num_layers-1}')
         layer_to_final_kl = []
         if final_layer_data:
@@ -483,21 +482,21 @@ class IntegratedPolicyLens:
                         kl_to_final = _kl_divergence(
                             final_probs, layer_probs,
                             final_legal_scores, layer_legal_scores
-                        )  # KL(最终层||当前层)
+                        )  # KL(final layer||current layer)
                         kl_from_final = _kl_divergence(
                             layer_probs, final_probs,
                             layer_legal_scores, final_legal_scores
-                        )  # KL(当前层||最终层)
+                        )  # KL(current layer||final layer)
                         jsd = _js_divergence(
                             layer_probs, final_probs,
                             layer_legal_scores, final_legal_scores
-                        )  # JSD(当前层||最终层)
+                        )  # JSD(current layer||final layer)
                         
                         layer_to_final_kl.append({
                             'layer': layer,
                             'kl_to_final': kl_to_final,
                             'kl_from_final': kl_from_final,
-                            'jsd': jsd,  # Jensen-Shannon散度
+                            'jsd': jsd,  # Jensen-Shannon divergence
                         })
                     else:
                         layer_to_final_kl.append({
@@ -521,35 +520,25 @@ class IntegratedPolicyLens:
             'target_move': target_move,
             'num_layers': self.num_layers,
             'final_top_move_uci': final_top_move_uci,
-            'layer_kl_divergences': layer_kl_divergences,  # 相邻层之间的KL散度
-            'layer_to_final_kl': layer_to_final_kl,  # 每层相对于最终层的KL散度
+            'layer_kl_divergences': layer_kl_divergences,  # KL divergence between adjacent layers
+            'layer_to_final_kl': layer_to_final_kl,  # KL divergence of each layer relative to the final layer
         }
     
     def load_mean_activation(self, hook_point: str, base_dir: str = None) -> Tuple[torch.Tensor, Optional[int]]:
-        """
-        加载指定hook点的平均激活值
-        
-        Args:
-            hook_point: hook点名称，如 "blocks.0.hook_attn_out"
-            base_dir: 平均值文件的基础目录（可选）
-            
-        Returns:
-            (mean_activation, n_tokens): 平均激活值和token数量
-        """
         model_name = self.model.cfg.model_name
         
         if base_dir is None:
             if 'BT4' not in model_name:
-                raise ValueError(f"仅支持BT4模型，收到: {model_name}")
+                raise ValueError(f"Only BT4 model is supported, received: {model_name}")
             model_prefix = 'BT4'
             
-            # 根据hook点类型确定子目录
+            # determine the subdirectory based on the hook point type
             if 'attn_out' in hook_point:
                 subdir = 'attn_out_mean'
             elif 'mlp_out' in hook_point:
                 subdir = 'mlp_out_mean'
             else:
-                raise ValueError(f"未知的hook点类型: {hook_point}")
+                raise ValueError(f"Unknown hook point type: {hook_point}")
             
             base_dir = f"/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/activations/{model_prefix}/{subdir}"
 
@@ -557,7 +546,7 @@ class IntegratedPolicyLens:
         file_path = Path(base_dir) / f"{safe_name}_mean.safetensors"
         
         if not file_path.exists():
-            raise FileNotFoundError(f"平均值文件不存在: {file_path}")
+            raise FileNotFoundError(f"Mean activation file does not exist: {file_path}")
 
         data = load_file(str(file_path))
         mean_activation = data["mean"]
@@ -573,16 +562,16 @@ class IntegratedPolicyLens:
         topk_vocab: int = 2000
     ) -> Dict[str, Any]:
         """
-        对每一层进行Mean Ablation分析
+        analyze the mean ablation for each layer
         
         Args:
-            fen: FEN字符串
-            hook_types: 要分析的hook类型列表，如 ['attn_out', 'mlp_out']，默认两者都分析
-            target_move: 目标移动（UCI格式，可选）
-            topk_vocab: 考虑多少个顶部logits来搜索合法移动
+            fen: FEN string
+            hook_types: list of hook types to analyze, e.g. ['attn_out', 'mlp_out'], default is both
+            target_move: target move (UCI format, optional)
+            topk_vocab: consider how many top logits to search for legal moves
             
         Returns:
-            分析结果字典
+            analysis result dictionary
         """
         if hook_types is None:
             hook_types = ['attn_out', 'mlp_out']
@@ -597,11 +586,11 @@ class IntegratedPolicyLens:
             print(f"Invalid FEN: {e}")
             return {"error": f"Invalid FEN: {str(e)}"}
         
-        # 获取原始输出
+        # get the original output
         with torch.no_grad():
             original_output, original_cache = self.model.run_with_cache(fen, prepend_bos=False)
         
-        # 获取原始的top移动
+        # get the original top move
         lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
         chess_board = chess.Board(fen)
         legal_uci_set = set(move.uci() for move in chess_board.legal_moves)
@@ -635,8 +624,8 @@ class IntegratedPolicyLens:
                     return {"uci": move_uci, "rank": i + 1, "score": float(score_val), "prob": float(probs_local[i]) if i < len(probs_local) else None}
             return {"uci": move_uci, "rank": None, "score": None, "prob": None, "error": "Target move not found in legal_scores"}
         
-        # 计算原始输出的top移动
-        # original_output是一个list，output[0]是logits tensor，shape为[batch, vocab_size]
+        # compute the top move of the original output
+        # original_output is a list, output[0] is the logits tensor, shape is [batch, vocab_size]
         original_logits = original_output[0]  # shape: [1, 1858]
         if original_logits.dim() == 2:
             original_logits_last = original_logits[0, :]  # shape: [1858]
@@ -666,7 +655,7 @@ class IntegratedPolicyLens:
         original_legal_scores, original_probs = _compute_legal_scores_and_probs(original_logits_last)
         original_target_info = _find_move_info(target_move, original_legal_scores, original_probs) if target_move else None
         
-        # 对每一层每个hook类型进行ablation
+        # analyze the mean ablation for each layer and each hook type
         ablation_results = {}
         
         for hook_type in hook_types:
@@ -675,11 +664,11 @@ class IntegratedPolicyLens:
                 print(f"Analyzing {hook_point}...")
                 
                 try:
-                    # 加载平均激活值
+                    # load the mean activation
                     mean_activation, n_tokens = self.load_mean_activation(hook_point)
                     mean_activation = mean_activation.to(self.model.cfg.device)
                     
-                    # 获取原始激活的shape来扩展mean
+                    # get the shape of the original activation to expand the mean
                     if hook_point in original_cache:
                         original_activation = original_cache[hook_point]
                         batch_size, seq_len = original_activation.shape[:2]
@@ -689,17 +678,17 @@ class IntegratedPolicyLens:
                         print(f"Warning: {hook_point} not in cache, skipping")
                         continue
                     
-                    # 定义hook函数
+                    # define the hook function
                     def mean_ablation_hook(activation, hook):
                         return mean_expanded.to(activation.device)
                     
-                    # 运行ablation
+                    # run the ablation
                     with self.model.hooks(fwd_hooks=[(hook_point, mean_ablation_hook)]):
                         with torch.no_grad():
                             ablated_output, _ = self.model.run_with_cache(fen, prepend_bos=False)
                     
-                    # 获取ablated输出的logits
-                    # ablated_output是一个list，output[0]是logits tensor
+                    # get the logits of the ablated output
+                    # ablated_output is a list, output[0] is the logits tensor
                     ablated_logits = ablated_output[0]  # shape: [1, 1858]
                     if ablated_logits.dim() == 2:
                         ablated_logits_last = ablated_logits[0, :]  # shape: [1858]
@@ -708,10 +697,10 @@ class IntegratedPolicyLens:
                     else:
                         raise RuntimeError(f"Unexpected ablated logits shape: {ablated_logits.shape}")
                     
-                    # 计算logit差异
+                    # compute the logit difference
                     logit_diff = original_logits_last - ablated_logits_last
                     
-                    # 获取ablated后的top移动
+                    # get the top move of the ablated output
                     topk = min(topk_vocab, ablated_logits_last.numel())
                     vals, idxs = torch.topk(ablated_logits_last, k=topk)
                     vals_np = vals.detach().cpu().numpy()
@@ -731,7 +720,7 @@ class IntegratedPolicyLens:
                     
                     legal_scores, probs = _compute_legal_scores_and_probs(ablated_logits_last)
                     
-                    # 计算熵
+                    # compute the entropy
                     def _entropy(p_list):
                         import math
                         eps = 1e-12
@@ -741,7 +730,7 @@ class IntegratedPolicyLens:
                     
                     logit_entropy = _entropy(probs)
                     
-                    # 目标移动信息
+                    # target move information
                     target_info = _find_move_info(target_move, legal_scores, probs) if target_move else None
 
                     target_diff = None
@@ -767,7 +756,7 @@ class IntegratedPolicyLens:
                             "delta_prob": (a_prob - o_prob) if (isinstance(a_prob, (int, float)) and isinstance(o_prob, (int, float))) else None,
                         }
                     
-                    # 原始top移动在ablated后的排名
+                    # original top move rank in the ablated output
                     original_top_info = None
                     if original_top_move_uci is not None:
                         o_rank = None
@@ -786,7 +775,7 @@ class IntegratedPolicyLens:
                             'prob': o_prob
                         }
                     
-                    # 统计信息
+                    # statistics
                     logit_diff_stats = {
                         'mean': float(logit_diff.mean().item()),
                         'std': float(logit_diff.std().item()),
