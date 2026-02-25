@@ -243,7 +243,7 @@ def load_model_and_transcoders(
             }
             loading_logs.append(log_entry)
             if len(loading_logs) % 5 == 0:
-                print(f"📝 当前日志列表长度: {len(loading_logs)}")
+                print(f"📝 Current log list length: {len(loading_logs)}")
     
     cached_hooked_model, cached_transcoders, cached_lorsas, cached_replacement_model = get_cached_models(cache_key)
     
