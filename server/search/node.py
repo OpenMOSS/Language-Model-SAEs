@@ -276,7 +276,7 @@ class Node:
         for idx, edge in indexed_edges:
             sorted_edges.append(edge)
             sorted_children.append(self.children_[idx])
-            # 更新子节点的索引
+            # update the index of the child node
             if sorted_children[-1] is not None:
                 sorted_children[-1].index_ = len(sorted_children) - 1
         self.edges_ = sorted_edges
@@ -307,56 +307,56 @@ class LowNode:
         self.lower_bound_: Optional[float] = None
         self.upper_bound_: Optional[float] = None
         
-        self.child_: Optional[Node] = None  # 第一个子节点
+        self.child_: Optional[Node] = None  # the first child node
     
     def get_num_edges(self) -> int:
-        """获取边的数量"""
+        """get the number of edges"""
         return len(self.edges_)
     
     def get_edges(self) -> List[Edge]:
-        """获取边列表"""
+        """get the list of edges"""
         return self.edges_
     
     def get_wl(self) -> float:
-        """获取 Win-Loss 值"""
+        """get the Win-Loss value"""
         return self.wl_
     
     def get_d(self) -> float:
-        """获取 Draw 概率"""
+        """get the Draw probability"""
         return self.d_
     
     def get_m(self) -> float:
-        """获取 Moves left"""
+        """get the Moves left"""
         return self.m_
     
     def get_n(self) -> int:
-        """获取访问次数"""
+        """get the number of visits"""
         return self.n_
     
     def get_children_visits(self) -> int:
-        """获取子节点访问次数"""
+        """get the number of visits to the children nodes"""
         return self.n_ - 1 if self.n_ > 0 else 0
     
     def is_terminal(self) -> bool:
-        """检查是否为终端节点"""
+        """check if the node is a terminal node"""
         return self.terminal_type_ is not None
     
     def get_bounds(self) -> tuple[Optional[float], Optional[float]]:
-        """获取边界"""
+        """get the bounds"""
         return (self.lower_bound_, self.upper_bound_)
     
     def get_terminal_type(self) -> Optional[str]:
-        """获取终端类型"""
+        """get the terminal type"""
         return self.terminal_type_
     
     def is_transposition(self) -> bool:
-        """检查是否为置换"""
+        """check if the node is a transposition"""
         return self.is_transposition
     
     def set_nneval(self, q: float, d: float, m: float, policies: List[float]) -> None:
-        """设置神经网络评估结果"""
-        assert self.n_ == 0, "LowNode 已有访问次数，不能设置评估结果"
-        assert len(policies) == len(self.edges_), "策略数量与边数量不匹配"
+        """set the neural network evaluation results"""
+        assert self.n_ == 0, "LowNode already has visits, cannot set evaluation results"
+        assert len(policies) == len(self.edges_), "the number of policies does not match the number of edges"
         
         for i, p in enumerate(policies):
             self.edges_[i].set_p(p)
@@ -366,19 +366,19 @@ class LowNode:
         self.m_ = m
     
     def make_terminal(self, result: float, plies_left: float = 0.0, terminal_type: str = 'end_of_game') -> None:
-        """将节点标记为终端节点"""
+        """mark the node as a terminal node"""
         self.terminal_type_ = terminal_type
         self.wl_ = result
         self.d_ = 1.0 if result == 0.0 else 0.0
         self.m_ = plies_left
     
     def set_bounds(self, lower: float, upper: float) -> None:
-        """设置边界"""
+        """set the bounds"""
         self.lower_bound_ = lower
         self.upper_bound_ = upper
     
     def finalize_score_update(self, v: float, d: float, m: float, multivisit: int = 1) -> None: # important logic, when to use this function?
-        """完成分数更新"""
+        """finalize the score update"""
         if self.n_ > 0:
             self.wl_ = (self.wl_ * self.n_ + v * multivisit) / (self.n_ + multivisit)
             self.d_ = (self.d_ * self.n_ + d * multivisit) / (self.n_ + multivisit)
@@ -390,122 +390,122 @@ class LowNode:
         self.n_ += multivisit
     
     def cancel_score_update(self, multivisit: int = 1) -> None:
-        """取消分数更新（空实现，LowNode 不需要虚拟损失）"""
+        """cancel the score update (empty implementation, LowNode does not need virtual loss)"""
         pass
     
     def add_parent(self) -> None:
-        """增加父节点"""
+        """add a parent node"""
         self.num_parents_ += 1
         if self.num_parents_ > 1:
             self.is_transposition = True
     
     def remove_parent(self) -> None:
-        """移除父节点"""
+        """remove a parent node"""
         assert self.num_parents_ > 0
         self.num_parents_ -= 1
     
     def sort_edges(self) -> None:
-        """按策略概率排序边"""
+        """sort the edges by policy probability"""
         Edge.sort_edges(self.edges_)
     
     def get_child(self) -> Optional[Node]:
-        """获取第一个子节点"""
+        """get the first child node"""
         return self.child_
     
     def set_child(self, child: Optional[Node]) -> None:
-        """设置第一个子节点"""
+        """set the first child node"""
         self.child_ = child
 
 
 class EdgeAndNode:
-    """边和节点的组合类，简化访问"""
+    """edge and node combination class, simplified access"""
     
     def __init__(self, edge: Optional[Edge] = None, node: Optional[Node] = None):
         self.edge_ = edge
         self.node_ = node
     
     def reset(self) -> None:
-        """重置为空"""
+        """reset to empty"""
         self.edge_ = None
         self.node_ = None
     
     def __bool__(self) -> bool:
-        """检查是否有效"""
+        """check if valid"""
         return self.edge_ is not None
     
     def __eq__(self, other) -> bool:
-        """比较相等"""
+        """compare equal"""
         if not isinstance(other, EdgeAndNode):
             return False
         return self.edge_ == other.edge_ and self.node_ == other.node_
     
     def has_node(self) -> bool:
-        """检查是否有节点"""
+        """check if has node"""
         return self.node_ is not None
     
     def edge(self) -> Optional[Edge]:
-        """获取边"""
+        """get the edge"""
         return self.edge_
     
     def node(self) -> Optional[Node]:
-        """获取节点"""
+        """get the node"""
         return self.node_
     
     def get_q(self, default_q: float, draw_score: float) -> float:
-        """获取 Q 值"""
+        """get the Q value"""
         if self.node_ and self.node_.get_n() > 0:
             return self.node_.get_q(draw_score)
         return default_q
     
     def get_wl(self, default_wl: float) -> float:
-        """获取 Win-Loss 值"""
+        """get the Win-Loss value"""
         if self.node_ and self.node_.get_n() > 0:
             return self.node_.get_wl()
         return default_wl
     
     def get_d(self, default_d: float) -> float:
-        """获取 Draw 概率"""
+        """get the Draw probability"""
         if self.node_ and self.node_.get_n() > 0:
             return self.node_.get_d()
         return default_d
     
     def get_m(self, default_m: float) -> float:
-        """获取 Moves left"""
+        """get the Moves left"""
         if self.node_ and self.node_.get_n() > 0:
             return self.node_.get_m()
         return default_m
     
     def get_n(self) -> int:
-        """获取访问次数"""
+        """get the number of visits"""
         return self.node_.get_n() if self.node_ else 0
     
     def get_n_started(self) -> int:
-        """获取已开始的访问次数"""
+        """get the number of started visits"""
         return self.node_.get_n_started() if self.node_ else 0
     
     def get_n_in_flight(self) -> int:
-        """获取正在进行的访问次数"""
+        """get the number of in-flight visits"""
         return self.node_.get_n_in_flight() if self.node_ else 0
     
     def is_terminal(self) -> bool:
-        """检查是否为终端节点"""
+        """check if the node is a terminal node"""
         return self.node_.is_terminal() if self.node_ else False
     
     def is_tb_terminal(self) -> bool:
-        """检查是否为残局库终端节点"""
+        """check if the node is a tablebase terminal node"""
         return self.node_.is_tb_terminal() if self.node_ else False
     
     def get_bounds(self) -> tuple[Optional[float], Optional[float]]:
-        """获取边界"""
+        """get the bounds"""
         if self.node_:
             return self.node_.get_bounds()
         return (None, None)
     
     def get_p(self) -> float:
-        """获取策略概率（从边获取）"""
+        """get the policy probability (from the edge)"""
         if self.edge_:
             return self.edge_.get_p()
-        # 如果只有节点，从节点对应的边获取（通过父节点）
+        # if only node, get the edge from the parent node
         if self.node_ and self.node_.get_parent():
             parent = self.node_.get_parent()
             edge = parent.get_edge_to_node(self.node_)
@@ -514,13 +514,13 @@ class EdgeAndNode:
         return 0.0
     
     def get_move(self, flip: bool = False) -> Optional[chess.Move]:
-        """获取移动"""
+        """get the move"""
         if self.edge_:
             return self.edge_.get_move(flip)
         return None
     
     def get_u(self, numerator: float) -> float:
-        """获取 U 值 = numerator * p / (1 + n_started)"""
+        """get the U value = numerator * p / (1 + n_started)"""
         p = self.get_p()
         n_started = self.get_n_started()
         return numerator * p / (1 + n_started)

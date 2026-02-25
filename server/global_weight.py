@@ -57,7 +57,7 @@ def load_max_activations(
             
             if activation_type == "max":
                 # for max activations, use average value (according to notebook logic)
-                # max activations 文件通常是3维的 [n_layers, n_samples, n_features]
+                # max activations file is usually 3D [n_layers, n_samples, n_features]
                 # need to take average to get [n_layers, n_features], then extend to [n_layers, 16384]
                 if tc_acts.dim() == 3:
                     tc_mean = torch.mean(tc_acts, dim=1)  # [n_layers, n_features]
@@ -80,7 +80,7 @@ def load_max_activations(
                     # according to notebook, should be [15, 16384], no need to extra processing
                     pass
                 elif tc_acts.dim() == 3:
-                    # If 3D, take average (should not happen, kept for backward compatibility)
+                    # if 3D, take average (should not happen, kept for backward compatibility)
                     print("Warning: mean activations file is 3D, will take average")
                     tc_mean = torch.mean(tc_acts, dim=1)  # [n_layers, n_features]
                     tc_acts = tc_mean

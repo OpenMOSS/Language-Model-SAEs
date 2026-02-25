@@ -8,35 +8,32 @@ import sys
 import torch
 import chess
 
-# 为了能够导入 leela_interp，需要将其所在目录加入 sys.path
-# 该路径与本地 notebook 中保持一致：
-# PROJECT_ROOT = "/inspire/.../chess-SAEs/exp/leela-interp/src"
+# Add leela_interp directory to sys.path for imports (path aligned with local notebook)
 PROJECT_ROOT = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs/exp/leela-interp/src"
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 DEFAULT_MODEL_NAME = "lc0/BT4-1024x15x32h"
 
-# 可选的外部模型获取函数，用于与 app.py 共享缓存
+# Optional external model getter for sharing cache with app.py
 _external_model_getter: Optional[Callable[[str], object]] = None
 
 
 def set_model_getter(getter: Callable[[str], object]) -> None:
-    """设置外部模型获取函数，用于共享缓存的模型
-    
+    """Set the external model getter for sharing cached models.
+
     Args:
-        getter: 一个函数，接受 model_name 并返回 HookedTransformer 模型
+        getter: A function that takes model_name and returns a HookedTransformer model.
     """
     global _external_model_getter
     _external_model_getter = getter
 
 
 def _try_get_from_circuits_service(model_name: str) -> Optional[object]:
-    """尝试从 circuits_service 获取缓存的模型"""
+    """Try to get the cached model from circuits_service."""
     try:
         import sys
         import os
-        # 添加 server 目录到路径
         server_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if server_dir not in sys.path:
             sys.path.insert(0, server_dir)
@@ -44,18 +41,18 @@ def _try_get_from_circuits_service(model_name: str) -> Optional[object]:
         from circuits_service import get_cached_models
         cached_model, _, _, _ = get_cached_models(model_name)
         if cached_model is not None:
-            print(f"✅ [model_interface] 使用 circuits_service 缓存的模型: {model_name}")
+            print(f"✅ [model_interface] Using cached model from circuits_service: {model_name}")
             return cached_model
     except ImportError:
         pass
     except Exception as e:
-        print(f"⚠️ [model_interface] 从 circuits_service 获取模型失败: {e}")
+        print(f"⚠️ [model_interface] Failed to get model from circuits_service: {e}")
     return None
 
 
 @lru_cache(maxsize=4)
 def _get_model_internal(model_name: str = DEFAULT_MODEL_NAME) -> object:
-    """内部模型加载函数（仅当外部 getter 不可用时使用）"""
+    """Internal model loader (used only when external getter is not available)."""
     from transformer_lens import HookedTransformer
     model = HookedTransformer.from_pretrained_no_processing(
         model_name,
@@ -65,17 +62,12 @@ def _get_model_internal(model_name: str = DEFAULT_MODEL_NAME) -> object:
 
 
 def _get_model(model_name: str = DEFAULT_MODEL_NAME) -> object:
-    """获取模型，优先使用外部缓存"""
-    # 1. 优先使用外部 getter（由 app.py 设置）
+    """Get model, preferring external cache."""
     if _external_model_getter is not None:
         return _external_model_getter(model_name)
-    
-    # 2. 尝试从 circuits_service 获取缓存
     cached = _try_get_from_circuits_service(model_name)
     if cached is not None:
         return cached
-    
-    # 3. 回退到内部加载
     return _get_model_internal(model_name)
 
 
@@ -87,8 +79,7 @@ def _run_model_outputs(fen: str, model_name: str) -> tuple[torch.Tensor, ...]:
     with torch.no_grad():
         output, _ = model.run_with_cache(fen, prepend_bos=False)
     if not isinstance(output, Sequence) or len(output) < 3:
-        raise RuntimeError("Output format isn't correct, it should contain policy、value、m")
-    # lru_cache 要求返回值是可哈希的
+        raise RuntimeError("Output format is invalid; expected policy, value, and m.")
     return tuple(output)
 
 
@@ -98,74 +89,62 @@ def get_policy(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> torch.Tensor:
 
 
 def get_value(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> torch.Tensor:
-    """获取价值输出（WDL 格式）
-    
+    """Get value output (WDL format).
+
     Args:
-        fen: FEN 字符串
-        model_name: 模型名称
-        
+        fen: FEN string.
+        model_name: Model name.
+
     Returns:
-        Tensor of shape [1, 3]，包含 [win_rate, draw_rate, lose_rate]
-        - value[0][0]: win rate（胜率）
-        - value[0][1]: draw rate（和棋率）
-        - value[0][2]: lose rate（败率）
+        Tensor of shape [1, 3]: [win_rate, draw_rate, lose_rate].
+        - value[0][0]: win rate
+        - value[0][1]: draw rate
+        - value[0][2]: lose rate
     """
     outputs = _run_model_outputs(fen, model_name)
     return outputs[1]
 
 
 def get_wl(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> float:
-    """获取 Win-Loss 值（wl_）
-    
-    wl_ = win_rate - lose_rate
-    
+    """Get Win-Loss value (wl_ = win_rate - lose_rate).
+
     Args:
-        fen: FEN 字符串
-        model_name: 模型名称
-        
+        fen: FEN string.
+        model_name: Model name.
+
     Returns:
-        Win-Loss 值（范围通常在 [-1, 1]）
+        Win-Loss value (typically in [-1, 1]).
     """
     value = get_value(fen, model_name)
-    # value[0][0] 是 win rate, value[0][2] 是 lose rate
     win_rate = value[0][0].item()
     lose_rate = value[0][2].item()
     return win_rate - lose_rate
 
 
 def get_d(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> float:
-    """获取 Draw 概率（d_）
-    
-    d_ = draw_rate
-    
+    """Get draw probability (d_ = draw_rate).
+
     Args:
-        fen: FEN 字符串
-        model_name: 模型名称
-        
+        fen: FEN string.
+        model_name: Model name.
+
     Returns:
-        Draw 概率（范围 [0, 1]）
+        Draw probability in [0, 1].
     """
     value = get_value(fen, model_name)
-    # value[0][1] 是 draw rate
     return value[0][1].item()
 
 
 def get_q(fen: str, model_name: str = DEFAULT_MODEL_NAME, draw_score: float = 0.0) -> float:
-    """获取 Q 值
-    
-    Q = wl + draw_score × d
-    其中：
-    - wl = win_rate - lose_rate
-    - d = draw_rate
-    - draw_score: 和棋得分（默认 0.0）
-    
+    """Get Q value: Q = wl + draw_score * d (wl = win_rate - lose_rate, d = draw_rate).
+
     Args:
-        fen: FEN 字符串
-        model_name: 模型名称
-        draw_score: 和棋得分，默认为 0.0
-        
+        fen: FEN string.
+        model_name: Model name.
+        draw_score: Draw score (default 0.0).
+
     Returns:
-        Q 值（范围通常在 [-1, 1] 附近，取决于 draw_score）
+        Q value (typically near [-1, 1], depending on draw_score).
     """
     wl = get_wl(fen, model_name)
     d = get_d(fen, model_name)
@@ -173,14 +152,14 @@ def get_q(fen: str, model_name: str = DEFAULT_MODEL_NAME, draw_score: float = 0.
 
 
 def get_m(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> torch.Tensor:
-    """获取 Moves left 值（m_）
-    
+    """Get moves-left value (m_).
+
     Args:
-        fen: FEN 字符串
-        model_name: 模型名称
-        
+        fen: FEN string.
+        model_name: Model name.
+
     Returns:
-        Moves left Tensor
+        Moves-left tensor.
     """
     outputs = _run_model_outputs(fen, model_name)
     return outputs[2]
@@ -191,53 +170,44 @@ def policy_tensor_to_move_dict(
     fen: str,
     legal_moves: list[chess.Move] | None = None,
 ) -> dict[str, float]:
-    """将 policy tensor 转换为移动字典（move_uci -> probability）
-    
-    使用 LeelaBoard 将 policy tensor 的索引映射到 UCI 移动。
-    
+    """Convert policy tensor to move dict (move_uci -> probability) using LeelaBoard.
+
     Args:
-        policy_tensor: Policy tensor，形状为 [1, 1858] 或 [1858]
-        fen: FEN 字符串，用于创建 LeelaBoard
-        legal_moves: 合法移动列表，如果为 None 则从 FEN 生成
-        
+        policy_tensor: Policy tensor, shape [1, 1858] or [1858].
+        fen: FEN string for LeelaBoard.
+        legal_moves: Optional list of legal moves; if None, derived from FEN.
+
     Returns:
-        字典，键为 UCI 移动字符串，值为对应的概率（已归一化到合法移动）
+        Dict mapping UCI move strings to probabilities (normalized over legal moves).
     """
     import chess
     from leela_interp import LeelaBoard
     
-    # 确保 policy_tensor 是一维的
     if policy_tensor.dim() > 1:
         policy_logits = policy_tensor[0] if policy_tensor.dim() == 2 else policy_tensor
     else:
         policy_logits = policy_tensor
     
-    # 转换为 numpy 或保持为 tensor（用于索引）
     if isinstance(policy_logits, torch.Tensor):
         policy_logits = policy_logits.cpu()
     
-    # 创建 LeelaBoard
     lboard = LeelaBoard.from_fen(fen, history_synthesis=True)
     
-    # 获取合法移动
     if legal_moves is None:
         board = chess.Board(fen)
         legal_moves = list(board.legal_moves)
     
     legal_uci_set = set(move.uci() for move in legal_moves)
     
-    # 将 policy logits 转换为概率（softmax）
     if isinstance(policy_logits, torch.Tensor):
         policy_probs = torch.softmax(policy_logits, dim=0)
     else:
         import numpy as np
         policy_probs = torch.softmax(torch.from_numpy(policy_logits), dim=0)
     
-    # 构建移动字典
     policy_dict: dict[str, float] = {}
     total_prob = 0.0
     
-    # 遍历所有可能的索引，找到对应的合法移动
     for idx in range(len(policy_probs)):
         try:
             uci = lboard.idx2uci(idx)
@@ -246,14 +216,11 @@ def policy_tensor_to_move_dict(
                 policy_dict[uci] = prob
                 total_prob += prob
         except (KeyError, IndexError, ValueError):
-            # 索引可能无效，跳过
             continue
     
-    # 归一化：确保合法移动的概率和为 1
     if total_prob > 0:
         policy_dict = {uci: prob / total_prob for uci, prob in policy_dict.items()}
     else:
-        # 如果没有找到任何合法移动的概率，使用均匀分布
         uniform_prob = 1.0 / len(legal_moves) if legal_moves else 0.0
         policy_dict = {move.uci(): uniform_prob for move in legal_moves}
     
@@ -261,20 +228,15 @@ def policy_tensor_to_move_dict(
 
 
 def evaluate_position(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> dict[str, object]:
-    """完整评估一个局面，返回 q, d, m, p（用于搜索 Backend）
-    
+    """Evaluate a position and return q, d, m, p (for search Backend).
+
     Args:
-        fen: FEN 字符串
-        model_name: 模型名称
-        
+        fen: FEN string.
+        model_name: Model name.
+
     Returns:
-        字典，包含:
-        - q: Win-Loss 值
-        - d: Draw 概率
-        - m: Moves left 值
-        - p: 策略字典 {move_uci: probability}
+        Dict with: q (win-loss), d (draw prob), m (moves left), p (policy dict).
     """
-    # 获取 WDL
     value = get_value(fen, model_name)
     win_rate = value[0][0].item()
     draw_rate = value[0][1].item()
@@ -282,11 +244,9 @@ def evaluate_position(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> dict[st
     
     wl = win_rate - lose_rate
     
-    # 获取 M
     m_tensor = get_m(fen, model_name)
     m_value = m_tensor[0][0].item() if m_tensor.dim() > 1 else m_tensor[0].item()
     
-    # 获取 Policy
     policy_tensor = get_policy(fen, model_name)
     policy_dict = policy_tensor_to_move_dict(policy_tensor, fen)
     
@@ -299,36 +259,26 @@ def evaluate_position(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> dict[st
 
 
 def evaluate_position_for_search(fen: str, model_name: str = DEFAULT_MODEL_NAME) -> dict[str, object]:
-    """为 MCTS 搜索提供局面评估
-    
-    返回包含 q, d, m, p 的字典，供 SimpleBackend 使用。
-    
+    """Evaluate position for MCTS search; returns q, d, m, p for SimpleBackend.
+
     Args:
-        fen: FEN 字符串
-        model_name: 模型名称
-        
+        fen: FEN string.
+        model_name: Model name.
+
     Returns:
-        字典，包含：
-        - q: float, Win-Loss 值
-        - d: float, Draw 概率
-        - m: float, Moves left 值
-        - p: dict[str, float], 移动概率字典（move_uci -> probability）
+        Dict with q (float), d (float), m (float), p (move_uci -> probability).
     """
-    # 获取模型输出
     policy_tensor = get_policy(fen, model_name)
     value_tensor = get_value(fen, model_name)
     m_tensor = get_m(fen, model_name)
     
-    # 计算 WL 和 D
     win_rate = value_tensor[0][0].item()
     draw_rate = value_tensor[0][1].item()
     lose_rate = value_tensor[0][2].item()
     wl = win_rate - lose_rate
     
-    # 获取 M 值
     m_value = m_tensor[0][0].item() if m_tensor.dim() > 1 else m_tensor.item()
     
-    # 获取策略字典
     policy_dict = policy_tensor_to_move_dict(policy_tensor, fen)
     
     return {
@@ -340,13 +290,13 @@ def evaluate_position_for_search(fen: str, model_name: str = DEFAULT_MODEL_NAME)
 
 
 def create_search_backend_eval_fn(model_name: str = DEFAULT_MODEL_NAME) -> Callable[[str], dict[str, object]]:
-    """创建用于 SimpleBackend 的评估函数
-    
+    """Create an evaluation function for SimpleBackend.
+
     Args:
-        model_name: 模型名称
-        
+        model_name: Model name.
+
     Returns:
-        评估函数，接受 FEN 字符串，返回评估结果字典
+        Eval function that takes a FEN string and returns an evaluation dict.
     """
     def eval_fn(fen: str) -> dict[str, object]:
         return evaluate_position_for_search(fen, model_name)
@@ -361,22 +311,21 @@ def run_mcts_search(
     max_depth: int = 10,
     model_name: str = DEFAULT_MODEL_NAME,
 ) -> dict[str, Any]:
-    """运行 MCTS 搜索并返回最佳移动
-    
+    """Run MCTS search and return the best move.
+
     Args:
-        fen: FEN 字符串
-        max_playouts: 最大模拟次数
-        target_minibatch_size: 目标 minibatch 大小
-        cpuct: UCT 探索系数
-        max_depth: 最大搜索深度
-        model_name: 模型名称
-        
+        fen: FEN string.
+        max_playouts: Maximum number of playouts.
+        target_minibatch_size: Target minibatch size.
+        cpuct: UCT exploration coefficient.
+        max_depth: Maximum search depth.
+        model_name: Model name.
+
     Returns:
-        包含最佳移动和搜索统计信息的字典
+        Dict with best move and search statistics.
     """
     from .search import SearchParams, Search, SimpleBackend, Node
     
-    # 创建搜索参数
     params = SearchParams(
         max_playouts=max_playouts,
         target_minibatch_size=target_minibatch_size,
@@ -384,29 +333,17 @@ def run_mcts_search(
         max_depth=max_depth,
     )
     
-    # 创建模型评估函数
     eval_fn = create_search_backend_eval_fn(model_name)
-    
-    # 创建后端
     backend = SimpleBackend(model_eval_fn=eval_fn)
-    
-    # 创建根节点
     root_node = Node(fen=fen)
-    
-    # 创建搜索实例
     search = Search(
         root_node=root_node,
         backend=backend,
         params=params,
     )
-    
-    # 运行搜索
     search.run_blocking()
-    
-    # 获取最佳移动
     best_move = search.get_best_move()
     
-    # 收集搜索统计信息
     result: dict[str, Any] = {
         'best_move': best_move.uci() if best_move else None,
         'total_playouts': search.get_total_playouts(),
@@ -414,7 +351,6 @@ def run_mcts_search(
         'root_visits': root_node.get_n(),
     }
     
-    # 收集根节点子节点的访问统计
     if root_node.has_children():
         children_stats = []
         for i in range(root_node.get_num_edges()):
@@ -430,8 +366,7 @@ def run_mcts_search(
                     'q': q,
                     'policy': edge.get_p(),
                 })
-        # 按访问次数排序
         children_stats.sort(key=lambda x: x['visits'], reverse=True)
-        result['top_moves'] = children_stats[:10]  # 只返回前10个
+        result['top_moves'] = children_stats[:10]
     
     return result
