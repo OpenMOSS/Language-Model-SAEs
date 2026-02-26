@@ -25,6 +25,16 @@ In the example above, the input data is split into 2 shards. GPUs 0-3 process th
 
 This mesh abstraction allows you to compose different parallelism strategies cleanly, with each strategy operating independently along its designated dimension.
 
+A DeviceMesh can be created by:
+
+```python
+device_mesh = init_device_mesh(
+    device_type="cuda",
+    mesh_shape=(8,),
+    mesh_dim_names=("model",),
+)
+```
+
 ### DTensor
 
 Built on top of DeviceMesh, [DTensor](https://docs.pytorch.org/docs/stable/distributed.tensor.html#pytorch-dtensor-distributed-tensor) provides an abstraction layer that enables you to work with distributed tensors from a global perspective.
@@ -33,14 +43,46 @@ DTensor requires your code to follow the SPMD (Single Program, Multiple Data) pa
 
 When using regular tensors in distributed settings, these per-process tensors exist independently with no explicit relationship or coordination between them. DTensor addresses this by providing a unified, global view: it logically represents a single large tensor containing all the data across all processes, which is then automatically sharded and distributed to each process according to its `Placement` specifications.
 
+A DTensor can be created by:
+
+```python
+local_tensor = torch.randn(2, 4)
+dtensor = DTensor.from_local(
+    local_tensor,
+    device_mesh=device_mesh,
+    placements=(Shard(0)),
+) # This `dtensor` stores per-device data just as the `local_tensor`. 
+# It just provides more information on how the tensor is organized across device globally.
+```
+
+More factory method of DTensor can be found at [torch.distributed.tensor](https://docs.pytorch.org/docs/stable/distributed.tensor.html#different-ways-to-create-a-dtensor).
+
 ### Determine the Placements of DTensor
 
 The term "dimension" is indeed overloaded. It can refer to a column or a row in a DeviceMesh, or in a tensor in its mathematical meaning. When it comes to "sharding" a DTensor, it actually relates to both of the interpretations. For each of the dimension of DeviceMesh we want the DTensor to shard across, we must select a tensor dimension to perform the sharding.
 
-However, we cannot random pick tensor dimensions to shard the tensors on. Suppose we are to perform distributed matrix multiplication with tensors $a \in M \times K$ and $b \in K \times N$. It's only possible to efficiently accelerate the computation when both the tensors are sharded on the middle dimension $K$ or both are sharded in the outer dimension $M$ and $N$, in which case every local device have the required data to perform its block matrix multiplication
+However, we cannot randomly pick tensor dimensions to shard the tensors on. Suppose we are to perform distributed matrix multiplication with tensors $a \in M \times K$ and $b \in K \times N$. It's only possible to efficiently accelerate the computation when both the tensors are sharded on the middle dimension $K$ or both are sharded in the outer dimension $M$ and $N$, in which case every local device has the required data to perform its block matrix multiplication.
+
+Thus, we need to carefully determine _for each mesh dimension, which tensor dimension, if any, should be sharded on?_. DTensor uses its `placements` to specify how shardings correspond to each mesh dimension:
+
+```python
+# Shard tensor dim 0 along the first mesh dimension, and replicate along the second mesh dimension.
+placements = (Shard(0), Replicate())
+```
+
+However, this placement tuple are tightly coupling to mesh topology. If the mesh changes, e.g., from `("data", "model")` to just `("model",)` when running on a single node without data parallelism, the placement tuple should be changed correspondingly. 
+
+To make every weight and activation in our codebase flexible to different mesh, we specify their `DimMap` to dynamically compute the placements, taking inspiration from JAX's [PartitionSpec](https://docs.jax.dev/en/latest/jax.sharding.html#jax.sharding.PartitionSpec). `DimMap` maps *mesh dimension names* to *tensor dimensions*, and any mesh dimension absent from the map is implicitly replicated:
+
+```python
+DimMap({"data": 0})            # Shard tensor dim 0 along mesh "data"; replicate elsewhere
+DimMap({"model": 1})           # Shard tensor dim 1 along mesh "model"; replicate elsewhere
+DimMap({"data": 0, "model": 1}) # Shard along both
+DimMap({})                      # Fully replicated
+```
+
+Given a concrete `DeviceMesh`, `DimMap.placements(device_mesh)` generates the correct positional `Placement` tuple dynamically.
 
 ### Application in Language-Model-SAEs
 
-It does make the life easier to organize multi-dimensional parallelism with the help of DeviceMesh and DTensor. In most cases we just want to apply DP and TP. And that should be simple: DP is to shard all the input data along the `data` dimension of the DeviceMesh and along the `batch` dimension of the data tensor. TP is to shard all the parameters along the `model` dimension of the DeviceMesh and along the `sae` dimension of each parameter.
-
-Ideally this should already work. But in practice, this cannot be the full story. Often a primitive of PyTorch does not know how it should deal with DTensor properly, or the implementation is not performant in distributed cases (not efficient or costs unnecessary extra GPU memory). So there're still plenty of corner cases we need to convert the DTensors back to local tensor and operate on them manually.
+Ideally the above system can inherently solve multi-dimensional parallelism, including DP and TP -- we just need to provide a DeviceMesh, and specify the DimMap of each leaf node (input and weight), and the tensor operations (matrix multiplications and other operations) will be automatically accelerated. But in practice, this cannot be the full story. Often a primitive of PyTorch does not know how it should deal with DTensor properly, or the implementation is not performant in distributed cases (run slowly or costs unnecessary extra GPU memory). So there're still a number of corner cases in which we need to convert the DTensors back to local tensor and operate on them manually.

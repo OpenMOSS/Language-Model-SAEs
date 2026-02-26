@@ -4,6 +4,9 @@ repo_url: https://github.com/OpenMOSS/Language-Model-SAEs
 
 theme:
   name: material
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
   features:
     - content.code.copy
     - content.footnote.tooltips
