@@ -86,3 +86,51 @@ Given a concrete `DeviceMesh`, `DimMap.placements(device_mesh)` generates the co
 ### Application in Language-Model-SAEs
 
 Ideally the above system can inherently solve multi-dimensional parallelism, including DP and TP -- we just need to provide a DeviceMesh, and specify the DimMap of each leaf node (input and weight), and the tensor operations (matrix multiplications and other operations) will be automatically accelerated. But in practice, this cannot be the full story. Often a primitive of PyTorch does not know how it should deal with DTensor properly, or the implementation is not performant in distributed cases (run slowly or costs unnecessary extra GPU memory). So there're still a number of corner cases in which we need to convert the DTensors back to local tensor and operate on them manually.
+
+## Accelerate Your Training/Analyzing
+
+The use of distributed strategies is just as simple as other libraries: for the runners we've provided, just specify `data_parallel_size` and `model_parallel_size` in the settings, and launch your experiment via `torchrun`. The total number of processes must equal `data_parallel_size × model_parallel_size`.
+
+**Generate activations** with 8 GPUs (8-way data parallelism):
+
+```bash
+uv run torchrun --nproc-per-node=8 examples/generate_pythia_activation_1d.py \
+    --size 160m --layer 6 --activation_path /data/activations
+```
+
+```python
+settings = GenerateActivationsSettings(
+    ...,
+    data_parallel_size=8,
+)
+```
+
+**Train SAEs** with 8 GPUs (2-way DP × 4-way TP):
+
+```bash
+uv run torchrun --nproc-per-node=8 examples/train_pythia_sae_topk.py
+```
+
+```python
+settings = TrainSAESettings(
+    ...,
+    data_parallel_size=2,
+    model_parallel_size=4,
+)
+```
+
+**Analyze SAEs** with 4 GPUs (4-way TP):
+
+```bash
+uv run torchrun --nproc-per-node=4 examples/analyze_pythia_sae.py \
+    --sae_path /path/to/sae
+```
+
+```python
+settings = AnalyzeSAESettings(
+    ...,
+    model_parallel_size=4,
+)
+```
+
+For custom runners, you may create the `DeviceMesh` yourself and pass it to modules like `ActivationFactory`. Most modules in `Language-Model-SAEs` support `DeviceMesh` inherently.
