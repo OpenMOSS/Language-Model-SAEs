@@ -1,27 +1,32 @@
-import { z } from "zod";
+import { z } from 'zod'
 
 export const TextTokenOriginSchema = z.object({
-  key: z.literal("text"),
+  key: z.literal('text'),
   range: z.tuple([z.number(), z.number()]),
-});
+})
 
-export type TextTokenOrigin = z.infer<typeof TextTokenOriginSchema>;
+export type TextTokenOrigin = z.infer<typeof TextTokenOriginSchema>
 
 export const ImageTokenOriginSchema = z.object({
-  key: z.literal("image"),
+  key: z.literal('image'),
   imageIndex: z.number(),
   rect: z.tuple([z.number(), z.number(), z.number(), z.number()]),
-});
+})
 
-export type ImageTokenOrigin = z.infer<typeof ImageTokenOriginSchema>;
+export type ImageTokenOrigin = z.infer<typeof ImageTokenOriginSchema>
 
-export const TokenOriginSchema = z.union([TextTokenOriginSchema, ImageTokenOriginSchema]);
+export const TokenOriginSchema = z.union([
+  TextTokenOriginSchema,
+  ImageTokenOriginSchema,
+])
 
-export type TokenOrigin = z.infer<typeof TokenOriginSchema>;
+export type TokenOrigin = z.infer<typeof TokenOriginSchema>
 
 export const FeatureSampleCompactSchema = z.object({
   text: z.string().nullish(),
   images: z.array(z.string()).nullish(),
+  tokenOffset: z.number().nullish(),
+  textOffset: z.number().nullish(),
   origins: z.array(TokenOriginSchema.nullable()),
   // COO format: indices where feature is active
   featureActsIndices: z.array(z.number()),
@@ -31,43 +36,28 @@ export const FeatureSampleCompactSchema = z.object({
   zPatternIndices: z.array(z.array(z.number())).nullish(),
   // Z pattern data: corresponding contribution values
   zPatternValues: z.array(z.number()).nullish(),
-});
+})
 
-export type FeatureSampleCompact = z.infer<typeof FeatureSampleCompactSchema>;
+export type FeatureSampleCompact = z.infer<typeof FeatureSampleCompactSchema>
 
 export const InterpretationSchema = z.object({
   text: z.string(),
-  validation: z.array(
-    z.object({
-      method: z.string(),
-      passed: z.boolean(),
-      detail: z
-        .object({
-          prompt: z.string(),
-          response: z.any(),
-        })
-        .optional(),
-    })
-  ).optional(),
-  detail: z
-    .object({
-      userPrompt: z.string(),
-      systemPrompt: z.string(),
-      response: z.object({
-        steps: z.array(z.string()),
-        finalExplanation: z.string(),
-        complexity: z.number(),
-        activationConsistency: z.number(),
-      }),
-    })
-    .optional(),
-  complexity: z.number().optional(),
-  consistency: z.number().optional(),
-  passed: z.boolean().optional(),
-  time: z.any().optional(),
-});
+})
 
-export type Interpretation = z.infer<typeof InterpretationSchema>;
+export type Interpretation = z.infer<typeof InterpretationSchema>
+
+export const LogitsSchema = z.object({
+  topPositive: z.array(
+    z.object({
+      logit: z.number(),
+      token: z.string(),
+    }),
+  ),
+  topNegative: z.array(z.object({ logit: z.number(), token: z.string() })),
+  histogram: z.any().nullish(),
+})
+
+export type Logits = z.infer<typeof LogitsSchema>
 
 export const FeatureSchema = z.object({
   featureIndex: z.number(),
@@ -80,33 +70,23 @@ export const FeatureSchema = z.object({
   actTimes: z.number(),
   maxFeatureAct: z.number(),
   nAnalyzedTokens: z.number().nullish(),
-  actTimesModalities: z.record(z.string(), z.number()).nullish(),
-  maxFeatureActsModalities: z.record(z.string(), z.number()).nullish(),
-  sampleGroups: z.array(
-    z.object({
-      analysisName: z.string(),
-      samples: z.array(FeatureSampleCompactSchema),
-    })
-  ),
-  logits: z
-    .object({
-      topPositive: z.array(
-        z.object({
-          logit: z.number(),
-          token: z.string(),
-        })
-      ),
-      topNegative: z.array(
-        z.object({
-          logit: z.number(),
-          token: z.string(),
-        })
-      ),
-      histogram: z.any(),
-    })
-    .nullish(),
+  logits: LogitsSchema.nullish(),
   interpretation: InterpretationSchema.nullish(),
   isBookmarked: z.boolean().optional(),
-});
+})
 
-export type Feature = z.infer<typeof FeatureSchema>;
+export type Feature = z.infer<typeof FeatureSchema>
+
+export const FeatureCompactSchema = z.object({
+  featureIndex: z.number(),
+  dictionaryName: z.string(),
+  analysisName: z.string(),
+  logits: LogitsSchema.nullish(),
+  interpretation: InterpretationSchema.nullish(),
+  actTimes: z.number(),
+  maxFeatureAct: z.number(),
+  nAnalyzedTokens: z.number().nullish(),
+  samples: z.array(FeatureSampleCompactSchema),
+})
+
+export type FeatureCompact = z.infer<typeof FeatureCompactSchema>

@@ -8,14 +8,14 @@ endif
 
 install:
 	uv sync --all-groups --extra $(EXTRAS)
-	cd ui-ssr && bun install
+	cd ui && bun install
 	uv run pre-commit install
 
 ui-dev:
-	cd ui-ssr && bun run dev
+	cd ui && bun run dev
 
 ui-build:
-	cd ui-ssr && bun run build
+	cd ui && bun run build
 
 test:
 	uv run pytest
@@ -24,7 +24,7 @@ lint:
 	uv run ruff format .
 	uv run ruff check --fix .
 	uv run basedpyright
-	cd ui-ssr && bun run lint
+	cd ui && bun run lint
 
 docs-serve:
 	uv run mkdocs serve --livereload
@@ -36,7 +36,7 @@ clean:
 	rm -rf dist build .coverage .pytest_cache .ruff_cache site
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type d -name "*.egg-info" -exec rm -rf {} +
-	rm -rf ui-ssr/node_modules
+	rm -rf ui/node_modules
 
 help:
 	@echo "Available commands:"

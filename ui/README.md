@@ -1,3 +1,17 @@
-# Legacy Visualization Frontend for Language-Model-SAEs
+# Visualization Frontend for Language-Model-SAEs
 
-This directory contains legacy version of visualization frontend, written in pure React. We have rewritten the visualization frontend in Tanstack Start, a modern SSR framework, and improve the overall style. Check the `ui-ssr` folder to use it.
+This is a rewritten version of visualization frontend, using [Tanstack](https://tanstack.com/) libraries. To use it, first ensure you have [bun](https://bun.sh/) installed and a visualization backend running at `http://your-url-to-backend`, and run
+
+```bash
+bun install
+```
+
+to install the necessary dependencies. Then, copy `.env.example` to `.env`, and fill in your backend url. Run
+
+```bash
+bun run dev
+```
+
+to start the development server.
+
+We're also working to provide a docker configuration to make it more easy to start the visualization backend & frontend. Keep informed!

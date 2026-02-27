@@ -16,7 +16,7 @@ from .analysis import (
     FeatureAnalyzer,
     FeatureAnalyzerConfig,
 )
-from .backend.language_model import LanguageModelConfig, LLaDAConfig, TransformerLensLanguageModel
+from .backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
 from .circuit import ReplacementModel, attribute
 from .clt import CLTConfig, CrossLayerTranscoder
 from .config import DatasetConfig
@@ -119,7 +119,6 @@ __all__ = [
     "TrainCrossCoderSettings",
     "auto_interp",
     "sweep_sae",
-    "LLaDAConfig",
     "train_crosscoder",
     "ReplacementModel",
     "attribute",

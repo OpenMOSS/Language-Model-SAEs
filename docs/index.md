@@ -41,8 +41,6 @@ This library provides:
     pip install lm-saes
     ```
 
-    Note that since we use a forked version of [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens), so it'll be better to install the package in a seperate environment created by [conda](https://github.com/conda-forge/miniforge) or [virtualenv](https://virtualenv.pypa.io/en/latest/) to avoid conflicts.
-
     We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To install our library with NPU dependency constraints, run:
 
     ```bash

@@ -23,6 +23,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
+from lm_saes.backend.run_with_cache_until import run_with_cache_until
 from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.distributed import DimMap
@@ -173,13 +174,6 @@ class LanguageModelConfig(BaseModelConfig):
         d = self.model_dump()
         with open(os.path.join(sae_path, "lm_config.json"), "w") as f:
             json.dump(d, f, indent=4)
-
-
-class LLaDAConfig(LanguageModelConfig):
-    mask_ratio: float = 0.0
-    mdm_mask_token_id: int = 126336
-    prepend_bos: bool = False
-    calculate_logits: bool = False
 
 
 class LanguageModel(ABC):
@@ -381,13 +375,14 @@ class TransformerLensLanguageModel(LanguageModel):
         return pytree.tree_map(self._to_dtensor, self.model.run_with_cache(*args, **kwargs))
 
     def run_with_cache_until(self, *args, **kwargs) -> Any:
+        """Run with activation caching, stopping at a given hook for efficiency."""
         assert self.model is not None, "model must be initialized"
         if self.device_mesh is None:
-            return self.model.run_with_cache_until(*args, **kwargs)
+            return run_with_cache_until(self.model, *args, **kwargs)
 
         args = pytree.tree_map(self._to_tensor, args)
         kwargs = pytree.tree_map(self._to_tensor, kwargs)
-        return pytree.tree_map(self._to_dtensor, self.model.run_with_cache_until(*args, **kwargs))
+        return pytree.tree_map(self._to_dtensor, run_with_cache_until(self.model, *args, **kwargs))
 
     @contextmanager
     def hooks(
@@ -467,36 +462,18 @@ class TransformerLensLanguageModel(LanguageModel):
             )
             tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
         tokens = tokens.contiguous()
-        with timer.time("run_with_cache_until"):
-            # _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points, use_flash_attn=False)
-            _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
+
+        _, activations = self.run_with_cache_until(tokens, names_filter=hook_points, until=hook_points[-1])
 
         # we do not want to filter out eos. It might be end of chats and include useful information
-        mask = torch.isin(
-            tokens,
-            torch.tensor([self.pad_token_id, self.bos_token_id]).to(tokens.device),
-            invert=True,
-        ).int()
-        attention_mask = torch.isin(tokens, torch.tensor([self.pad_token_id]).to(tokens.device), invert=True).int()
+        assert self.pad_token_id is not None and self.bos_token_id is not None, "Pad and BOS token IDs must be set"
+        mask = torch.logical_and(tokens.ne(self.pad_token_id), tokens.ne(self.bos_token_id)).int()
+        attention_mask = torch.logical_and(tokens.ne(self.pad_token_id), tokens.ne(self.bos_token_id)).int()
 
         return {hook_point: activations[hook_point] for hook_point in hook_points} | {
-            "tokens": tokens
-            if self.device_mesh is None
-            else DTensor.from_local(
-                tokens, device_mesh=self.device_mesh, placements=DimMap({"data": 0}).placements(self.device_mesh)
-            ),
-            "mask": mask
-            if self.device_mesh is None
-            else DTensor.from_local(
-                mask, device_mesh=self.device_mesh, placements=DimMap({"data": 0}).placements(self.device_mesh)
-            ),
-            "attention_mask": attention_mask
-            if self.device_mesh is None
-            else DTensor.from_local(
-                attention_mask,
-                device_mesh=self.device_mesh,
-                placements=DimMap({"data": 0}).placements(self.device_mesh),
-            ),
+            "tokens": tokens,
+            "mask": mask,
+            "attention_mask": attention_mask,
         }
 
 
@@ -584,114 +561,6 @@ class HuggingFaceLanguageModel(LanguageModel):
             offsets = [offset_[:n_context] for offset_ in offsets]
             offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
         return [[{"key": "text", "range": offset} for offset in offset_] for offset_ in offsets]
-
-
-class LLaDALanguageModel(TransformerLensLanguageModel):
-    cfg: LLaDAConfig  # Explicitly specify the type to avoid linter errors
-
-    @property
-    def mdm_mask_token_id(self) -> int:
-        return self.cfg.mdm_mask_token_id
-
-    @torch.no_grad()
-    def _get_masked_tokens(self, tokens: torch.Tensor, pad_mask: torch.Tensor) -> torch.Tensor:
-        """
-        Apply random masking to non-pad tokens based on mask_ratio. The random seed should be determined by the raw data.
-        Args:
-            tokens (torch.Tensor): The tokens to mask.
-            pad_mask (torch.Tensor): The mask of the padding tokens.
-
-        Returns:
-            torch.Tensor: The tokens after masking. Pad tokens are included.
-        """
-        if self.cfg.mask_ratio <= 0:
-            return tokens
-
-        # Calculate random seeds based on non-pad tokens
-        random_seeds = (tokens * ~pad_mask).sum(dim=1).tolist()
-        masked_tokens = tokens.clone()
-
-        # For each sequence in the batch
-        for i, seed in enumerate(random_seeds):
-            # Create random generator with deterministic seed
-            random_generator = torch.Generator(device=tokens.device)
-            random_generator.manual_seed(seed)
-
-            # Generate random values for all positions
-            random_values = torch.rand(tokens[i].shape, device=tokens[i].device, generator=random_generator)
-
-            # Count non-pad tokens
-            non_pad_mask = ~pad_mask[i]
-            non_pad_count = non_pad_mask.sum()
-
-            # Calculate number of tokens to mask
-            num_to_mask = int(non_pad_count.item() * self.cfg.mask_ratio)
-            if num_to_mask == 0:
-                continue
-
-            # Set random values for pad positions to infinity so they won't be selected
-            random_values = torch.where(non_pad_mask, random_values, torch.full_like(random_values, float("inf")))
-
-            # Get indices of positions to mask (lowest random values)
-            mask_indices = torch.topk(random_values, k=num_to_mask, largest=False).indices
-
-            # Apply masking
-            masked_tokens[i][mask_indices] = self.mdm_mask_token_id
-
-        return masked_tokens
-
-    @torch.no_grad()
-    def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
-        assert self.model is not None
-        tokens = to_tokens(
-            self.tokenizer,
-            raw["text"],
-            max_length=self.cfg.max_length,
-            device=self.cfg.device,
-            prepend_bos=self.cfg.prepend_bos,
-        )
-        pad_mask = tokens == self.pad_token_id
-        masked_tokens = self._get_masked_tokens(tokens, pad_mask)
-        raw["text"] = self.tokenizer.batch_decode(masked_tokens)
-        pad_token = self.tokenizer.pad_token
-        raw["text"] = [text.replace(pad_token, "") for text in raw["text"]]
-        raw_meta = raw.get("meta", [])
-        raw["meta"] = [
-            (raw_meta[i] if i < len(raw_meta) else {}) | {"mask_ratio": self.cfg.mask_ratio}
-            for i in range(len(raw["text"]))
-        ]
-        return raw
-
-    @torch.no_grad()
-    def to_activations(
-        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
-    ) -> dict[str, torch.Tensor]:
-        assert self.model is not None
-        tokens = to_tokens(
-            self.tokenizer,
-            raw["text"],
-            max_length=self.cfg.max_length,
-            device=self.cfg.device,
-            prepend_bos=self.cfg.prepend_bos,
-        )
-        if n_context is not None:
-            assert self.pad_token_id is not None, (
-                "Pad token ID must be set for LLaDALanguageModel when n_context is provided"
-            )
-            tokens = pad_and_truncate_tokens(tokens, n_context, pad_token_id=self.pad_token_id)
-        pad_mask = tokens == self.pad_token_id
-        predicted_tokens = None
-        if self.cfg.calculate_logits:
-            logits, activations = self.model.run_with_cache(tokens, names_filter=hook_points)
-            assert isinstance(logits, torch.Tensor)
-            predicted_token_ids = logits.argmax(dim=-1)
-            predicted_tokens = torch.where(pad_mask, -1, predicted_token_ids)
-        else:
-            _, activations = self.model.run_with_cache_until(tokens, names_filter=hook_points)
-        predicted_tokens = {"predicted_tokens": predicted_tokens} if predicted_tokens is not None else {}
-        return (
-            {hook_point: activations[hook_point] for hook_point in hook_points} | {"tokens": tokens} | predicted_tokens
-        )
 
 
 class QwenVLLanguageModel(HuggingFaceLanguageModel):

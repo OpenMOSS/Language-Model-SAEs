@@ -1,6 +1,9 @@
 import torch
+import torch.distributed as dist
 from datasets import Dataset
 from pytest_mock import MockerFixture
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import DTensor
 
 from lm_saes.activation.processors.activation import (
     ActivationBatchler,
@@ -10,6 +13,8 @@ from lm_saes.activation.processors.activation import (
 )
 from lm_saes.activation.processors.huggingface import HuggingFaceDatasetLoader
 from lm_saes.backend.language_model import LanguageModel
+from lm_saes.testing import distributed_test
+from lm_saes.utils.distributed import DimMap
 
 
 def test_huggingface_dataset_loader():
@@ -172,6 +177,52 @@ def test_activation_buffer(mocker: MockerFixture):
     buffer.generator.manual_seed(42)
     shuffled_buffer = buffer.shuffle()
     assert len(shuffled_buffer) == 3
+
+
+@distributed_test(nproc_per_node=2, backend="gloo")
+def test_activation_buffer_distributed() -> None:
+    """Test ActivationBuffer with distributed data (2 processes)."""
+    world_size = int(dist.get_world_size())
+    rank = int(dist.get_rank())
+    device = "cuda" if torch.cuda.is_available() and dist.get_backend() == "nccl" else "cpu"
+    assert world_size == 2, "This test requires 2 processes"
+
+    device_mesh = init_device_mesh(device, (world_size,), mesh_dim_names=("data",))
+
+    buffer = ActivationBuffer(device_mesh=device_mesh)
+
+    a = torch.tensor(
+        [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12], [13, 14, 15], [16, 17, 18]],
+        device=device,
+    )
+    a = DimMap({"data": 0}).distribute(a, device_mesh)
+    buffer = buffer.cat({"a": a})
+    batch, buffer = buffer.yield_batch(2)
+
+    if rank == 0:
+        assert isinstance(batch["a"], DTensor) and torch.allclose(
+            batch["a"].to_local(), torch.tensor([[1, 2, 3]], device=device)
+        )
+    else:
+        assert isinstance(batch["a"], DTensor) and torch.allclose(
+            batch["a"].to_local(), torch.tensor([[10, 11, 12]], device=device)
+        )
+
+    a = torch.tensor([[1, 2, 3], [4, 5, 6]], device=device)
+    a = DimMap({"data": 0}).distribute(a, device_mesh)
+    buffer = buffer.cat({"a": a})
+
+    remaining_buffer = buffer.consume()
+    if rank == 0:
+        assert isinstance(remaining_buffer["a"], DTensor) and torch.allclose(
+            remaining_buffer["a"].to_local(),
+            torch.tensor([[4, 5, 6], [7, 8, 9], [1, 2, 3]], device=device),
+        )
+    else:
+        assert isinstance(remaining_buffer["a"], DTensor) and torch.allclose(
+            remaining_buffer["a"].to_local(),
+            torch.tensor([[13, 14, 15], [16, 17, 18], [4, 5, 6]], device=device),
+        )
 
 
 def test_activation_batchler(mocker: MockerFixture):

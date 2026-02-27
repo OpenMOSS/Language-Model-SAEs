@@ -1,107 +1,161 @@
-import { useState } from "react";
-import { Button } from "../ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
-import { Dictionary, DictionarySampleCompact, DictionarySampleCompactSchema } from "@/types/dictionary";
-import Plot from "react-plotly.js";
-import { useAsyncFn } from "react-use";
-import { decode } from "@msgpack/msgpack";
-import camelcaseKeys from "camelcase-keys";
-import { Textarea } from "../ui/textarea";
-import { DictionarySample } from "./sample";
+import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
+import { memo, useState } from 'react'
 
-const DictionaryCustomInputArea = ({ dictionary }: { dictionary: Dictionary }) => {
-  const [customInput, setCustomInput] = useState<string>("");
-  const [samples, setSamples] = useState<DictionarySampleCompact[]>([]);
-  const [state, submit] = useAsyncFn(async () => {
-    if (!customInput) {
-      alert("Please enter your input.");
-      return;
-    }
-    const sample = await fetch(
-      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${
-        dictionary.dictionaryName
-      }/custom?input_text=${encodeURIComponent(customInput)}`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/x-msgpack",
-        },
-      }
-    )
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(await res.text());
-        }
-        return res;
-      })
-      .then(async (res) => await res.arrayBuffer())
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then((res) => decode(new Uint8Array(res)) as any)
-      .then((res) =>
-        camelcaseKeys(res, {
-          deep: true,
-          stopPaths: ["context"],
-        })
-      )
-      .then((res) => DictionarySampleCompactSchema.parse(res));
-    setSamples((prev) => [...prev, sample]);
-  }, [customInput]);
+import { FeatureCard } from '../feature/feature-card'
+import { Spinner } from '../ui/spinner'
+import { FeatureList } from '@/components/feature/feature-list'
 
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="font-bold">Custom Input</p>
-      <Textarea
-        placeholder="Type your custom input here."
-        value={customInput}
-        onChange={(e) => setCustomInput(e.target.value)}
-      />
-      <Button onClick={submit} disabled={state.loading}>
-        Submit
-      </Button>
-      {state.error && <p className="text-red-500">{state.error.message}</p>}
-      {samples.length > 0 && (
-        <DictionarySample samples={samples} dictionaryName={dictionary.dictionaryName} onSamplesChange={setSamples} />
-      )}
-    </div>
-  );
-};
+import { Card } from '@/components/ui/card'
+import { featureQueryOptions, useFeatures } from '@/hooks/useFeatures'
+import { cn } from '@/lib/utils'
 
-export const DictionaryCard = ({ dictionary }: { dictionary: Dictionary }) => {
-  const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
+type DictionaryCardProps = {
+  dictionaryName: string
+}
 
-  return (
-    <Card className="container">
-      <CardHeader>
-        <CardTitle className="flex justify-between items-center text-xl">
-          <span>
-            #{dictionary.dictionaryName}{" "}
-            <span className="font-medium">
-              (Alive Feature Count = <span className="font-bold">{dictionary.aliveFeatureCount}</span>)
-            </span>
-          </span>
-          <Button onClick={() => setShowCustomInput((prev) => !prev)}>
-            {showCustomInput ? "Hide Custom Input" : "Try Custom Input"}
-          </Button>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col gap-4">
-          {showCustomInput && <DictionaryCustomInputArea dictionary={dictionary} />}
+const FeatureCardSelfQueried = memo(
+  ({
+    dictionaryName,
+    featureIndex,
+    className,
+  }: {
+    dictionaryName: string
+    featureIndex: number
+    className?: string
+  }) => {
+    const { data } = useQuery({
+      ...featureQueryOptions({
+        dictionary: dictionaryName,
+        featureIndex: featureIndex,
+      }),
+    })
 
-          <div className="flex flex-col w-full gap-4">
-            <p className="font-bold">Activation Times Histogram</p>
-            <Plot
-              data={dictionary.featureActivationTimesHistogram}
-              layout={{
-                xaxis: { title: "Log Feature Activation Times" },
-                yaxis: { title: "Count" },
-                margin: { t: 0, b: 40 },
-                showlegend: false,
-              }}
-            />
-          </div>
+    if (!data) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full">
+          <Spinner isAnimating={true} />
         </div>
-      </CardContent>
-    </Card>
-  );
-};
+      )
+    }
+
+    return (
+      <FeatureCard
+        feature={data}
+        className={cn('rounded-none border-none', className)}
+      />
+    )
+  },
+)
+
+FeatureCardSelfQueried.displayName = 'FeatureCardSelfQueried'
+
+export const DictionaryCard = memo(
+  ({ dictionaryName }: DictionaryCardProps) => {
+    const { data, isLoading, isError, fetchNextPage, hasNextPage } =
+      useFeatures({
+        dictionary: dictionaryName,
+        concernedFeatureIndex: 0,
+      })
+
+    const [selectedFeatureIndex, setSelectedFeatureIndex] = useState<
+      number | null
+    >(null)
+
+    const features = data?.pages.flatMap((page) => page)
+
+    return (
+      <Card className="flex h-[750px] w-[1400px] overflow-hidden">
+        <div className="min-w-[350px] basis-[350px] shrink-0 flex flex-col border-r border-slate-300 bg-white">
+          <div className="w-full h-[50px] uppercase px-4 flex items-center justify-center gap-1 border-b border-b-slate-300 shrink-0 font-semibold tracking-tight text-sm text-slate-700 cursor-default">
+            Features from
+            <Link
+              to={'/dictionaries/$dictionaryName'}
+              params={{ dictionaryName }}
+              className="text-sky-600 hover:text-sky-700"
+            >
+              {dictionaryName.replace('_', '-')}
+            </Link>
+          </div>
+          {features && (
+            <FeatureList
+              features={features}
+              selectedIndex={selectedFeatureIndex}
+              onSelectFeature={setSelectedFeatureIndex}
+              onLoadMore={() => fetchNextPage()}
+              hasNextPage={hasNextPage}
+              className="overflow-y-auto grow no-scrollbar"
+            />
+          )}
+          {isLoading && (
+            <div className="flex flex-col items-center justify-center h-full">
+              <Spinner isAnimating={true} />
+            </div>
+          )}
+          {isError && (
+            <div className="flex flex-col items-center justify-center h-full">
+              <p className="text-slate-500 text-sm font-medium">
+                Error loading features
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col grow min-w-0 basis-0">
+          {selectedFeatureIndex !== null && (
+            <>
+              <div className="relative w-full h-[50px] uppercase px-4 flex items-center justify-center text-sm gap-1 border-b border-b-slate-300 shrink-0 font-semibold tracking-tight text-slate-700 cursor-default">
+                Feature{' '}
+                <Link
+                  to={'/dictionaries/$dictionaryName/features/$featureIndex'}
+                  params={{
+                    dictionaryName,
+                    featureIndex: selectedFeatureIndex.toString(),
+                  }}
+                  className="text-sky-600 hover:text-sky-700"
+                >
+                  #{selectedFeatureIndex}
+                </Link>{' '}
+                from{' '}
+                <Link
+                  to={'/dictionaries/$dictionaryName'}
+                  params={{ dictionaryName }}
+                  className="text-sky-600 hover:text-sky-700"
+                >
+                  {dictionaryName.replace('_', '-')}
+                </Link>
+                <Link
+                  to={'/dictionaries/$dictionaryName/features/$featureIndex'}
+                  params={{
+                    dictionaryName,
+                    featureIndex: selectedFeatureIndex.toString(),
+                  }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-sky-600 hover:text-sky-700"
+                >
+                  Show Detail
+                </Link>
+              </div>
+              <FeatureCardSelfQueried
+                dictionaryName={dictionaryName}
+                featureIndex={selectedFeatureIndex}
+                className="overflow-y-auto grow [scrollbar-gutter:stable]"
+              />
+            </>
+          )}
+          {selectedFeatureIndex === null && (
+            <div className="flex flex-col items-center justify-center h-full self-center">
+              <p className="text-slate-500 text-sm font-medium">
+                Select a feature to view details
+              </p>
+              <p className="text-slate-400 text-xs mt-1">
+                Click on any feature from the list
+              </p>
+            </div>
+          )}
+        </div>
+      </Card>
+    )
+  },
+)
+
+DictionaryCard.displayName = 'DictionaryCard'

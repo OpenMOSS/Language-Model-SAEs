@@ -8,9 +8,8 @@ ENV UV_COMPILE_BYTECODE=1
 # Copy from the cache instead of linking since it's a mounted volume
 ENV UV_LINK_MODE=copy
 
-# Copy the project's dependency files and local dependencies
+# Copy the project's dependency files
 COPY pyproject.toml uv.lock README.md ./
-COPY TransformerLens ./TransformerLens
 
 # Install the project's dependencies using the lockfile and settings
 RUN --mount=type=cache,target=/root/.cache/uv \

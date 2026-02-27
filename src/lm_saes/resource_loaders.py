@@ -8,8 +8,6 @@ from lm_saes.backend.language_model import (
     HuggingFaceLanguageModel,
     LanguageModel,
     LanguageModelConfig,
-    LLaDAConfig,
-    LLaDALanguageModel,
     QwenVLLanguageModel,
     TransformerLensLanguageModel,
 )
@@ -76,8 +74,6 @@ def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_
         return "huggingface"
     elif model_name.startswith("Qwen/Qwen2.5"):
         return "huggingface"
-    elif model_name.startswith("GSAI-ML/LLaDA"):
-        return "huggingface"
     else:
         return "transformer_lens"
 
@@ -90,10 +86,6 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
         else:
             return HuggingFaceLanguageModel(cfg)
     elif backend == "transformer_lens":
-        if cfg.model_name.startswith("GSAI-ML/LLaDA"):
-            assert isinstance(cfg, LLaDAConfig)
-            return LLaDALanguageModel(cfg)
-        else:
-            return TransformerLensLanguageModel(cfg)
+        return TransformerLensLanguageModel(cfg)
     else:
         raise NotImplementedError(f"Backend {backend} not supported.")

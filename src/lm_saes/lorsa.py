@@ -13,6 +13,7 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 import torch.nn.functional as F
+import transformer_lens
 from jaxtyping import Float, Int
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
@@ -31,6 +32,8 @@ from lm_saes.utils.distributed import DimMap, masked_fill, mesh_dim_size
 from lm_saes.utils.logging import get_distributed_logger
 
 logger = get_distributed_logger("lorsa")
+
+FORKED_TL = "lmsaes" in getattr(transformer_lens, "__version__", "")
 
 
 @register_sae_config("lorsa")
@@ -272,13 +275,16 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.W_Q.copy_(W_Q)
             self.W_K.copy_(W_K)
             if self.cfg.use_post_qk_ln and self.cfg.normalization_type == "RMS":
-                ln_q_w_local = mhsa.ln_q.w[lorsa_qk_indices // qk_exp_factor]
+                assert FORKED_TL, "Post-QK layer normalization requires the forked TransformerLens (lmsaes)."
+                ln_q_w_local = mhsa.ln_q.w[lorsa_qk_indices // qk_exp_factor]  # type: ignore[attr-defined]
                 if mhsa.cfg.n_key_value_heads is not None:
                     ln_k_w_local = torch.repeat_interleave(
-                        mhsa.ln_k.w, mhsa.cfg.n_heads // mhsa.cfg.n_key_value_heads, dim=0
+                        mhsa.ln_k.w,  # type: ignore[attr-defined]
+                        mhsa.cfg.n_heads // mhsa.cfg.n_key_value_heads,
+                        dim=0,
                     )[lorsa_qk_indices // qk_exp_factor]
                 else:
-                    ln_k_w_local = mhsa.ln_k.w[lorsa_qk_indices // qk_exp_factor]
+                    ln_k_w_local = mhsa.ln_k.w[lorsa_qk_indices // qk_exp_factor]  # type: ignore[attr-defined]
                 ln_q_w = DTensor.from_local(
                     ln_q_w_local,
                     device_mesh=self.device_mesh,
@@ -299,11 +305,12 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 torch.repeat_interleave(mhsa.W_K, qk_exp_factor, dim=0).to(self.cfg.dtype) / input_norm_factor
             )
             if self.cfg.use_post_qk_ln and self.cfg.normalization_type == "RMS":
+                assert FORKED_TL, "Post-QK layer normalization requires the forked TransformerLens (lmsaes)."
                 self.ln_q.w = nn.Parameter(
-                    torch.repeat_interleave(mhsa.ln_q.w, qk_exp_factor, dim=0).to(self.cfg.dtype)
+                    torch.repeat_interleave(mhsa.ln_q.w, qk_exp_factor, dim=0).to(self.cfg.dtype)  # type: ignore[attr-defined]
                 )
                 self.ln_k.w = nn.Parameter(
-                    torch.repeat_interleave(mhsa.ln_k.w, self.ln_k.w.size(0) // mhsa.ln_k.w.size(0), dim=0).to(
+                    torch.repeat_interleave(mhsa.ln_k.w, self.ln_k.w.size(0) // mhsa.ln_k.w.size(0), dim=0).to(  # type: ignore[attr-defined]
                         self.cfg.dtype
                     )
                 )
