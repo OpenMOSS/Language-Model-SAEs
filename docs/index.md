@@ -24,13 +24,13 @@ This library provides:
     To add our library as a project dependency, run:
 
     ```bash
-    uv add lm-saes
+    uv add lm-saes==2.0.0b16
     ```
 
     We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To add our library as a project dependency with NPU dependency constraints, run:
 
     ```bash
-    uv add lm-saes[npu]
+    uv add lm-saes[npu]==2.0.0b16
     ```
 
 === "Pip"
@@ -38,13 +38,13 @@ This library provides:
     Of course, you can also directly use [pip](https://pypi.org/project/pip/) to install our library. To install our library with pip, run:
 
     ```bash
-    pip install lm-saes
+    pip install lm-saes==2.0.0b16
     ```
 
     We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To install our library with NPU dependency constraints, run:
 
     ```bash
-    pip install lm-saes[npu]
+    pip install lm-saes[npu]==2.0.0b16
     ```
 
 ### Load a trained Sparse Autoencoder from HuggingFace
