@@ -30,7 +30,7 @@ This library provides:
     We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To add our library as a project dependency with NPU dependency constraints, run:
 
     ```bash
-    uv add lm-saes[npu]==2.0.0b16
+    uv add lm-saes[npu]
     ```
 
 === "Pip"
@@ -44,7 +44,7 @@ This library provides:
     We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To install our library with NPU dependency constraints, run:
 
     ```bash
-    pip install lm-saes[npu]==2.0.0b16
+    pip install lm-saes[npu]
     ```
 
 ### Load a trained Sparse Autoencoder from HuggingFace

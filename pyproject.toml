@@ -207,7 +207,5 @@ version_files = [
     "README.md:pip install lm-saes==",
     "README.md:uv add lm-saes==",
     "docs/index.md:uv add lm-saes==",
-    "docs/index.md:uv add lm-saes[npu]==",
     "docs/index.md:pip install lm-saes==",
-    "docs/index.md:pip install lm-saes[npu]==",
 ]
