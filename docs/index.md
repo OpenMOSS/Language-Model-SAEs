@@ -49,7 +49,12 @@ This library provides:
 
 ### Load a trained Sparse Autoencoder from HuggingFace
 
-WIP
+Load any Sparse Autoencoder or other sparse dictionaries in `Language-Model-SAEs` or SAELens format.
+
+```python
+# Load Gemma Scope 2 SAE
+sae = AbstractSparseAutoEncoder.from_pretrained("gemma-scope-2-1b-pt-res-all:layer_12_width_16k_l0_small")
+```
 
 ### Training a Sparse Autoencoder
 
@@ -121,11 +126,42 @@ train_sae(settings)
 
 ### Analyze a trained Sparse Autoencoder
 
-WIP
+Requires setting up [MongoDB](https://www.mongodb.com/). See [analyze-saes](analyze-saes.md) for details.
+
+```python
+settings = AnalyzeSAESettings(
+    sae=PretrainedSAE(pretrained_name_or_path="path/to/sae", device="cuda"),
+    sae_name="pythia-160m-sae",
+    activation_factory=ActivationFactoryConfig(
+        sources=[ActivationFactoryDatasetSource(name="SlimPajama-3B")],
+        target=ActivationFactoryTarget.ACTIVATIONS_2D,
+        hook_points=["blocks.6.hook_resid_post"],
+        batch_size=16,
+        context_size=2048,
+    ),
+    model=LanguageModelConfig(model_name="EleutherAI/pythia-160m", device="cuda"),
+    model_name="pythia-160m",
+    datasets={"SlimPajama-3B": DatasetConfig(dataset_name_or_path="Hzfinfdu/SlimPajama-3B")},
+    analyzer=FeatureAnalyzerConfig(total_analyzing_tokens=100_000_000),
+    mongo=MongoDBConfig(),
+    device_type="cuda",
+)
+
+analyze_sae(settings)
+```
 
 ### Convert trained Sparse Autoencoder to SAELens format
 
-WIP
+Requires `sae_lens` package available. Supports ReLU, JumpReLU, and TopK SAEs.
+
+```python
+from lm_saes import SparseAutoEncoder
+
+sae = SparseAutoEncoder.from_pretrained("path/to/sae")
+sae_saelens = sae.to_saelens(model_name="pythia-160m")
+```
+
+You can use the `sae_saelens` with any tools compatible to SAELens.
 
 ## Citation
 
