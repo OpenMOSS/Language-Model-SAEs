@@ -63,7 +63,7 @@ The term "dimension" is indeed overloaded. It can refer to a column or a row in 
 
 However, we cannot randomly pick tensor dimensions to shard the tensors on. Suppose we are to perform distributed matrix multiplication with tensors $a \in M \times K$ and $b \in K \times N$. It's only possible to efficiently accelerate the computation when both the tensors are sharded on the middle dimension $K$ or both are sharded in the outer dimension $M$ and $N$, in which case every local device has the required data to perform its block matrix multiplication.
 
-Thus, we need to carefully determine _for each mesh dimension, which tensor dimension, if any, should be sharded on?_. DTensor uses its `placements` to specify how shardings correspond to each mesh dimension:
+Thus, we need to carefully determine: _for each mesh dimension, which tensor dimension, if any, should be sharded on?_ DTensor uses its `placements` to specify how shardings correspond to each mesh dimension:
 
 ```python
 # Shard tensor dim 0 along the first mesh dimension, and replicate along the second mesh dimension.
@@ -85,7 +85,9 @@ Given a concrete `DeviceMesh`, `DimMap.placements(device_mesh)` generates the co
 
 ### Application in Language-Model-SAEs
 
-Ideally the above system can inherently solve multi-dimensional parallelism, including DP and TP -- we just need to provide a DeviceMesh, and specify the DimMap of each leaf node (input and weight), and the tensor operations (matrix multiplications and other operations) will be automatically accelerated. But in practice, this cannot be the full story. Often a primitive of PyTorch does not know how it should deal with DTensor properly, or the implementation is not performant in distributed cases (run slowly or costs unnecessary extra GPU memory). So there're still a number of corner cases in which we need to convert the DTensors back to local tensor and operate on them manually.
+Ideally the above system can inherently solve multi-dimensional parallelism, including DP and TP -- we just need to provide a DeviceMesh, and specify the DimMap of each leaf node tensor (input and weight), and the tensor operations (matrix multiplications and others) will be automatically accelerated. 
+
+But in practice, this cannot be the full story. Often a [primitive](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/native_functions.yaml) of PyTorch [does not know how it should deal with DTensor properly](https://github.com/pytorch/pytorch/issues?q=is%3Aissue%20state%3Aopen%20does%20not%20have%20a%20sharding%20strategy%20registered), or the implementation is not performant in distributed cases (run slowly or costs unnecessary extra GPU memory). So there're still a number of corner cases in which we need to convert the DTensors back to local tensor and operate on them manually.
 
 ## Accelerate Your Training/Analyzing
 
