@@ -180,20 +180,17 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 
+# MacOS
+.DS_Store
+
 # UI
 !ui/**/*
 
 # Custom
-/sync.sh
-/connect.sh
 /activations
 /data
-/legacy
-/run.py
 /checkpoints
 /wandb
 /exp
-/analysis-results
-/analysis
 /results
 /graphs
