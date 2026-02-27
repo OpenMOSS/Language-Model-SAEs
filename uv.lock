@@ -1658,7 +1658,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich", specifier = ">=13.0.0" },
-    { name = "sae-lens", marker = "extra == 'sae-lens'", specifier = ">=6.22.3" },
+    { name = "sae-lens", marker = "extra == 'sae-lens'", specifier = ">=6.37.5" },
     { name = "safetensors", specifier = ">=0.4.5" },
     { name = "tiktoken", specifier = ">=0.8.0" },
     { name = "tomlkit", specifier = ">=0.13.2" },
@@ -3217,7 +3217,7 @@ wheels = [
 
 [[package]]
 name = "sae-lens"
-version = "6.22.3"
+version = "6.37.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "babe" },
@@ -3234,9 +3234,9 @@ dependencies = [
     { name = "transformers" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/81/57/8e3d727e7b3e8ac3bfc1744593ed68251caf679ef1c7b71db09c2d419db8/sae_lens-6.22.3.tar.gz", hash = "sha256:54b276ccea9785aa8546038b6bcf0f4d315c006d996bba7886f99e694611b697", size = 145057, upload-time = "2025-11-24T15:11:41.356Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2e/df/8f7f21f8806e10decd831839f5ae1e9fba2eb0cbd390ef9087d59911189e/sae_lens-6.37.5.tar.gz", hash = "sha256:c6b931a5da58ead878bf8423a5e933b72c02a34abdc462dcc0d3c6bc3cdabffb", size = 254764, upload-time = "2026-02-27T00:54:36.728Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/14/6f6677c841de147b2595fa59bd7bba2b5d84c68442a46d644243b828d86e/sae_lens-6.22.3-py3-none-any.whl", hash = "sha256:07d0158cd586f54d599ddb91e08db335a5404ba1c4d2c6ad04fbe90163b28a13", size = 160672, upload-time = "2025-11-24T15:11:39.951Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/66/8ec5f440c7300f264a45f4d7896a056e7276398baa207970138b38401c49/sae_lens-6.37.5-py3-none-any.whl", hash = "sha256:a96b35e52eaa043effac154cc728c40e5f5d9257da5a8e772512127bd60cdf34", size = 288837, upload-time = "2026-02-27T00:54:35.31Z" },
 ]
 
 [[package]]
