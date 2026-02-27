@@ -1,3 +1,9 @@
+## v2.0.0b17 (2026-02-27)
+
+### Fix
+
+- enhance error handling for SAELens format in from_pretrained
+
 ## v2.0.0b16 (2026-02-27)
 
 ### Fix
