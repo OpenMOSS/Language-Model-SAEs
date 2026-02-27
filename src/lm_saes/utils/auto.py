@@ -49,6 +49,26 @@ def auto_infer_pretrained_sae_type(pretrained_name_or_path: str) -> PretrainedSA
     elif repo_exists(repo_id=repo_id):
         return PretrainedSAEType.HUGGINGFACE
 
+    likely_saelens = "/" not in repo_id
+    if likely_saelens:
+        if importlib.util.find_spec("sae_lens") is None:
+            raise ValueError(
+                f"Pretrained name or path {pretrained_name_or_path} is likely in SAELens format, but SAELens is not installed."
+            )
+        else:
+            from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
+
+            lookups = get_pretrained_saes_directory()
+            if lookups.get(repo_id) is None:
+                raise ValueError(
+                    f"Pretrained name or path {pretrained_name_or_path} is likely in SAELens format, but {repo_id} is not a valid SAELens release. If you are sure this is a valid SAELens release, try upgrading SAELens to the latest version."
+                )
+            if lookups[repo_id].saes_map.get(name) is None:
+                raise ValueError(
+                    f"Pretrained name or path {pretrained_name_or_path} is likely in SAELens format, but {name} is not a valid ID in release {repo_id}. If you are sure this is a valid ID, try upgrading SAELens to the latest version."
+                )
+            return PretrainedSAEType.SAELENS
+
     raise ValueError(
         f"Pretrained name or path {pretrained_name_or_path} is not found on disk, nor on HuggingFace, nor in SAELens."
     )

@@ -114,7 +114,7 @@ npu = ["torch-npu==2.9.0rc1"]
 
 triton = ["triton"]
 
-sae_lens = ["sae-lens>=6.22.3"]
+sae_lens = ["sae-lens>=6.37.5"]
 
 [[tool.uv.index]]
 name = "torch-cpu"
