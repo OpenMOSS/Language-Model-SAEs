@@ -1,3 +1,15 @@
+## v2.0.0b16 (2026-02-27)
+
+### Fix
+
+- wrongly placed type ignore
+
+### Refactor
+
+- remove TransformerLens submodule and fix lorsa type errors
+- drop forked TransformerLens; reimplement run_with_cache_until in lm-saes
+- **ui**: remove legacy ui codebase
+
 ## v2.0.0b15 (2026-02-14)
 
 ## v2.0.0b14 (2026-02-12)
