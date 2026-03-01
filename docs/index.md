@@ -51,10 +51,24 @@ This library provides:
 
 Load any Sparse Autoencoder or other sparse dictionaries in `Language-Model-SAEs` or SAELens format.
 
-```python
-# Load Gemma Scope 2 SAE
-sae = AbstractSparseAutoEncoder.from_pretrained("gemma-scope-2-1b-pt-res-all:layer_12_width_16k_l0_small")
-```
+=== "Language-Model-SAEs"
+
+    ```python
+    # Load Llama Scope 2 Transcoder
+    sae = AbstractSparseAutoEncoder.from_pretrained(
+        "OpenMOSS-Team/Llama-Scope-2-Qwen3-1.7B:transcoder/8x/k128/layer12_transcoder_8x_k128",
+        fold_activation_scale=False
+    )
+    ```
+
+=== "SAELens"
+
+    ```python
+    # Load Gemma Scope 2 SAE
+    sae = AbstractSparseAutoEncoder.from_pretrained(
+        "gemma-scope-2-1b-pt-res-all:layer_12_width_16k_l0_small",
+    )
+    ```    
 
 ### Training a Sparse Autoencoder
 

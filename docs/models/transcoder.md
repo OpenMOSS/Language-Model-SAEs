@@ -6,38 +6,17 @@ Transcoders were introduced in the following papers: [*Automatically Identifying
 
 ## Configuration
 
-Transcoders use the same `SAEConfig` class as standard SAEs. All sparse dictionary models inherit common parameters from `BaseSAEConfig`. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
+Transcoders use the same `SAEConfig` and `InitializerConfig` as standard SAEs. See the [SAE configuration guide](sae.md#configuration) for the full parameter reference.
 
-### Transcoder-Specific Parameters
+The only essential difference is that `hook_point_in` and `hook_point_out` must point to **different** locations—typically the input and output of the MLP sublayer you want to decompose:
 
 ```python
-from lm_saes import SAEConfig
-import torch
-
 transcoder_config = SAEConfig(
-    # Transcoder-specific: different hook points
-    hook_point_in="blocks.6.ln2.hook_normalized",  # Input to MLP
-    hook_point_out="blocks.6.hook_mlp_out",        # Output from MLP
-    use_glu_encoder=False,
-    
-    # Common parameters (documented in Sparse Dictionaries overview)
-    d_model=768,
-    expansion_factor=32,
-    act_fn="topk",
-    top_k=64,
-    dtype=torch.float32,
-    device="cuda",
+    hook_point_in="blocks.6.ln2.hook_normalized",  # before MLP
+    hook_point_out="blocks.6.hook_mlp_out",        # after MLP
+    ...
 )
 ```
-
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `hook_point_in` | `str` | Hook point before the computational unit (e.g., `blocks.L.ln2.hook_normalized` for MLP input). Must differ from `hook_point_out` for transcoders | Required |
-| `hook_point_out` | `str` | Hook point after the computational unit (e.g., `blocks.L.hook_mlp_out` for MLP output). Must differ from `hook_point_in` for transcoders | Required |
-| `use_glu_encoder` | `bool` | Whether to use a Gated Linear Unit (GLU) in the encoder. GLU can improve expressiveness but increases parameter count | `False` |
-
-!!! important "Transcoder vs SAE"
-    When `hook_point_in != hook_point_out`, the configuration defines a transcoder rather than a standard SAE. This allows the model to learn the transformation between two different points in the network.
 
 ### Initialization Strategy
 

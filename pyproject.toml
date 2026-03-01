@@ -3,22 +3,15 @@ name = "lm-saes"
 version = "2.0.0b18"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
-    "transformer-lens>=2.17.0",
+    "transformer-lens>=2.16.2",
     "datasets>=3.0.2",
     "transformers>=4.57.1",
     "einops>=0.8.0",
-    "fastapi>=0.115.4",
-    "matplotlib>=3.9.2",
-    "numpy<2.0.0",
+    "numpy",
     "pandas>=2.2.3",
     "pymongo>=4.10.1",
-    "uvicorn>=0.32.0",
     "wandb>=0.18.5",
-    "msgpack>=1.1.0",
-    "plotly>=5.24.1",
     "openai>=1.52.2",
-    "tiktoken>=0.8.0",
-    "python-dotenv>=1.0.1",
     "jaxtyping>=0.2.34",
     "safetensors>=0.4.5",
     "pydantic>=2.10.6",
@@ -26,15 +19,13 @@ dependencies = [
     "rich>=13.0.0",
     "pyyaml>=6.0.2",
     "tomlkit>=0.13.2",
-    "torch==2.9.0",
-    "torchvision>=0.22.1",
+    "torch>=2.9.0",
     "pydantic-settings>=2.7.1",
     "typing-extensions>=4.13.2",
     "more-itertools>=10.7.0",
     "json-repair>=0.44.1",
-    "typeguard>=4.4.1",
 ]
-requires-python = "==3.11.*"
+requires-python = ">=3.11,<=3.12"
 readme = "README.md"
 
 [[project.authors]]
@@ -79,17 +70,14 @@ dev = [
     "pytest>=8.3.3",
     "ipykernel>=6.29.5",
     "nbformat>=5.10.4",
-    "kaleido==0.2.1",
     "pre-commit>=4.0.1",
     "ruff>=0.7.1",
     "basedpyright>=1.21.0",
     "scikit-learn>=1.6.0",
-    "plotly>=5.24.1",
     "pandas>=2.2.3",
     "pytest-mock>=3.14.0",
     "pyfakefs>=5.7.3",
     "mongomock>=4.3.0",
-    "qwen-vl-utils>=0.0.10",
     "tabulate>=0.9.0",
     "gradio>=5.34.0",
     "sqlalchemy>=2.0.44",
@@ -105,16 +93,23 @@ docs = [
     "mkdocs-section-index>=0.3.10",
     "mkdocstrings[python]>=0.30.1",
 ]
+server = [
+    "plotly>=5.24.1",
+    "kaleido==0.2.1",
+    "uvicorn>=0.32.0",
+    "fastapi>=0.115.4",
+    "msgpack>=1.1.0",
+]
 flash-attn = [
     "flash-attn>=2.7.4.post1; (sys_platform == 'win32' or sys_platform == 'linux')",
 ]
 
 [project.optional-dependencies]
-npu = ["torch-npu==2.9.0rc1"]
+npu = ["torch-npu>=2.9.0rc1"]
 
 triton = ["triton"]
 
-sae_lens = ["sae-lens>=6.37.5"]
+sae-lens = ["sae-lens>=6.37.5"]
 
 [[tool.uv.index]]
 name = "torch-cpu"
@@ -191,6 +186,8 @@ reportPrivateImportUsage = false
 [tool.uv]
 package = true
 no-build-isolation-package = ["flash-attn"]
+default-groups = ["dev", "server", "docs"]
+
 
 [[tool.uv.dependency-metadata]]
 name = "flash-attn"

@@ -107,6 +107,8 @@ class GenerateCircuitRequest(BaseModel):
 
     Note: node_threshold and edge_threshold are no longer part of generation.
     They are now query-time parameters for dynamic pruning.
+
+    list_of_features: list of (layer, feature_idx, pos, is_lorsa) tuples
     """
 
     input: CircuitInput

@@ -560,6 +560,7 @@ def attribute(
                  or None (no offloading).
         verbose: Whether to show progress information.
         update_interval: Number of batches to process before updating the feature ranking.
+        list_of_features: list of (layer, feature_idx, pos, is_lorsa) tuples
         progress_callback: Optional callback for tracking progress (current, total, phase).
 
     Returns:
@@ -796,8 +797,8 @@ def _run_attribution(
             # print("--------------------------------")
 
             # # Assert that the edge matrix value was set correctly
-            assert torch.allclose(edge_matrix[i, feature_row_idx], feature_activations[i].cpu(), rtol=1e-6), (
-                f"Edge matrix value {edge_matrix[i, feature_row_idx]} != feature activation {feature_activations[i].cpu()}"
+            assert torch.allclose(edge_matrix[i, feature_row_idx], feature_activations[i].float().cpu(), rtol=1e-6), (
+                f"Edge matrix value {edge_matrix[i, feature_row_idx]} != feature activation {feature_activations[i].float().cpu()}"
             )
 
             # Assert that feature_row_idx is within valid range

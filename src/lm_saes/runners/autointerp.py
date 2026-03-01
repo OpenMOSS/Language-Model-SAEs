@@ -48,12 +48,11 @@ class AutoInterpSettings(BaseSettings):
     """Maximum number of workers to use for interpretation."""
 
 
-async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = True):
+async def async_auto_interp(settings: AutoInterpSettings):
     """Interpret features using async API calls for maximum concurrency.
 
     Args:
         settings: Configuration for feature interpretation
-        show_progress: Whether to show progress bar (requires tqdm)
     """
 
     @lru_cache(maxsize=None)
@@ -84,14 +83,13 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
         processed_count = processed
         if total_count is None:
             total_count = total
-            if show_progress:
-                progress_bar = tqdm(
-                    total=total,
-                    desc="Interpreting features",
-                    unit="feature",
-                    dynamic_ncols=True,
-                    initial=0,
-                )
+            progress_bar = tqdm(
+                total=total,
+                desc="Interpreting features",
+                unit="feature",
+                dynamic_ncols=True,
+                initial=0,
+            )
 
         if progress_bar is not None:
             progress_bar.n = processed
@@ -123,9 +121,9 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
 
 
 def auto_interp(settings: AutoInterpSettings):
-    """Synchronous wrapper for interpret_feature.
+    """Synchronous wrapper for async_auto_interp.
 
     Args:
         settings: Configuration for feature interpretation
     """
-    asyncio.run(interpret_feature(settings))
+    asyncio.run(async_auto_interp(settings))
