@@ -79,6 +79,14 @@ class LorsaConfig(BaseSAEConfig):
         """All hook points used by Lorsa."""
         return [self.hook_point_in, self.hook_point_out]
 
+    @property
+    def hooks_in(self) -> list[str]:
+        return [self.hook_point_in]
+
+    @property
+    def hooks_out(self) -> list[str]:
+        return [self.hook_point_out]
+
     def model_post_init(self, __context):
         super().model_post_init(__context)
         assert self.hook_point_in is not None and self.hook_point_out is not None, (

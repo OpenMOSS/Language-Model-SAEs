@@ -188,3 +188,17 @@ def get_slice_length(s: slice, length: int):
     start, stop, step = s.indices(length)
     length = (stop - start + step - 1) // step
     return length
+
+
+def ensure_tokenized(
+    prompt: str | torch.Tensor | list[int], tokenizer, device: torch.device | str = "cpu"
+) -> torch.Tensor:
+    """Convert *prompt* → 1-D tensor of token ids (no batch dim)."""
+
+    if isinstance(prompt, str):
+        return tokenizer(prompt, return_tensors="pt").input_ids[0].to(device)
+    if isinstance(prompt, torch.Tensor):
+        return prompt.squeeze(0).to(device) if prompt.ndim == 2 else prompt.to(device)
+    if isinstance(prompt, list):
+        return torch.tensor(prompt, dtype=torch.long, device=device)
+    raise TypeError(f"Unsupported prompt type: {type(prompt)}")

@@ -62,6 +62,14 @@ class CrossCoderConfig(BaseSAEConfig):
         return self.hook_points
 
     @property
+    def hooks_in(self) -> list[str]:
+        return self.hook_points
+
+    @property
+    def hooks_out(self) -> list[str]:
+        return self.hook_points
+
+    @property
     def n_heads(self) -> int:
         return len(self.hook_points)
 

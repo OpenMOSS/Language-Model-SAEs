@@ -104,6 +104,14 @@ class CLTConfig(BaseSAEConfig):
         """All hook points used by the CLT."""
         return self.hook_points_in + self.hook_points_out
 
+    @property
+    def hooks_in(self) -> list[str]:
+        return self.hook_points_in
+
+    @property
+    def hooks_out(self) -> list[str]:
+        return self.hook_points_out
+
     def model_post_init(self, __context):
         super().model_post_init(__context)
         assert len(self.hook_points_in) == len(self.hook_points_out), (
