@@ -55,6 +55,7 @@ class CrossCoderSpecs(TensorSpecs):
 class CrossCoderConfig(BaseSAEConfig):
     sae_type: str = "crosscoder"
     hook_points: list[str]
+    """Hook points for each head. Crosscoder reads from these hook points (simultaneously) and writes to the same hook points."""
 
     @property
     def associated_hook_points(self) -> list[str]:
