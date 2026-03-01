@@ -3,7 +3,7 @@ name = "lm-saes"
 version = "2.0.0b18"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
-    "transformer-lens>=2.17.0",
+    "transformer-lens>=2.16.2",
     "datasets>=3.0.2",
     "transformers>=4.57.1",
     "einops>=0.8.0",
@@ -114,7 +114,7 @@ npu = ["torch-npu==2.9.0rc1"]
 
 triton = ["triton"]
 
-sae_lens = ["sae-lens>=6.37.5"]
+sae-lens = ["sae-lens>=6.37.5"]
 
 [[tool.uv.index]]
 name = "torch-cpu"
