@@ -183,6 +183,7 @@ def select_feature_activations(
     return torch.stack(activations)
 
 
+# TODO: remove this function
 def ensure_tokenized(prompt: Union[str, torch.Tensor, List[int]], tokenizer) -> torch.Tensor:
     """Convert *prompt* → 1-D tensor of token ids (no batch dim)."""
 
