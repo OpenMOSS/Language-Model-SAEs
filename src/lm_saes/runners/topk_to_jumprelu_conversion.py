@@ -7,6 +7,7 @@ import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
+from lm_saes.abstract_sae import AbstractSparseAutoEncoder
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.clt import CrossLayerTranscoder
@@ -22,11 +23,11 @@ from .utils import PretrainedSAE, load_config
 logger = get_distributed_logger("runners.topk_to_jumprelu_conversion")
 
 
-class ConvertCLTSettings(BaseSettings):
-    """Settings for converting a CLT model from topk to jumprelu."""
+class ConvertTopKToJumpReLUSettings(BaseSettings):
+    """Settings for converting a TopK SAE model to JumpReLU. Currently only supports CrossLayerTranscoder models."""
 
     sae: PretrainedSAE
-    """Path to a pretrained CLT model"""
+    """Path to a pretrained TopK SAE model"""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -47,7 +48,7 @@ class ConvertCLTSettings(BaseSettings):
     """Configuration for the language model. Required if using dataset sources."""
 
     model_name: Optional[str] = None
-    """Name of the tokenizer to load. CLT requires a tokenizer to get the modality indices."""
+    """Name of the model/tokenizer to load."""
 
     datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
     """Name to dataset config mapping. Required if using dataset sources."""
@@ -56,15 +57,15 @@ class ConvertCLTSettings(BaseSettings):
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
     exp_result_path: str
-    """Path to save the converted CLT model"""
+    """Path to save the converted JumpReLU SAE model"""
 
 
 @torch.no_grad()
-def convert_clt(settings: ConvertCLTSettings) -> None:
-    """Train a Cross Layer Transcoder (CLT) model.
+def convert_topk_to_jumprelu(settings: ConvertTopKToJumpReLUSettings) -> None:
+    """Convert a TopK SAE model to JumpReLU.
 
     Args:
-        settings: Configuration settings for CLT conversion
+        settings: Configuration settings for TopK to JumpReLU conversion
     """
     # Set up logging
     setup_logging(level="INFO")
@@ -132,8 +133,8 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
         datasets=datasets,
     )
 
-    logger.info("Loading CLT")
-    sae = CrossLayerTranscoder.from_pretrained(
+    logger.info("Loading TopK SAE")
+    sae = AbstractSparseAutoEncoder.from_pretrained(
         settings.sae.pretrained_name_or_path,
         device_mesh=device_mesh,
         fold_activation_scale=False,
@@ -141,6 +142,8 @@ def convert_clt(settings: ConvertCLTSettings) -> None:
         dtype=settings.sae.dtype,
         strict_loading=settings.sae.strict_loading,
     )
+
+    assert isinstance(sae, CrossLayerTranscoder), "Current implementation only supports CLTs"
 
     logger.info(f"CLT loaded from {settings.sae}")
     logger.info("Starting CLT conversion")

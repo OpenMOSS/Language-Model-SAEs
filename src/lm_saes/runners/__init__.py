@@ -21,6 +21,7 @@ from .generate import (
     check_activation_consistency,
     generate_activations,
 )
+from .topk_to_jumprelu_conversion import ConvertTopKToJumpReLUSettings, convert_topk_to_jumprelu
 from .train import (
     SweepingItem,
     SweepSAESettings,
@@ -72,4 +73,6 @@ __all__ = [
     "TrainMOLTSettings",
     "train_molt",
     "PretrainedSAE",
+    "ConvertTopKToJumpReLUSettings",
+    "convert_topk_to_jumprelu",
 ]

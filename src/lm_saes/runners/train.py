@@ -74,7 +74,7 @@ class TrainSAESettings(BaseSettings):
     """Configuration for the language model. Required if using dataset sources."""
 
     model_name: Optional[str] = None
-    """Name of the tokenizer to load. Mixcoder requires a tokenizer to get the modality indices."""
+    """Name of the model/tokenizer to load."""
 
     datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
     """Name to dataset config mapping. Required if using dataset sources."""
@@ -284,7 +284,7 @@ class TrainCrossCoderSettings(BaseSettings):
     """Configuration for the language model. Required if using dataset sources."""
 
     model_name: Optional[str] = None
-    """Name of the tokenizer to load. Mixcoder requires a tokenizer to get the modality indices."""
+    """Name of the model/tokenizer to load."""
 
     datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
     """Name to dataset config mapping. Required if using dataset sources."""
@@ -717,7 +717,7 @@ class TrainLorsaSettings(BaseSettings):
     """Configuration for the language model. Required if using dataset sources."""
 
     model_name: Optional[str] = None
-    """Name of the tokenizer to load. LORSA may require a tokenizer to get the modality indices."""
+    """Name of the model/tokenizer to load."""
 
     datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
     """Name to dataset config mapping. Required if using dataset sources."""
@@ -1145,7 +1145,7 @@ class SweepSAESettings(BaseSettings):
     """Configuration for the language model. Required if using dataset sources."""
 
     model_name: Optional[str] = None
-    """Name of the tokenizer to load. Mixcoder requires a tokenizer to get the modality indices."""
+    """Name of the tokenizer to load."""
 
     datasets: Optional[dict[str, Optional[DatasetConfig]]] = None
     """Name to dataset config mapping. Required if using dataset sources."""

@@ -35,6 +35,7 @@ logger = get_distributed_logger("evaluator")
 
 class EvalConfig(BaseConfig):
     total_eval_tokens: int = 1000000
+    """Total number of tokens to evaluate on"""
 
 
 class GraphEvalConfig(BaseConfig):
