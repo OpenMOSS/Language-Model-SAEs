@@ -1,6 +1,33 @@
 # Low-Rank Sparse Attention (Lorsa)
 
-Low-Rank Sparse Attention (Lorsa) is a specialized sparse dictionary architecture designed to decompose attention layers into interpretable sparse components. Unlike standard SAEs that treat attention as a black box, Lorsa explicitly models the query-key-value structure while maintaining sparsity and interpretability. Lorsa decomposes attention computations into interpretable sparse features that preserve positional information through explicit query-key attention mechanisms. This allows for fine-grained analysis of attention patterns and understanding how models route information based on both content and position.
+Low-Rank Sparse Attention (Lorsa) is a specialized sparse dictionary architecture designed to decompose attention layers into interpretable sparse components. Unlike standard SAEs that treat attention as a black box, Lorsa explicitly models the query-key-value structure while maintaining sparsity and interpretability.
+
+Given an input sequence \(X \in \mathbb{R}^{n \times d}\), Lorsa has:
+
+- \(n_{\text{qk\_heads}}\) QK heads, each with projections \(W_q^h, W_k^h \in \mathbb{R}^{d \times d_{\text{qk\_head}}}\)
+- \(n_{\text{ov\_heads}}\) rank-1 OV heads, each with projections \(\mathbf{w}_v^i \in \mathbb{R}^{d \times 1}\), \(\mathbf{w}_o^i \in \mathbb{R}^{1 \times d}\)
+
+Every group of \(n_{\text{ov\_heads}} / n_{\text{qk\_heads}}\) consecutive OV heads shares the same QK head. Denote the QK head assigned to OV head \(i\) as \(h(i)\). The forward pass for each OV head \(i\) is:
+
+\[
+\begin{aligned}
+Q^{h(i)} &= X W_q^{h(i)}, \quad K^{h(i)} = X W_k^{h(i)} \\
+A^{h(i)} &= \operatorname{softmax}\!\left(\frac{Q^{h(i)} {(K^{h(i)})}^\top}{\sqrt{d_{\text{qk\_head}}}}\right) \in \mathbb{R}^{n \times n} \\
+\tilde{\mathbf{z}}^i &= A^{h(i)}\, (X \mathbf{w}_v^i) \in \mathbb{R}^{n \times 1}
+\end{aligned}
+\]
+
+The pre-activations across all OV heads are then passed through a sparsity-inducing activation function \(\sigma(\cdot)\):
+
+\[
+[\mathbf{z}^0, \ldots, \mathbf{z}^{n_{\text{ov\_heads}}-1}] = \sigma([\tilde{\mathbf{z}}^0, \ldots, \tilde{\mathbf{z}}^{n_{\text{ov\_heads}}-1}])
+\]
+
+The final output sums the contributions of all OV heads weighted by their activations:
+
+\[
+\hat{Y} = \sum_{i=0}^{n_{\text{ov\_heads}}-1} \mathbf{z}^i\, (\mathbf{w}_o^i)^\top \in \mathbb{R}^{n \times d}
+\]
 
 The architecture was introduced in [*Towards Understanding the Nature of Attention with Low-Rank Sparse Decomposition*](https://openreview.net/forum?id=9A2etpDFIB) (ICLR 2026), which proposes using sparse dictionary learning to address *attention superposition*—the challenge of disentangling attention-mediated interactions between features at different token positions. For detailed architectural specifications and mathematical formulations, please refer to this paper.
 
@@ -63,26 +90,30 @@ lorsa_config = LorsaConfig(
 
 #### Attention Dimensions
 
+We recommend setting `d_qk_head` to match the target model's head dimension. `n_qk_heads` can be freely chosen: a natural starting point is `n_qk_heads = n_heads * expansion_factor` (n_heads is the num of attention heads of target attention layer), though a smaller value is also reasonable if you want to reduce Lorsa's parameter count(not less than `n_heads`).
+
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
-| `n_qk_heads` | `int` | Number of query-key attention heads | Required |
-| `d_qk_head` | `int` | Dimension per query-key head | Required |
-| `n_ctx` | `int` | Maximum context length / sequence length | Required |
+| `n_qk_heads` | `int` | Number of QK heads. | Required |
+| `d_qk_head` | `int` | Dimension per QK head. | Required |
+| `n_ctx` | `int` | Maximum context length. | Required |
 
-!!! note "Number of Value Heads"
-    The number of value heads (output features) is automatically computed as: `n_ov_heads = expansion_factor * d_model` (same as `d_sae`). The `ov_group_size` is `n_ov_heads // n_qk_heads`.
+!!! note "Number of OV Heads"
+    The number of OV heads is automatically computed as: `n_ov_heads = expansion_factor * d_model` (same as `d_sae`).
 
 #### Positional Embeddings
+
+It is strongly recommended to copy the positional embedding parameters directly from the target model's implementation. Incorrect settings will make it harder for Lorsa to learn the target attention patterns.
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
 | `positional_embedding_type` | `str` | Type of positional embedding: `"rotary"` or `"none"` | `"rotary"` |
 | `rotary_dim` | `int` | Dimension of rotary embeddings (typically `d_qk_head`) | Required |
 | `rotary_base` | `int` | Base for rotary embeddings frequency | `10000` |
-| `rotary_adjacent_pairs` | `bool` | Whether to apply RoPE on adjacent pairs vs. all dimensions | `True` |
-| `rotary_scale` | `int` | Scaling factor for rotary embeddings | `1` |
+| `rotary_adjacent_pairs` | `bool` | Whether to apply RoPE on adjacent pairs | `True` |
+| `rotary_scale` | `int` | Scaling factor of the head dimension for rotary embeddings | `1` |
 
-#### NTK-Aware RoPE (for Llama 3.1 and 3.2 herd models)
+#### NTK-Aware RoPE (only for Llama 3.1 and 3.2 herd models)
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
@@ -92,14 +123,29 @@ lorsa_config = LorsaConfig(
 | `NTK_by_parts_high_freq_factor` | `float` | High-frequency component scaling factor | `1.0` |
 | `old_context_len` | `int` | Original context length before scaling | `2048` |
 
-#### Attention Settings
+#### Attention Computation Details
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
-| `attn_scale` | `float \| None` | Attention scaling factor. If `None`, uses $\frac{1}{\sqrt{d_{\text{qk\_head}}}}$ | `None` |
+| `attn_scale` | `float | None` | Attention scaling factor. If `None`, uses $\frac{1}{\sqrt{d_{\text{qk\_head}}}}$ | `None` |
 | `use_post_qk_ln` | `bool` | Apply LayerNorm/RMSNorm after computing Q and K projections | `False` |
-| `normalization_type` | `str \| None` | Normalization type: `"LN"` (LayerNorm) or `"RMS"` (RMSNorm). Only used when `use_post_qk_ln=True` | `None` |
+| `normalization_type` | `str | None` | Normalization type: `"LN"` (LayerNorm) or `"RMS"` (RMSNorm). Only used when `use_post_qk_ln=True` | `None` |
 | `eps` | `float` | Epsilon for numerical stability in normalization | `1e-6` |
+
+### Initialization Strategy
+
+For Lorsa, initialization from the original model's attention weights is highly recommended:
+
+```python
+InitializerConfig(
+    grid_search_init_norm=True,
+    initialize_lorsa_with_mhsa=True,  # Initialize Q, K from attention weights
+    initialize_W_D_with_active_subspace=True,  # Initialize V, O from attention weights
+    model_layer=13,  # Specify layer to extract attention weights from
+)
+```
+
+This initialization helps Lorsa start from a good approximation of the attention computation.
 
 ## Training
 
@@ -125,31 +171,7 @@ settings = TrainLorsaSettings(
     sae=LorsaConfig(
         hook_point_in="blocks.13.ln1.hook_normalized",
         hook_point_out="blocks.13.hook_attn_out",
-        d_model=2048,
-        expansion_factor=32,
-        
-        # Attention configuration
-        n_qk_heads=16,
-        d_qk_head=128,
-        n_ctx=2048,
-        
-        # RoPE configuration
-        positional_embedding_type="rotary",
-        rotary_dim=128,
-        rotary_base=1000000,
-        rotary_adjacent_pairs=False,
-        
-        # Sparsity
-        act_fn="topk",
-        top_k=256,
-        
-        # Normalization
-        use_post_qk_ln=True,
-        normalization_type="RMS",
-        eps=1e-6,
-        
-        dtype=torch.float32,
-        device="cuda",
+        # ... other settings ...
     ),
     initializer=InitializerConfig(
         grid_search_init_norm=True,
@@ -195,21 +217,6 @@ settings = TrainLorsaSettings(
 
 train_lorsa(settings)
 ```
-
-### Initialization Strategy
-
-For Lorsa, initialization from the original model's attention weights is highly recommended:
-
-```python
-InitializerConfig(
-    grid_search_init_norm=True,
-    initialize_lorsa_with_mhsa=True,  # Initialize Q, K from attention weights
-    initialize_W_D_with_active_subspace=True,  # Initialize V, O from attention weights
-    model_layer=13,  # Specify layer to extract attention weights from
-)
-```
-
-This initialization helps Lorsa start from a good approximation of the attention computation.
 
 ### Important Training Considerations
 
