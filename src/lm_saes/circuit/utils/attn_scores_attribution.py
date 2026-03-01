@@ -287,23 +287,22 @@ def probe_linear_equivalent_for_ln(
     # this is already done in replacement_model._configure_gradient_flow()
     # we do this so we do not need to care about the actual implementation (i.e. RMS or LN)
     original_input_to_ln = components.sum().detach().clone()
-    original_input_to_ln.requires_grad_()
-    ln_out = ln(original_input_to_ln)
-    if qk_idx is not None:
-        ln_out = ln_out[qk_idx]
-    probe_grads = torch.eye(ln_out.size(-1), device=ln_out.device)
-    W_list = []
-    for k in range(ln_out.size(-1)):
-        b = ln(original_input_to_ln)
+
+    def ln_fn(x: torch.Tensor) -> torch.Tensor:
+        out = ln(x)
         if qk_idx is not None:
-            b = b[qk_idx]
-        b.backward(gradient=probe_grads[k])
-        W_list.append(original_input_to_ln.grad)
-        original_input_to_ln.grad = None
-    W_recovered = torch.stack(W_list)
+            out = out[qk_idx]
+        return out
+
+    ln_out = ln_fn(original_input_to_ln)
+    # vectorize=True uses vmap to compute the full Jacobian in a single batched pass
+    # rather than one backward per output dimension
+    W_recovered = torch.autograd.functional.jacobian(
+        ln_fn, original_input_to_ln, vectorize=True
+    )  # shape: (out_dim, in_dim)
     b_recovered = ln_out - W_recovered @ original_input_to_ln
     post_ln_components = components.components @ W_recovered.T
-    # assert torch.allclose(post_ln_components.sum(0) + b_recovered, ln_out, atol=1e-4)
+    assert torch.allclose(post_ln_components.sum(0) + b_recovered, ln_out, atol=1e-4)
     components.update_components(post_ln_components)
     return components.append(b_recovered, bias_name="b_ln1")
 
