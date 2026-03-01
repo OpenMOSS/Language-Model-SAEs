@@ -24,18 +24,31 @@ logger = get_distributed_logger("initializer")
 
 class InitializerConfig(BaseConfig):
     bias_init_method: Literal["all_zero", "geometric_median"] = "all_zero"
+    """Method for initializing the decoder bias. ``"geometric_median"`` sets the bias to the geometric median of the activation distribution, which is more robust than ``"all_zero"`` for skewed activations."""
     decoder_uniform_bound: float = 1.0
+    """Half-range of the uniform distribution used to initialize decoder weights, weights are sampled from U(-decoder_uniform_bound, decoder_uniform_bound)."""
     encoder_uniform_bound: float = 1.0
+    """Half-range of the uniform distribution used to initialize encoder weights, weights are sampled from U(-encoder_uniform_bound, encoder_uniform_bound)."""
     init_encoder_with_decoder_transpose: bool = True
+    """If ``True``, the encoder weight matrix is initialized as the transpose of the decoder weight matrix (scaled by ``init_encoder_with_decoder_transpose_factor``), providing a better starting point for SAE training."""
     init_encoder_with_decoder_transpose_factor: float = 1.0
+    """Scaling factor applied to the transposed decoder weights when initializing the encoder."""
     init_log_jumprelu_threshold_value: float | None = None
+    """Initial value for the log-threshold parameter of JumpReLU activations. Only used when the SAE uses a JumpReLU activation function."""
     grid_search_init_norm: bool = False
+    """Performs a coarse-then-fine grid search over decoder norms to find the value that minimizes the initial reconstruction loss, then sets the decoder to that norm."""
     initialize_W_D_with_active_subspace: bool = False
+    """Initializes the decoder weight matrix within the active (high-variance) subspace of the input activations via SVD. Recommended for low-rank activations such as attention outputs to reduce dead features."""
     d_active_subspace: int | None = None
+    """Dimension of the active subspace used when ``initialize_W_D_with_active_subspace=True``"""
     initialize_lorsa_with_mhsa: bool | None = None
+    """Initializes the Lorsa QK weights from the target model's attention (MHSA) weights at ``model_layer``."""
     initialize_tc_with_mlp: bool | None = None
+    """Initializes the transcoder decoder weights from the target model's MLP weights at ``model_layer``."""
     model_layer: int | None = None
+    """Layer index of the target model from which to extract weights for ``initialize_lorsa_with_mhsa`` or ``initialize_tc_with_mlp``."""
     init_encoder_bias_with_mean_hidden_pre: bool = False
+    """Initializes the encoder bias to the negative mean of the pre-activation distribution."""
 
 
 class Initializer:
