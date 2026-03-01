@@ -293,13 +293,6 @@ class MongoClient:
         if self.is_gridfs_enabled():
             feature = self._from_gridfs(feature)
 
-        # print(f'{feature.keys()}')
-        # for k in feature:
-        #     print(f'{k} {type(feature[k])}')
-        #     if k == 'analyses':
-        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_indices'])
-        #         print('feature_acts_indices', feature[k][0]['samplings'][0]['feature_acts_values'])
-
         return FeatureRecord.model_validate(feature)
 
     def get_analysis(self, name: str, sae_name: str, sae_series: str) -> Optional[AnalysisRecord]:

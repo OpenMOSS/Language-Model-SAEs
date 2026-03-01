@@ -107,45 +107,53 @@ const getActivationColor = (activation: number): string => {
   return `rgba(239, 68, 68, ${opacity})`; // Red for activation
 };
 
-// Z-pattern target squares - show only strongest connections
+/**
+ * Z-pattern: which squares "contribute" to the hovered square (source).
+ *
+ * Logic in 3 steps:
+ *
+ * 1) Parse input into list of (source, target, strength).
+ *    Supports two shapes (same as feature page):
+ *    - Pair list: indices[i] = [source_i, target_i], values[i] = strength_i
+ *    - Parallel:  indices[0] = [s1,s2,...], indices[1] = [t1,t2,...], values[i] = strength_i
+ *
+ * 2) Keep only entries where source === sourceSquare (hovered square).
+ *    Result: list of (target, strength) for that source.
+ *
+ * 3) Sort by |strength| descending, take at most 8.
+ *    Formula: result = sort(targets, key = |strength|, descending)[0:8]
+ *
+ * Why fewer than 8? The backend (lorsa) stores z_pattern sparsely: only (q,k) with
+ * |z| >= 0.01 * activation(q) are saved. So for a given source we may have < 8
+ * (or < 64) entries in the data; there is no extra filter here.
+ */
 const getZPatternTargets = (sourceSquare: number, zPatternIndices?: number[][], zPatternValues?: number[]) => {
   if (!zPatternIndices || !zPatternValues) return [];
-  
+
   const targets: { square: number; strength: number }[] = [];
-  
-  // Check data format (aligned with feature page)
+
   const looksLikePairList = Array.isArray(zPatternIndices[0]) && (zPatternIndices[0] as number[]).length === 2;
-  
+
   if (looksLikePairList) {
-    // Format: [[source, target], ...] with [value, ...]
     for (let i = 0; i < zPatternIndices.length; i++) {
       const pair = zPatternIndices[i] as number[];
       const value = zPatternValues[i] || 0;
       const [source, target] = pair;
-      
-      if (source === sourceSquare) {
-        targets.push({ square: target, strength: value });
-      }
+      if (source === sourceSquare) targets.push({ square: target, strength: value });
     }
   } else {
-    // Format: zPatternIndices[0]=sources, zPatternIndices[1]=targets
     if (zPatternIndices.length >= 2) {
       const sources = zPatternIndices[0] as number[];
       const targets_array = zPatternIndices[1] as number[];
-      
       for (let i = 0; i < Math.min(sources.length, targets_array.length, zPatternValues.length); i++) {
         const source = sources[i];
         const target = targets_array[i];
         const value = zPatternValues[i] || 0;
-        
-        if (source === sourceSquare) {
-          targets.push({ square: target, strength: value });
-        }
+        if (source === sourceSquare) targets.push({ square: target, strength: value });
       }
     }
   }
-  
-  // Return top 8 by absolute strength (aligned with feature page)
+
   return targets
     .sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))
     .slice(0, 8);

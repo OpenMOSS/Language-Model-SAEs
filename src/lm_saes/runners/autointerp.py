@@ -1,17 +1,18 @@
 """Module for automatic interpretation of SAE features."""
 
-import concurrent.futures
+import asyncio
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Optional
 
 from datasets import Dataset
 from pydantic_settings import BaseSettings
+from tqdm.asyncio import tqdm
 
-from lm_saes.analysis.feature_interpreter import AutoInterpConfig, FeatureInterpreter
-from lm_saes.config import LanguageModelConfig, MongoDBConfig
-from lm_saes.database import MongoClient
+from lm_saes.analysis.autointerp import AutoInterpConfig, FeatureInterpreter
+from lm_saes.backend.language_model import LanguageModelConfig
+from lm_saes.database import MongoClient, MongoDBConfig
 from lm_saes.resource_loaders import load_dataset_shard, load_model
-from lm_saes.utils.logging import get_logger, setup_logging
+from lm_saes.utils.logging import get_logger
 
 logger = get_logger("runners.autointerp")
 
@@ -40,12 +41,6 @@ class AutoInterpSettings(BaseSettings):
     features: Optional[list[int]] = None
     """List of specific feature indices to interpret. If None, will interpret all features."""
 
-    feature_range: Optional[list[int]] = None
-    """Range of feature indices to interpret [start, end]. If None, will interpret all features."""
-
-    top_k_features: Optional[int] = None
-    """Number of top activating features to interpret. If None, will use the features or feature_range."""
-
     analysis_name: str = "default"
     """Name of the analysis to use for interpretation."""
 
@@ -53,9 +48,13 @@ class AutoInterpSettings(BaseSettings):
     """Maximum number of workers to use for interpretation."""
 
 
-def interpret_feature(args: dict[str, Any]):
-    settings: AutoInterpSettings = args["settings"]
-    feature_indices: list[int] = args["feature_indices"]
+async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = True):
+    """Interpret features using async API calls for maximum concurrency.
+
+    Args:
+        settings: Configuration for feature interpretation
+        show_progress: Whether to show progress bar (requires tqdm)
+    """
 
     @lru_cache(maxsize=None)
     def get_dataset(dataset_name: str, shard_idx: int, n_shards: int) -> Dataset:
@@ -67,77 +66,66 @@ def interpret_feature(args: dict[str, Any]):
     mongo_client = MongoClient(settings.mongo)
     language_model = load_model(settings.model)
     interpreter = FeatureInterpreter(settings.auto_interp, mongo_client)
-    for result in interpreter.interpret_features(
+
+    # Set up progress tracking
+    progress_bar = None
+    processed_count = 0
+    total_count = None
+
+    def progress_callback(processed: int, total: int, current_feature: int) -> None:
+        """Update progress bar and log progress.
+
+        Args:
+            processed: Number of features processed (completed + skipped + failed)
+            total: Total number of features to process
+            current_feature: Index of the feature currently being processed
+        """
+        nonlocal processed_count, total_count, progress_bar
+        processed_count = processed
+        if total_count is None:
+            total_count = total
+            if show_progress:
+                progress_bar = tqdm(
+                    total=total,
+                    desc="Interpreting features",
+                    unit="feature",
+                    dynamic_ncols=True,
+                    initial=0,
+                )
+
+        if progress_bar is not None:
+            progress_bar.n = processed
+            progress_bar.refresh()
+            progress_bar.set_postfix({"current": current_feature})
+
+    async for result in interpreter.interpret_features(
         sae_name=settings.sae_name,
         sae_series=settings.sae_series,
-        feature_indices=feature_indices,
         model=language_model,
         datasets=get_dataset,
         analysis_name=settings.analysis_name,
+        feature_indices=settings.features,
+        max_concurrent=settings.max_workers,
+        progress_callback=progress_callback,
     ):
-        interpretation = {
-            "text": result["explanation"],
-            "validation": [
-                {"method": eval_result["method"], "passed": eval_result["passed"], "detail": eval_result}
-                for eval_result in result["evaluations"]
-            ],
-            "complexity": result["complexity"],
-            "consistency": result["consistency"],
-            "detail": result["explanation_details"],
-            "passed": result["passed"],
-            "time": result["time"],
-        }
-        logger.info(
-            f"Updating feature {result['feature_index']}\nTime: {result['time']}\nExplanation: {interpretation['text']}\nComplexity: {interpretation['complexity']}\nConsistency: {interpretation['consistency']}\nPassed: {interpretation['passed']}\n\n"
-        )
+        if result["explanation"] is not None:
+            interpretation = {
+                "text": result["explanation"],
+            }
+        else:
+            interpretation = None
         mongo_client.update_feature(
             settings.sae_name, result["feature_index"], {"interpretation": interpretation}, settings.sae_series
         )
+    if progress_bar is not None:
+        progress_bar.close()
+        logger.info(f"Completed interpretation: {processed_count}/{total_count} features processed")
 
 
-def auto_interp(settings: AutoInterpSettings) -> None:
-    """Automatically interpret SAE features using LLMs.
+def auto_interp(settings: AutoInterpSettings):
+    """Synchronous wrapper for interpret_feature.
 
     Args:
-        settings: Configuration settings for auto-interpretation
+        settings: Configuration for feature interpretation
     """
-    setup_logging(level="INFO")
-
-    # Set up MongoDB client
-    mongo_client = MongoClient(settings.mongo)
-
-    # Determine which features to interpret
-    if settings.top_k_features:
-        # Get top k most frequently activating features
-        act_times = mongo_client.get_feature_act_times(settings.sae_name, settings.sae_series, settings.analysis_name)
-        if not act_times:
-            raise ValueError(f"No feature activation times found for {settings.sae_name}/{settings.sae_series}")
-        sorted_features = sorted(act_times.items(), key=lambda x: x[1], reverse=True)
-        feature_indices = [idx for idx, _ in sorted_features[: settings.top_k_features]]
-    elif settings.feature_range:
-        # Use feature range
-        feature_indices = list(range(settings.feature_range[0], settings.feature_range[1] + 1))
-    elif settings.features:
-        # Use specific features
-        feature_indices = settings.features
-    else:
-        # Use all features (be careful, this could be a lot!)
-        max_feature_acts = mongo_client.get_max_feature_acts(
-            settings.sae_name, settings.sae_series, settings.analysis_name
-        )
-        if not max_feature_acts:
-            raise ValueError(f"No feature activations found for {settings.sae_name}/{settings.sae_series}")
-        feature_indices = list(max_feature_acts.keys())
-
-    # Load resources
-    logger.info(f"Loading SAE model: {settings.sae_name}/{settings.sae_series}")
-    logger.info(f"Loading language model: {settings.model_name}")
-
-    chunk_size = len(feature_indices) // settings.max_workers + 1
-    feature_batches = [feature_indices[i : i + chunk_size] for i in range(0, len(feature_indices), chunk_size)]
-    args_batches = [{"feature_indices": feature_indices, "settings": settings} for feature_indices in feature_batches]
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=settings.max_workers) as executor:
-        list(executor.map(interpret_feature, args_batches))
-
-    logger.info("Done!")
+    asyncio.run(interpret_feature(settings))

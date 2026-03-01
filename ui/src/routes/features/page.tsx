@@ -52,6 +52,7 @@ export const FeaturesPage = () => {
 
   const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
+  const [selectedSubsample, setSelectedSubsample] = useState<string | "all">("all");
 
   // Debounce the input value to avoid excessive updates
   useDebounce(
@@ -173,6 +174,10 @@ export const FeaturesPage = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDictionary]);
+
+  useEffect(() => {
+    setSelectedSubsample("all");
+  }, [currentFeature?.featureIndex, currentFeature?.dictionaryName]);
 
 
   // Memoize dictionary options for Combobox
@@ -329,9 +334,23 @@ export const FeaturesPage = () => {
           
           // If no sample groups are found, try to directly find the samples field
           if (!actualSampleGroups.length && feature.samples) {
-            actualSampleGroups = [{ samples: feature.samples }];
+            actualSampleGroups = [{ samples: feature.samples, analysisName: "default" }];
           }
-          
+
+          const subsampleLabel = (name: string) => {
+            if (name === "top_activations") return "Top Activations";
+            if (/^sampling_[\d.]+$/.test(name)) {
+              const pct = name.replace("sampling_", "");
+              return `Sampling ${(parseFloat(pct) * 100).toFixed(0)}%`;
+            }
+            return name;
+          };
+
+          const groupsToShow =
+            selectedSubsample === "all"
+              ? actualSampleGroups
+              : actualSampleGroups.filter((g) => g.analysisName === selectedSubsample);
+
           // Collect all samples containing FEN and their information
           interface ChessSample {
             fen: string;
@@ -354,8 +373,8 @@ export const FeaturesPage = () => {
           let samplesWithActivations = 0;
           let debugInfo: string[] = [];
           
-          // Iterate through all sample groups, collect samples containing FEN
-          for (const [groupIndex, group] of actualSampleGroups.entries()) {
+          // Iterate through selected sample groups, collect samples containing FEN
+          for (const [groupIndex, group] of groupsToShow.entries()) {
             console.log(`Check sample group ${groupIndex}:`, {
               analysisName: group.analysisName,
               samplesCount: group.samples?.length || 0
@@ -546,49 +565,72 @@ export const FeaturesPage = () => {
           ));
           
           const validFENFound = chessSamples.length;
-          
+          const uniqueSubsampleNames = Array.from(
+            new Set(actualSampleGroups.map((g) => g.analysisName).filter(Boolean))
+          );
+
           if (chessBoards.length > 0) {
             console.log(`Generated ${chessBoards.length} chessboards`);
-            
-            return (
-              <div className="w-full max-w-6xl mx-auto mb-8">
-                <div className="text-center mb-6">
-                  <h3 className="text-xl font-bold mb-2">Feature #{feature.featureIndex} Chessboard Visualization</h3>
-                  <div className="text-sm text-gray-600">
-                    Found {validFENFound} samples containing FEN (sorted by maximum activation value)
-                  </div>
+          }
+
+          return (
+            <div className="w-full max-w-6xl mx-auto mb-8">
+              <div className="text-center mb-6">
+                <h3 className="text-xl font-bold mb-2">Feature #{feature.featureIndex} Chessboard Visualization</h3>
+                <div className="text-sm text-gray-600 mb-4">
+                  {validFENFound > 0
+                    ? `Found ${validFENFound} samples containing FEN (sorted by maximum activation value)`
+                    : selectedSubsample !== "all"
+                      ? `No FEN samples in ${subsampleLabel(selectedSubsample)}. Try another subsample or All.`
+                      : "No samples containing FEN in this feature."}
                 </div>
-                
+                {uniqueSubsampleNames.length > 1 && (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button
+                      variant={selectedSubsample === "all" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setSelectedSubsample("all")}
+                    >
+                      All
+                    </Button>
+                    {uniqueSubsampleNames.map((name) => (
+                      <Button
+                        key={name}
+                        variant={selectedSubsample === name ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setSelectedSubsample(name)}
+                      >
+                        {subsampleLabel(name)}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {chessBoards.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {chessBoards}
                 </div>
-              </div>
-            );
-          } else {
-            // If no chessboard is found, display debug information
-            return (
-              <div className="w-full max-w-6xl mx-auto mb-8">
+              ) : (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
                   <h3 className="text-lg font-bold text-yellow-800 mb-4">⚠️ No chessboard visualization found</h3>
                   <div className="text-sm text-yellow-700 mb-4">
                     <strong>Feature #{feature.featureIndex}</strong> (Activation times: {feature.actTimes})
                   </div>
-                  
                   <div className="text-xs text-yellow-600 mb-4">
                     <strong>Data statistics:</strong><br/>
                     • Total samples: {totalSamples}<br/>
                     • Found FEN: {validFENFound}
                   </div>
-                  
                   <div className="text-xs text-yellow-500 mt-4">
                     💡 Possible reasons:<br/>
                     1. Sample does not contain FEN formatted text<br/>
                     2. Sample data structure does not match expectations
                   </div>
                 </div>
-              </div>
-            );
-          }
+              )}
+            </div>
+          );
         })()}
             
         {!featureLoading && currentFeature && (

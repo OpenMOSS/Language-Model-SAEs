@@ -673,6 +673,7 @@ def get_feature(
 
         # Get origins for the features
         origins = model.trace({k: [v] for k, v in data.items()})[0]
+        print(f'{origins = }')
 
         # Process image data if present
         image_key = next(

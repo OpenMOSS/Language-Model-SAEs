@@ -20,7 +20,7 @@ class Graph:
     cfg: HookedTransformerConfig
     sae_series: Optional[Union[str, List[str]]]
     slug: str
-    activation_info: Optional[dict]  # 新增：激活信息和z_pattern
+    activation_info: Optional[dict]
 
     def __init__(
         self,
@@ -42,9 +42,9 @@ class Graph:
     ):
         """
         A graph object containing the adjacency matrix describing the direct 
-        effect of each node on each other. Nodes are either non-zero transcoder 
-        features (TC), transcoder errors, tokens, or logits. They are stored in 
-        the order [tc_active_features[0], ..., error[layer0][position0], ...,
+        effect of each node on each other. Nodes are either non-zero Lorsa or 
+        Transcoder features (TC), Transcoder errors, tokens, or logits. They are stored in 
+        the order [lorsa_active_features[0], ..., tc_active_features[0], ..., error[layer0][position0], ...,
         tokens[0], ..., logits[top-1 logit], ...].
 
         Args:
@@ -53,6 +53,8 @@ class Graph:
             logit_tokens (torch.Tensor): The logit tokens attributed from.
             logit_probabilities (torch.Tensor): The probabilities of each logit 
                 token, given the input string.
+            lorsa_active_features (torch.Tensor): Indices (layer, pos, feature_idx) 
+                of non-zero Lorsa features.
             tc_active_features (torch.Tensor): Indices (layer, pos, feature_idx) 
                 of non-zero TC features.
             tc_activation_values (torch.Tensor): Activation values for TC 

@@ -1,8 +1,6 @@
 import chess
 import chess.engine
 from typing import Optional, Dict, Any, Tuple
-
-# 与 notebook 保持一致的引擎路径与时间
 ENGINE_PATH = "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/Stockfish/src/stockfish"
 ENGINE_TIME_LIMIT = 0.2
 
