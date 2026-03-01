@@ -17,6 +17,7 @@ class ExplainerType(str, Enum):
 
     OPENAI = "openai"
     NEURONPEDIA = "neuronpedia"
+    NEURONPEDIA_CHESS = "neuronpedia_chess"  # LC0 chess taxonomy: [Det], [Src], [Tgt], [Val], [Cap], [Tac], [Spa], [Mov]
 
 
 class ScorerType(str, Enum):

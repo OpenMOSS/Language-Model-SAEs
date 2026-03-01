@@ -302,35 +302,35 @@ def nested_activation_steering_effect(
     model,
     transcoders,
     lorsas,
-    first_steering: Dict[str, Any],  # 第一次steering的参数: feature_type, layer, pos, feature_id, steering_scale
-    second_steering: Dict[str, Any],  # 第二次steering的参数: feature_type, layer, pos, feature_id, steering_scale
+    first_steering: Dict[str, Any],  # first steering parameters: feature_type, layer, pos, feature_id, steering_scale
+    second_steering: Dict[str, Any],  # second steering parameters: feature_type, layer, pos, feature_id, steering_scale
     fen: str,
     get_value: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
-    嵌套steering：在第一次steering的基础上，进行第二次steering，分析第二次steering的影响。
+    nested steering: on the basis of first steering, perform second steering, analyze the impact of second steering.
     
     Args:
-        model: HookedTransformer模型
-        transcoders: 字典，layer -> Transcoder SAE
-        lorsas: Lorsa模型列表（按layer顺序）
-        first_steering: 第一次steering的参数字典，包含:
-            - feature_type: str ('transcoder' 或 'lorsa')
+        model: HookedTransformer model
+        transcoders: dictionary, layer -> Transcoder SAE
+        lorsas: list of Lorsa models (in layer order)
+        first_steering: first steering parameters dictionary, contains:
+            - feature_type: str ('transcoder' or 'lorsa')
             - layer: int
             - pos: int
             - feature_id: int
             - steering_scale: float
-        second_steering: 第二次steering的参数字典，包含:
-            - feature_type: str ('transcoder' 或 'lorsa')
+        second_steering: second steering parameters dictionary, contains:
+            - feature_type: str ('transcoder' or 'lorsa')
             - layer: int
             - pos: int
             - feature_id: int
             - steering_scale: float
-        fen: FEN字符串
-        get_value: 是否获取value输出
+        fen: FEN string
+        get_value: whether to get value output
     
     Returns:
-        包含嵌套steering结果的字典，或None（如果失败）
+        dictionary containing nested steering results, or None (if failed)
     """
     model.reset_hooks()
     
@@ -344,11 +344,11 @@ def nested_activation_steering_effect(
         )
         return logits, value
     
-    # 第一步：原始forward，获取第一次steering的基础数据
+    # first step: original forward, get the basic data of first steering
     original_output, cache_original = model.run_with_cache(fen, prepend_bos=False)
     logits_original, original_value = _get_logits_and_value(original_output)
     
-    # 准备第一次steering
+    # prepare first steering
     ft1 = first_steering['feature_type']
     layer1 = first_steering['layer']
     pos1 = first_steering['pos']
@@ -370,7 +370,7 @@ def nested_activation_steering_effect(
     if activation_value1 is None:
         return None
     
-    # 计算第一次steering的注入值
+    # calculate the injection value of first steering
     dec1 = get_feature_vector(lorsas, transcoders, ft1, layer1, feature_id1)
     feature_contribution1 = activation_value1 * dec1
     inject_val1 = (steering_scale1 - 1.0) * feature_contribution1
@@ -381,14 +381,14 @@ def nested_activation_steering_effect(
         out[(slice(None), pos1) if out.dim() == 3 else (pos1,)] += delta
         return out
     
-    # 添加第一次steering的hook
+    # add the hook of first steering
     model.add_hook(hook_point1, _steer1)
     
-    # 第二步：在第一次steering的基础上进行forward，获取第二次steering的基础数据
+    # second step: forward on the basis of first steering, get the basic data of second steering
     first_steered_output, cache_first_steered = model.run_with_cache(fen, prepend_bos=False)
     logits_after_first, value_after_first = _get_logits_and_value(first_steered_output)
     
-    # 准备第二次steering（基于第一次steering后的cache）
+    # prepare second steering (based on the cache after first steering)
     ft2 = second_steering['feature_type']
     layer2 = second_steering['layer']
     pos2 = second_steering['pos']
@@ -412,7 +412,7 @@ def nested_activation_steering_effect(
         model.reset_hooks()
         return None
     
-    # 计算第二次steering的注入值（基于第一次steering后的激活值）
+    # calculate the injection value of second steering
     dec2 = get_feature_vector(lorsas, transcoders, ft2, layer2, feature_id2)
     feature_contribution2 = activation_value2 * dec2
     inject_val2 = (steering_scale2 - 1.0) * feature_contribution2
@@ -423,17 +423,17 @@ def nested_activation_steering_effect(
         out[(slice(None), pos2) if out.dim() == 3 else (pos2,)] += delta
         return out
     
-    # 添加第二次steering的hook（在第一次steering的hook之后）
+    # add the hook of second steering
     model.add_hook(hook_point2, _steer2)
     
-    # 第三步：在两次steering的基础上进行forward
+    # third step: forward on the basis of two steerings
     second_steered_output, _ = model.run_with_cache(fen, prepend_bos=False)
     model.reset_hooks()
     
     logits_after_second, value_after_second = _get_logits_and_value(second_steered_output)
     
     return {
-        # 第一次steering信息
+        # first steering information
         "first_steering": {
             "feature_type": ft1,
             "layer": layer1,
@@ -443,25 +443,25 @@ def nested_activation_steering_effect(
             "activation_value": float(activation_value1),
             "hook_point": hook_point1,
         },
-        # 第二次steering信息
+        # second steering information
         "second_steering": {
             "feature_type": ft2,
             "layer": layer2,
             "pos": pos2,
             "feature_id": feature_id2,
             "steering_scale": steering_scale2,
-            "activation_value": float(activation_value2),  # 基于第一次steering后的激活值
+            "activation_value": float(activation_value2),  # based on the activation value after first steering
             "hook_point": hook_point2,
         },
-        # 三次forward的logits
+        # logits of three forward
         "logits_original": logits_original.detach().cpu(),
         "logits_after_first_steering": logits_after_first.detach().cpu(),
         "logits_after_second_steering": logits_after_second.detach().cpu(),
-        # logits差异
+        # logits difference
         "logits_diff_first": (logits_after_first - logits_original).detach().cpu(),
         "logits_diff_second": (logits_after_second - logits_after_first).detach().cpu(),
         "logits_diff_total": (logits_after_second - logits_original).detach().cpu(),
-        # value输出
+        # value output
         "original_value": original_value,
         "value_after_first": value_after_first,
         "value_after_second": value_after_second,
@@ -487,42 +487,42 @@ def analyze_features_after_first_steering(
     max_steering_features: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    分析在第一次steering后，某个位置的features变得重要（通过第二次steering测量）。
+    analyze the features at a position that become important after first steering (measured by second steering).
     
     Args:
-        model: HookedTransformer模型
-        transcoders: 字典，layer -> Transcoder SAE
-        lorsas: Lorsa模型列表（按layer顺序）
-        first_steering: 第一次steering的参数字典
-        second_position_name: 要分析的第二个位置名称
-        pos_dict: 位置名称到索引的字典
-        fen: FEN字符串
-        moves_tracing: 要追踪的moves字典 {move_name: move_uci}
-        feature_types: 要分析的feature类型列表
-        activation_threshold: 激活阈值
-        steering_scale_second: 第二次steering的放大系数
-        max_features_per_type: 每种类型最多收集的features数量
-        max_steering_features: 最多分析的steering features数量
+        model: HookedTransformer model
+        transcoders: dictionary, layer -> Transcoder SAE
+        lorsas: list of Lorsa models (in layer order)
+        first_steering: first steering parameters dictionary
+        second_position_name: name of the second position to analyze
+        pos_dict: dictionary of position names to indices
+        fen: FEN string
+        moves_tracing: dictionary of moves to track {move_name: move_uci}
+        feature_types: list of feature types to analyze
+        activation_threshold: activation threshold
+        steering_scale_second: steering scale for second steering
+        max_features_per_type: maximum number of features per type
+        max_steering_features: maximum number of steering features to analyze
     
     Returns:
-        包含分析结果的字典
+        dictionary containing analysis results
     """
     if second_position_name not in pos_dict:
         raise ValueError(f"Unknown position_name: {second_position_name}")
     
     second_pos_idx = pos_dict[second_position_name]
     
-    # 第一步：在第一次steering的基础上，收集第二个位置的激活features
+    # first step: collect the activated features at the second position on the basis of first steering
     model.reset_hooks()
     
-    # 准备第一次steering的hook
+    # prepare the hook of first steering
     ft1 = first_steering['feature_type']
     layer1 = first_steering['layer']
     pos1 = first_steering['pos']
     feature_id1 = first_steering['feature_id']
     steering_scale1 = first_steering['steering_scale']
     
-    # 获取原始cache
+    # get the original cache
     _, cache_original = model.run_with_cache(fen, prepend_bos=False)
     
     if ft1 == "transcoder":
@@ -555,10 +555,10 @@ def analyze_features_after_first_steering(
     
     model.add_hook(hook_point1, _steer1)
     
-    # 在第一次steering的基础上获取cache
+    # get the cache on the basis of first steering
     _, cache_first_steered = model.run_with_cache(fen, prepend_bos=False)
     
-    # 收集第二个位置的激活features（基于第一次steering后的cache）
+    # collect the activated features at the second position (based on the cache after first steering)
     second_position_features = []
     n_layers = max(len(transcoders), len(lorsas))
     
@@ -613,11 +613,11 @@ def analyze_features_after_first_steering(
     
     second_position_features.sort(key=lambda x: x["activation_value"], reverse=True)
     
-    # 限制要分析的features数量
+    # limit the number of features to analyze
     if max_steering_features is not None:
         second_position_features = second_position_features[:max_steering_features]
     
-    # 第二步：对第二个位置的每个feature进行嵌套steering分析
+    # second step: analyze each feature at the second position with nested steering
     results = []
     
     for feature_info in tqdm(second_position_features, desc=f"Nested steering {second_position_name}", unit="feature"):
@@ -641,7 +641,7 @@ def analyze_features_after_first_steering(
             )
             
             if nested_result:
-                # 计算move概率变化（基于第二次steering前后的logits）
+                # calculate the change of move probabilities (based on the logits before and after second steering)
                 move_probabilities = {}
                 
                 logits_after_first = torch.tensor(nested_result['logits_after_first_steering'])
@@ -682,7 +682,7 @@ def analyze_features_after_first_steering(
                     'feature_type': feature_info['feature_type'],
                     'layer': feature_info['layer'],
                     'feature_id': feature_info['feature_id'],
-                    'activation_value': feature_info['activation_value'],  # 基于第一次steering后的激活值
+                    'activation_value': feature_info['activation_value'],
                     'steering_scale_second': steering_scale_second,
                     'move_probabilities': move_probabilities,
                     'value_after_first': nested_result['value_after_first'],
@@ -795,25 +795,25 @@ def multi_feature_steering_effect(
     model,
     transcoders,
     lorsas,
-    steering_configs: List[Tuple[int, int, int, str, float]],  # 每个配置是 (layer, pos, feature_id, feature_type, steering_scale)
+    steering_configs: List[Tuple[int, int, int, str, float]],
     fen: str,
     get_value: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
-    同时对多个feature进行steering，每个feature可以有不同的steering_scale。
+    steering multiple features simultaneously, each feature can have a different steering_scale.
     
     Args:
-        model: HookedTransformer模型
-        transcoders: 字典，layer -> Transcoder SAE
-        lorsas: Lorsa模型列表（按layer顺序）
-        steering_configs: steering配置列表，每个配置是tuple:
+        model: HookedTransformer model
+        transcoders: dictionary, layer -> Transcoder SAE
+        lorsas: list of Lorsa models (in layer order)
+        steering_configs: list of steering configurations, each configuration is a tuple:
             (layer: int, pos: int, feature_id: int, feature_type: str, steering_scale: float)
-            feature_type 必须是 'transcoder' 或 'lorsa'
-        fen: FEN字符串
-        get_value: 是否获取value输出
+            feature_type must be 'transcoder' or 'lorsa'
+        fen: FEN string
+        get_value: whether to get value output
     
     Returns:
-        包含多feature steering结果的字典，或None（如果失败）
+        dictionary containing multi-feature steering results, or None (if failed)
     """
     if not steering_configs:
         raise ValueError("steering_configs cannot be empty")
@@ -830,16 +830,13 @@ def multi_feature_steering_effect(
         )
         return logits, value
     
-    # 原始forward
     original_output, original_cache = model.run_with_cache(fen, prepend_bos=False)
     logits_original, original_value = _get_logits_and_value(original_output)
     
-    # 准备所有steering的hook
     steering_info_list = []
     hook_functions = {}
     
     for i, config in enumerate(steering_configs):
-        # 解析tuple: (layer, pos, feature_id, feature_type, steering_scale)
         if len(config) != 5:
             raise ValueError(f"Each steering config must be a tuple of 5 elements: (layer, pos, feature_id, feature_type, steering_scale), got {config}")
         
@@ -861,12 +858,10 @@ def multi_feature_steering_effect(
             model.reset_hooks()
             return None
         
-        # 计算steering的注入值
         dec = get_feature_vector(lorsas, transcoders, feature_type, layer, feature_id)
         feature_contribution = activation_value * dec
         inject_val = (steering_scale - 1.0) * feature_contribution
         
-        # 存储steering信息
         steering_info_list.append({
             "index": i,
             "feature_type": feature_type,
@@ -879,7 +874,6 @@ def multi_feature_steering_effect(
             "inject_val": inject_val,
         })
         
-        # 为每个hook_point创建或更新hook函数
         if hook_point not in hook_functions:
             hook_functions[hook_point] = []
         
@@ -888,7 +882,6 @@ def multi_feature_steering_effect(
             "inject_val": inject_val,
         })
     
-    # 创建hook函数：对于每个hook_point，累加所有在该位置的steering delta
     def _create_steer_function(hook_point, inject_configs):
         def _steer(act, hook):
             out = act.clone()
@@ -899,7 +892,6 @@ def multi_feature_steering_effect(
             return out
         return _steer
     
-    # 添加所有hooks
     for hook_point, inject_configs in hook_functions.items():
         steer_func = _create_steer_function(hook_point, inject_configs)
         model.add_hook(hook_point, steer_func)

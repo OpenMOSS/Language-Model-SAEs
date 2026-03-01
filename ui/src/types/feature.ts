@@ -37,18 +37,20 @@ export type FeatureSampleCompact = z.infer<typeof FeatureSampleCompactSchema>;
 
 export const InterpretationSchema = z.object({
   text: z.string(),
-  validation: z.array(
-    z.object({
-      method: z.string(),
-      passed: z.boolean(),
-      detail: z
-        .object({
-          prompt: z.string(),
-          response: z.any(),
-        })
-        .optional(),
-    })
-  ),
+  validation: z
+    .array(
+      z.object({
+        method: z.string(),
+        passed: z.boolean(),
+        detail: z
+          .object({
+            prompt: z.string(),
+            response: z.any(),
+          })
+          .optional(),
+      })
+    )
+    .default([]),
   detail: z
     .object({
       userPrompt: z.string(),

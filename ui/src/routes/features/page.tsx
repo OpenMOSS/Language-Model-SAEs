@@ -561,6 +561,8 @@ export const FeaturesPage = () => {
               autoFlipWhenBlack={true}
               flip_activation={Boolean(chessSample.activeColor === 'b')}
               showSelfPlay={true}
+              disableAutoAnalyze={true}
+              wdlLoadDelayIndex={index}
             />
           ));
           

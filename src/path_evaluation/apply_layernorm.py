@@ -5,9 +5,9 @@ from typing import Literal, Optional
 import torch
 
 
-try:  # 仅用于类型标注，避免在运行时强依赖
+try:
     from transformer_lens import HookedTransformer
-except Exception:  # pragma: no cover - 在没有 transformer_lens 时静默退化
+except Exception:
     HookedTransformer = object  # type: ignore[misc,assignment]
 
 
@@ -17,11 +17,11 @@ FeatureType = Literal["transcoder", "lorsa"]
 
 
 def set_layernorm_model(model: HookedTransformer) -> None:
-    """设置用于路径 LayerNorm 传播的全局模型。
+    """Set global model for LayerNorm path propagation.
 
-    该模型应当是 Leela Chess (Lc0) 风格的 `HookedTransformer`，
-    并且每一层块包含 `ln1`, `ln2`, `alpha_input`, `alpha_out1` 等属性。
-    后续路径传播函数会使用这些属性在层之间传播向量。
+    The model should be a `HookedTransformer` in the style of Leela Chess (Lc0),
+    and each block should contain `ln1`, `ln2`, `alpha_input`, `alpha_out1` attributes.
+    The subsequent path propagation functions will use these attributes to propagate vectors between layers.
     """
     global _GLOBAL_MODEL
     _GLOBAL_MODEL = model
@@ -34,37 +34,11 @@ def apply_layernorm_path_with_feature_types(
     tgt_layer: int,
     tgt_feature_type: FeatureType,
 ) -> torch.Tensor:
-    """使用模型的 LayerNorm，将向量从 source feature 传播到 target feature。
+    """Use the model's LayerNorm to propagate a vector from the source feature to the target feature.
 
-    该函数考虑了 transcoder 和 Lorsa 在模型中的不同位置：
-    - Lorsa 特征位于对应层 ``ln1`` 之前（即该层 attention 的输入残差处）；
-    - Transcoder 特征位于对应层 ``ln2`` 之前（即该层 MLP 的输入残差处）。
-
-    我们只沿着各层的 ``ln1`` / ``ln2`` 轨迹传播向量，不显式建模注意力或 MLP 的非线性部分，
-    也不使用 ``alpha_input`` / ``alpha_out1`` 等缩放系数。
-
-    参数
-    ----
-    vec:
-        需要在残差流中沿层传播的向量，形状应与模型残差维度一致。
-    src_layer:
-        起始层索引，应满足 ``0 <= src_layer < num_layers``。
-    src_feature_type:
-        起始 feature 类型，'transcoder' 或 'lorsa'。
-    tgt_layer:
-        目标层索引，应满足 ``src_layer <= tgt_layer <= num_layers``。
-    tgt_feature_type:
-        目标 feature 类型，'transcoder' 或 'lorsa'。
-
-    返回
-    ----
-    torch.Tensor
-        经过正确的 LayerNorm 路径传播后的向量。
-
-    说明
-    ----
-    - 本函数假设全局模型已通过 `set_layernorm_model` 设置；
-    - 仅支持向前传播（即 ``src_layer <= tgt_layer``）。
+    The model should be a `HookedTransformer` in the style of Leela Chess (Lc0),
+    and each block should contain `ln1`, `ln2`, `alpha_input`, `alpha_out1` attributes.
+    The subsequent path propagation functions will use these attributes to propagate vectors between layers.
     """
     if _GLOBAL_MODEL is None:
         raise RuntimeError(
@@ -86,11 +60,11 @@ def apply_layernorm_path_with_feature_types(
             f"tgt_layer={tgt_layer} must satisfy src_layer <= tgt_layer <= num_layers={num_layers}."
         )
 
-    # 将位置抽象为「在第几层的第几个 LayerNorm 之前」
-    # 对于第 L 层：
-    #   - Lorsa 位置：在 ln1 之前，记为时间点 2L
-    #   - Transcoder 位置：在 ln2 之前，记为时间点 2L+1
-    # 跨层传播就是在这些时间点之间依次应用 ln1 / ln2。
+    # abstract the position as "before the nth LayerNorm in the layer"
+    # for layer L:
+    #   - Lorsa position: before ln1, denoted as time point 2L
+    #   - Transcoder position: before ln2, denoted as time point 2L+1
+    # cross-layer propagation is applying ln1 / ln2 sequentially between these time points.
     def _pos(layer: int, feature_type: FeatureType) -> int:
         return 2 * layer + (1 if feature_type == "transcoder" else 0)
 
@@ -105,7 +79,6 @@ def apply_layernorm_path_with_feature_types(
 
     x = vec
 
-    # 依次跨过中间的 LayerNorm 边界
     for t in range(src_pos, tgt_pos):
         layer_idx = t // 2
         is_ln1 = (t % 2 == 0)

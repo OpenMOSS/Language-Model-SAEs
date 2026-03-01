@@ -76,22 +76,22 @@ def get_move_from_policy_output(policy_output: torch.Tensor, fen: str, return_li
 def get_move_from_policy_output_with_logit(
     policy_output: torch.Tensor, fen: str, return_list: bool = False
 ) -> tuple[str, float] | list[tuple[str, float]]:
-    """从 policy output 获取 move 及其 logit 值。
+    """Get move and its logit value from policy output.
 
-    参数
-    ----
+    Parameters
+    ----------
     policy_output:
-        Policy 输出张量，形状为 [vocab_size] 或 [batch_size, vocab_size]。
+        Policy output tensor with shape [vocab_size] or [batch_size, vocab_size].
     fen:
-        FEN 字符串。
+        FEN string.
     return_list:
-        如果为 True，返回 top 5 legal moves 的列表；否则返回最佳 move 及其 logit。
+        If True, return a list of top 5 legal moves; otherwise return the best move and its logit.
 
-    返回
-    ----
+    Returns
+    -------
     tuple[str, float] | list[tuple[str, float]]
-        如果 return_list=False，返回 (uci, logit) 元组。
-        如果 return_list=True，返回 [(uci, logit), ...] 列表。
+        If return_list=False, returns (uci, logit) tuple.
+        If return_list=True, returns [(uci, logit), ...] list.
     """
     leela_board = LeelaBoard.from_fen(fen, history_synthesis=True)
     if policy_output.ndim > 1:
@@ -109,7 +109,7 @@ def get_move_from_policy_output_with_logit(
             break
 
     if not return_list:
-        return top_legal_moves[0]  # 返回 (uci, logit) 元组
+        return top_legal_moves[0]  # Return (uci, logit) tuple
     else:
         return top_legal_moves
 
@@ -137,31 +137,31 @@ def get_move_from_policy_output_with_prob(
             logit = policy_output[idx].item()
             valid_moves.append((uci, logit))
         except (KeyError, IndexError):
-            # 如果不在词表中，尝试简化格式（对于promotion moves）
+            # If not in vocabulary, try simplified format (for promotion moves)
             if len(uci) == 5 and uci[4] in ['q', 'r', 'b', 'n']:
-                # 尝试去掉promotion后缀
+                # Try removing promotion suffix
                 uci_simple = uci[:4]
                 try:
                     idx = leela_board.uci2idx(uci_simple)
                     logit = policy_output[idx].item()
-                    # 使用原始UCI格式，但使用简化格式的logit
+                    # Use original UCI format but with simplified format's logit
                     valid_moves.append((uci, logit))
                 except (KeyError, IndexError):
-                    # 如果简化格式也不在词表中，跳过
+                    # If simplified format is also not in vocabulary, skip
                     continue
             else:
-                # 非promotion move但不在词表中，跳过
+                # Non-promotion move but not in vocabulary, skip
                 continue
     
     if not valid_moves:
-        # 如果没有有效移动，返回None或空列表
+        # If no valid moves, return None or empty list
         return None if move_uci else ([] if return_list else (None, 0.0))
     
-    # 提取有效的UCI和logits
+    # Extract valid UCI and logits
     valid_uci_list = [uci for uci, _ in valid_moves]
     legal_logits = torch.tensor([logit for _, logit in valid_moves])
     
-    # 计算概率
+    # Calculate probabilities
     legal_probs = torch.softmax(
         legal_logits - legal_logits.max(), dim=0
     )

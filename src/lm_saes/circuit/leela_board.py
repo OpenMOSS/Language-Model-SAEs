@@ -528,32 +528,25 @@ class LeelaBoard:
 
     def uci_to_positions(self, move_uci: str) -> torch.Tensor:
         """
-        将UCI格式的走法转换为起点和终点的位置坐标
-        
-        Args:
-            move_uci: UCI格式的走法，如'e2e4', 'e6c8'
-        
-        Returns:
-            torch.Tensor: 形状为(2,)的tensor，包含[起点位置, 终点位置]
-            位置是棋盘展成1维后的索引，a1=0, b1=1, ..., h8=63
+        convert UCI move to start and end positions
         """
         
         def uci_to_coords(uci: str) -> tuple[int, int]:
-            """将UCI坐标转换为棋盘坐标"""
+            """convert UCI coordinate to board coordinate"""
             file = ord(uci[0]) - ord('a')  # a->0, b->1, ..., h->7
             rank = int(uci[1]) - 1         # 1->0, 2->1, ..., 8->7
             return rank, file
         
         def coords_to_1d(rank: int, file: int) -> int:
-            """将棋盘坐标转换为1维索引"""
+            """convert board coordinate to 1D index"""
             return rank * 8 + file
         
         def flip_coords(rank: int, file: int) -> tuple[int, int]:
-            """翻转坐标（黑方视角转白方视角）- 只翻转rank，file保持不变"""
+            """flip coordinates (black to white perspective) - only flip rank, file remains unchanged"""
             flipped_rank = 7 - rank  # 0->7, 1->6, ..., 7->0
             return flipped_rank, file
         
-        # 从当前棋盘状态获取行棋方
+        # get side to move from current board state
         side = 'w' if self.pc_board.turn else 'b'
         
         start_uci = move_uci[:2]
@@ -561,7 +554,7 @@ class LeelaBoard:
         start_rank, start_file = uci_to_coords(start_uci)
         end_rank, end_file = uci_to_coords(end_uci)
         
-        # 如果是黑方，需要翻转坐标
+        # if black, need to flip coordinates
         if side == 'b':
             start_rank, start_file = flip_coords(start_rank, start_file)
             end_rank, end_file = flip_coords(end_rank, end_file)

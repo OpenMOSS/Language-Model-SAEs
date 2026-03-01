@@ -1,7 +1,7 @@
-# LC0 移动索引映射表
-# 基于 leela-interp/src/leela_interp/core/uci_to_idx.py
+# LC0 move index mapping
+# based on leela-interp/src/leela_interp/core/uci_to_idx.py
 
-# White, no-castling - 索引到UCI移动的映射
+# White, no-castling - index to UCI move mapping
 _idx_to_move_wn = [
     "a1b1", "a1c1", "a1d1", "a1e1", "a1f1", "a1g1", "a1h1", "a1a2", "a1b2", "a1c2",
     "a1a3", "a1b3", "a1c3", "a1a4", "a1d4", "a1a5", "a1e5", "a1a6", "a1f6", "a1a7",
@@ -20,7 +20,7 @@ _idx_to_move_wn = [
     "f1f4", "f1b5", "f1f5", "f1a6", "f1f6", "f1f7", "f1f8", "g1a1", "g1b1", "g1c1",
     "g1d1", "g1e1", "g1f1", "g1h1", "g1e2", "g1f2", "g1g2", "g1h2", "g1e3", "g1f3",
     "g1g3", "g1h3", "g1d4", "g1g4", "g1c5", "g1g5", "g1b6", "g1g6", "g1a7", "g1g7",
-    "g1g8", "h1a1", "h1b1", "h1c1", "h1d1", "h1e1", "h1f1", "g1", "h1f2", "h1g2",
+    "g1g8", "h1a1", "h1b1", "h1c1", "h1d1", "h1e1", "h1f1", "h1g1", "h1f2", "h1g2",
     "h1h2", "h1f3", "h1g3", "h1h3", "h1e4", "h1h4", "h1d5", "h1h5", "h1c6", "h1h6",
     "h1b7", "h1h7", "h1a8", "h1h8", "a2a1", "a2b1", "a2c1", "a2b2", "a2c2", "a2d2",
     "a2e2", "a2f2", "a2g2", "a2h2", "a2a3", "a2b3", "a2c3", "a2a4", "a2b4", "a2c4",
@@ -183,7 +183,7 @@ _idx_to_move_wn = [
     "h8h1", "h8b2", "h8h2", "h8c3", "h8h3", "h8d4", "h8h4", "h8e5", "h8h5", "h8f6",
     "h8g6", "h8h6", "h8f7", "h8g7", "h8h7", "h8a8", "h8b8", "h8c8", "h8d8", "h8e8",
     "h8f8", "h8g8",
-    # 升变移动 (白兵到第8行)
+    # promotion moves (pawn to 8th rank)
     "a7a8q", "a7a8r", "a7a8b", "a7b8q", "a7b8r", "a7b8b",
     "b7a8q", "b7a8r", "b7a8b", "b7b8q", "b7b8r", "b7b8b", "b7c8q", "b7c8r", "b7c8b",
     "c7b8q", "c7b8r", "c7b8b", "c7c8q", "c7c8r", "c7c8b", "c7d8q", "c7d8r", "c7d8b",
@@ -194,23 +194,16 @@ _idx_to_move_wn = [
     "h7g8q", "h7g8r", "h7g8b", "h7h8q", "h7h8r", "h7h8b",
 ]
 
-# 修正第189个元素（h1g1 被意外截断为 g1）
-_idx_to_move_wn[189] = "h1g1"
-
-# 创建索引到UCI的映射字典
 idx_to_uci_wn = {idx: uci for idx, uci in enumerate(_idx_to_move_wn)}
-
-# 创建UCI到索引的映射字典  
+  
 uci_to_idx_wn = {uci: idx for idx, uci in enumerate(_idx_to_move_wn)}
 
-# 为王车易位创建特殊映射（白方）
 uci_to_idx_wc = uci_to_idx_wn.copy()
 if "e1g1" in uci_to_idx_wc and "e1h1" in uci_to_idx_wc:
     uci_to_idx_wc["e1g1"], uci_to_idx_wc["e1h1"] = uci_to_idx_wc["e1h1"], uci_to_idx_wc["e1g1"]
 if "e1c1" in uci_to_idx_wc and "e1a1" in uci_to_idx_wc:
     uci_to_idx_wc["e1c1"], uci_to_idx_wc["e1a1"] = uci_to_idx_wc["e1a1"], uci_to_idx_wc["e1c1"]
 
-# 黑方移动映射（翻转行坐标）
 idx_to_uci_bn = {}
 uci_to_idx_bn = {}
 
@@ -219,7 +212,6 @@ for idx, white_move in enumerate(_idx_to_move_wn):
         c0, r0, c1, r1 = white_move[0], int(white_move[1]), white_move[2], int(white_move[3])
         promotion = white_move[4:] if len(white_move) > 4 else ""
         
-        # 翻转行坐标（1->8, 2->7, ..., 8->1）
         r0_black = 9 - r0
         r1_black = 9 - r1
         
@@ -227,26 +219,24 @@ for idx, white_move in enumerate(_idx_to_move_wn):
         idx_to_uci_bn[idx] = black_move
         uci_to_idx_bn[black_move] = idx
 
-# 黑方王车易位映射
 uci_to_idx_bc = uci_to_idx_bn.copy()
 if "e8g8" in uci_to_idx_bc and "e8h8" in uci_to_idx_bc:
     uci_to_idx_bc["e8g8"], uci_to_idx_bc["e8h8"] = uci_to_idx_bc["e8h8"], uci_to_idx_bc["e8g8"]
 if "e8c8" in uci_to_idx_bc and "e8a8" in uci_to_idx_bc:
     uci_to_idx_bc["e8c8"], uci_to_idx_bc["e8a8"] = uci_to_idx_bc["e8a8"], uci_to_idx_bc["e8c8"]
 
-# 导出映射表 [white_no_castle, white_castle, black_no_castle, black_castle]
 uci_to_idx_mappings = [uci_to_idx_wn, uci_to_idx_wc, uci_to_idx_bn, uci_to_idx_bc]
 idx_to_uci_mappings = [idx_to_uci_wn, idx_to_uci_wn, idx_to_uci_bn, idx_to_uci_bn]
 
 def get_mapping_index(board):
-    """根据棋盘状态确定使用哪个映射表
+    """determine which mapping table to use based on board state
     
     Returns:
-        int: 映射表索引 (0-3)
-            0: 白方，无王车易位权
-            1: 白方，有王车易位权  
-            2: 黑方，无王车易位权
-            3: 黑方，有王车易位权
+        int: mapping table index (0-3)
+            0: white, no castling
+            1: white, with castling
+            2: black, no castling
+            3: black, with castling
     """
     is_white = board.turn
     has_castling = board.has_castling_rights(board.turn)

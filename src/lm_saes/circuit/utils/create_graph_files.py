@@ -22,9 +22,9 @@ class Metadata(BaseModel):
     node_threshold: float | None = None
     schema_version: int | None = 1
     lorsa_analysis_name: str | None = None
-    tc_analysis_name: str | None = None   # ← 替换 clt_analysis_name；移除 LORSA 字段
-    logit_moves: List[str] = []          # ← 新增：所有 logits 的 UCI 文本
-    target_move: str | None = None       # ← 可选：第一个（目标）logit 的 UCI
+    tc_analysis_name: str | None = None
+    logit_moves: List[str] = []
+    target_move: str | None = None
 
 class Node(BaseModel):
     node_id: str
@@ -133,16 +133,16 @@ class ActivationInfo(BaseModel):
     head_idx: int | None = None  # for lorsa features
     feature_idx: int | None = None  # for tc features
     activation_value: float
-    activations: List[float]  # 64位置的激活数组
+    activations: List[float]
     zPatternIndices: List[List[int]] | None = None  # [[q_positions], [k_positions]]
-    zPatternValues: List[float] | None = None  # z_pattern值
+    zPatternValues: List[float] | None = None 
 
 
 class Model(BaseModel):
     metadata: Metadata
     nodes: List[Node]
     links: List[dict]
-    activation_info: List[ActivationInfo] | None = None  # 全局激活信息
+    activation_info: List[ActivationInfo] | None = None
 
 
 def process_token(token: str) -> str:
@@ -186,7 +186,6 @@ def create_nodes(
                 layer, pos, feat_idx = (
                     graph.lorsa_active_features[orig_feature_idx].tolist()
                 )
-                # 对应的 activation 标量
                 activation_value = (
                     graph.lorsa_activation_values[orig_feature_idx]
                 )
@@ -197,7 +196,6 @@ def create_nodes(
                 layer, pos, feat_idx = (
                     graph.tc_active_features[orig_feature_idx].tolist()
                 )
-                # 对应的 activation 标量
                 activation_value = (
                     graph.tc_activation_values[orig_feature_idx]
                 )
@@ -211,7 +209,6 @@ def create_nodes(
             )
 
         elif node_idx in range(n_features, error_end_idx):
-            # LORSA error：按 (layer, pos) 展开
             rel = node_idx - n_features
             layer, pos = divmod(rel, graph.n_pos)
             is_lorsa = node_idx < n_features + graph.n_pos * layers
@@ -262,15 +259,15 @@ def create_nodes(
 
 
 def extract_activation_info(graph: Graph) -> List[ActivationInfo] | None:
-    """从graph中提取激活信息到统一格式"""
+    """extract activation info from graph to unified data format"""
     if graph.activation_info is None:
         return None
         
     activation_info_list = []
     
-    # 检查是否是合并后的激活信息（直接包含features）
+    # check if the activation info is merged (directly contains features)
     if 'features' in graph.activation_info:
-        # 这是合并后的激活信息，直接使用
+        # this is merged activation info, directly use
         features = graph.activation_info.get('features', [])
         for feature_info in features:
             activation_info_list.append(ActivationInfo(
@@ -286,7 +283,7 @@ def extract_activation_info(graph: Graph) -> List[ActivationInfo] | None:
                 zPatternValues=feature_info.get('zPatternValues'),
             ))
     else:
-        # 这是原始的q/k分支结构，优先使用k side，如果没有则使用q side
+        # this is the original q/k branch structure, use k side first, if not, use q side
         for side in ['k', 'q']:
             if side in graph.activation_info and graph.activation_info[side] is not None:
                 features = graph.activation_info[side].get('features', [])
@@ -303,7 +300,7 @@ def extract_activation_info(graph: Graph) -> List[ActivationInfo] | None:
                         zPatternIndices=feature_info.get('zPatternIndices'),
                         zPatternValues=feature_info.get('zPatternValues'),
                     ))
-                break  # 找到一个side就停止
+                break
     
     return activation_info_list if activation_info_list else None
 
@@ -375,11 +372,10 @@ def build_model(
         node_threshold=node_threshold,
         lorsa_analysis_name=lorsa_analysis_name,
         tc_analysis_name=tc_analysis_name,
-        logit_moves=logit_moves or [],       # ← 写入
-        target_move=target_move,             # ← 写入
+        logit_moves=logit_moves or [],
+        target_move=target_move,
     )
 
-    # 提取激活信息
     activation_info = extract_activation_info(graph)
     
     full_model = Model(

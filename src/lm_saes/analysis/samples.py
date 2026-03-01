@@ -258,6 +258,19 @@ def _fen_board_to_64chars(fen: str, side_to_move: str = "?") -> str:
     return board_str
 
 
+def sae_pos_to_display_pos(sae_pos: int, side_to_move: str) -> int:
+    """Map SAE context position (0-63, FEN order a8-h8..a1-h1) to display segment index.
+
+    Display order matches build_chess_tokenized_sample / _fen_board_to_64chars:
+    - White: a1-h1, ..., a8-h8 so display_pos = (7 - row)*8 + col.
+    - Black: a8-h8, ..., a1-h1 (FEN order), so display_pos = sae_pos.
+    """
+    if side_to_move.lower() == "w":
+        row, col = sae_pos // 8, sae_pos % 8
+        return (7 - row) * 8 + col
+    return sae_pos
+
+
 def longfen_index_to_square(i: int, side_to_move: str = "b") -> str:
     """Map longfen index 0-63 to algebraic square.
 

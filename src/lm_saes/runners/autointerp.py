@@ -111,6 +111,9 @@ async def interpret_feature(settings: AutoInterpSettings, show_progress: bool = 
         if result["explanation"] is not None:
             interpretation = {
                 "text": result["explanation"],
+                "complexity": result.get("complexity"),
+                "consistency": result.get("consistency"),
+                "passed": result.get("passed"),
             }
         else:
             interpretation = None

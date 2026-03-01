@@ -52,28 +52,28 @@ def get_fen_from_context_idx(context_idx: int, dataset_path: str = DATASET_PATH,
 
 def get_feature_top_activation(mongo_client, layer: int, feature_id: int, feature_type: str, sae_series: str = "BT4-exp128", analysis_name: str = "default") -> Optional[Dict]:
     """
-    获取指定 feature 的 top activation（最大激活值）信息。
+    get top activation information for a specified feature.
 
     Args:
-        mongo_client: MongoDB客户端
-        layer: 层索引
-        feature_id: feature索引
-        feature_type: feature类型 ("transcoder" 或 "lorsa")
-        sae_series: SAE系列，默认为 "BT4-exp128"
-        analysis_name: 分析名称，默认为 "default"
+        mongo_client: MongoDB client
+        layer: layer index
+        feature_id: feature index
+        feature_type: feature type ("transcoder" or "lorsa")
+        sae_series: SAE series, default is "BT4-exp128"
+        analysis_name: analysis name, default is "default"
 
     Returns:
-        包含 top activation 信息的字典，如果未找到则返回 None。
-        字典包含以下字段：
-        - activation_value: 激活值
-        - context_idx: context索引
-        - position: 位置索引（如果有）
-        - dataset_name: 数据集名称
-        - shard_idx: 分片索引（如果有）
-        - n_shards: 分片总数（如果有）
-        - fen: FEN字符串（如果可获取）
+        dictionary containing top activation information, if not found return None.
+        The dictionary contains the following fields:
+        - activation_value: activation value
+        - context_idx: context index
+        - position: position index (if available)
+        - dataset_name: dataset name
+        - shard_idx: shard index (if available)
+        - n_shards: shard total (if available)
+        - fen: FEN string (if available)
     """
-    # 构建 SAE 名称
+    # build SAE name
     sae_name = (
         f"BT4_lorsa_L{layer}A_k30_e16" if feature_type == "lorsa"
         else f"BT4_tc_L{layer}M_k30_e16" if feature_type == "transcoder"
@@ -82,35 +82,35 @@ def get_feature_top_activation(mongo_client, layer: int, feature_id: int, featur
     if sae_name is None:
         raise ValueError(f"Unknown feature_type: {feature_type}")
 
-    # 获取 feature record
+    # get feature record
     fr = mongo_client.get_feature(sae_name=sae_name, sae_series=sae_series, index=feature_id)
     if not fr or not fr.analyses:
         return None
 
-    # 获取指定的 analysis
+    # get specified analysis
     analysis = next((a for a in fr.analyses if a.name == analysis_name), fr.analyses[0])
     if not analysis.samplings:
         return None
 
-    # 使用第一个 sampling（通常包含 top activations）
+    # use first sampling (usually contains top activations)
     sampling = analysis.samplings[0]
     feature_values = np.asarray(sampling.feature_acts_values)
     
     if len(feature_values) == 0:
         return None
 
-    # 找到最大激活值（top activation）
+    # find maximum activation value (top activation)
     max_idx = np.argmax(np.abs(feature_values))
     activation_value = float(feature_values[max_idx])
 
-    # 获取对应的 context_idx
+    # get corresponding context_idx
     context_indices = np.asarray(sampling.context_idx)
     dataset_names = sampling.dataset_name
     shard_idx = getattr(sampling, 'shard_idx', None)
     n_shards = getattr(sampling, 'n_shards', None)
     positions = getattr(sampling, 'feature_acts_indices', None)
 
-    # 解析位置信息
+    # parse position information
     context_idx_idx = max_idx
     position = None
     if positions is not None:
@@ -121,7 +121,7 @@ def get_feature_top_activation(mongo_client, layer: int, feature_id: int, featur
             context_idx_idx = int(positions[0][max_idx])
             position = int(positions[1][max_idx])
 
-    # 获取数据集信息
+    # get dataset information
     context_idx = int(context_indices[context_idx_idx])
     dataset_name = str(dataset_names[context_idx_idx]) if context_idx_idx < len(dataset_names) else "master"
     shard_idx_val = (
@@ -139,7 +139,7 @@ def get_feature_top_activation(mongo_client, layer: int, feature_id: int, featur
         else None
     )
 
-    # 尝试获取 FEN
+    # try to get FEN
     fen = None
     try:
         if shard_idx_val is not None and n_shards_val is not None:
@@ -171,20 +171,20 @@ def get_feature_top_activation(mongo_client, layer: int, feature_id: int, featur
 
 def get_feature_top_activation_value(mongo_client, layer: int, feature_id: int, feature_type: str, sae_series: str = "BT4-exp128", analysis_name: str = "default") -> Optional[float]:
     """
-    获取指定 feature 的 top activation 值（最大激活值）。
+    get top activation value for a specified feature.
 
     Args:
-        mongo_client: MongoDB客户端
-        layer: 层索引
-        feature_id: feature索引
-        feature_type: feature类型 ("transcoder" 或 "lorsa")
-        sae_series: SAE系列，默认为 "BT4-exp128"
-        analysis_name: 分析名称，默认为 "default"
+        mongo_client: MongoDB client
+        layer: layer index
+        feature_id: feature index
+        feature_type: feature type ("transcoder" or "lorsa")
+        sae_series: SAE series, default is "BT4-exp128"
+        analysis_name: analysis name, default is "default"
 
     Returns:
-        最大的激活值（float），如果未找到则返回 None。
+        maximum activation value (float), if not found return None.
     """
-    # 构建 SAE 名称
+    # build SAE name
     sae_name = (
         f"BT4_lorsa_L{layer}A_k30_e16" if feature_type == "lorsa"
         else f"BT4_tc_L{layer}M_k30_e16" if feature_type == "transcoder"
@@ -193,24 +193,24 @@ def get_feature_top_activation_value(mongo_client, layer: int, feature_id: int, 
     if sae_name is None:
         raise ValueError(f"Unknown feature_type: {feature_type}")
     
-    # 获取 feature record
+    # get feature record
     fr = mongo_client.get_feature(sae_name=sae_name, sae_series=sae_series, index=feature_id)
     if not fr or not fr.analyses:
         return None
     
-    # 获取指定的 analysis
+    # get specified analysis
     analysis = next((a for a in fr.analyses if a.name == analysis_name), fr.analyses[0])
     if not analysis.samplings:
         return None
     
-    # 使用第一个 sampling（通常包含 top activations）
+    # use first sampling
     sampling = analysis.samplings[0]
     feature_values = np.asarray(sampling.feature_acts_values)
     
     if len(feature_values) == 0:
         return None
     
-    # 找到最大激活值（top activation）
+    # find maximum activation value (top activation)
     max_idx = np.argmax(np.abs(feature_values))
     activation_value = float(feature_values[max_idx])
     
@@ -298,52 +298,42 @@ def get_feature_top_fen(mongo_client, layer: int, feature_id: int, feature_type:
 
 def get_feature_top_fen_batch(mongo_client, features_list, sae_series: str = "BT4-exp128", analysis_name: str = "default") -> Dict[Tuple[str, int, int], List[str]]:
     """
-    批量获取多个features的top FEN列表
+    batch get top FEN list for multiple features.
 
     Args:
-        mongo_client: MongoDB客户端
+        mongo_client: MongoDB client
         features_list: [(feature_type, layer, feature_id), ...]
-        sae_series: SAE系列
-        analysis_name: 分析名称
+        sae_series: SAE series
+        analysis_name: analysis name
 
     Returns:
-        Dict[(feature_type, layer, feature_id), List[str]]: feature到FEN列表的映射
+        Dict[(feature_type, layer, feature_id), List[str]]: feature to FEN list mapping
     """
-    print(f"🔍 get_feature_top_fen_batch 开始执行")
-    print(f"   输入参数: sae_series='{sae_series}', analysis_name='{analysis_name}'")
-    print(f"   features_list 长度: {len(features_list)}")
-    if features_list:
-        print(f"   features_list 示例: {features_list[:3]}")
-
-    if not features_list:
-        print("⚠️ features_list 为空，直接返回空字典")
-        return {}
-
     result = {}
 
-    # 按layer和feature_type分组，便于批量查询
+    # group by layer and feature_type for batch query
     features_by_sae = {}
     for feature_type, layer, feature_id in features_list:
         sae_name = f"BT4_lorsa_L{layer}A_k30_e16" if feature_type == "lorsa" else f"BT4_tc_L{layer}M_k30_e16" if feature_type == "transcoder" else None
         if sae_name is None:
-            print(f"⚠️ 未知的feature_type: {feature_type}，跳过")
+            print(f"Unknown feature_type: {feature_type}, skip")
             continue
         if sae_name not in features_by_sae:
             features_by_sae[sae_name] = []
         features_by_sae[sae_name].append((feature_type, layer, feature_id, feature_id))
 
-    print(f"📊 按SAE分组完成:")
+    print(f"Group by SAE completed:")
     for sae_name, feature_list in features_by_sae.items():
-        print(f"   {sae_name}: {len(feature_list)} 个features")
+        print(f"   {sae_name}: {len(feature_list)} features")
 
-    # 批量查询features
-    print(f"🚀 开始批量处理 {len(features_by_sae)} 个SAE...")
-    for sae_name, feature_info_list in tqdm(features_by_sae.items(), desc="处理SAE"):
-        print(f"处理SAE: {sae_name}, features数量: {len(feature_info_list)}")
+    # batch query features
+    print(f"Start batch processing {len(features_by_sae)} SAEs...")
+    for sae_name, feature_info_list in tqdm(features_by_sae.items(), desc="Processing SAE"):
+        print(f"Processing SAE: {sae_name}, features number: {len(feature_info_list)}")
         try:
-            # 并行查询SAE的所有features
+            # parallel query all features of the SAE
             sae_features = {}
-            print(f"  并行查询 {len(feature_info_list)} 个features...")
+            print(f"   parallel query {len(feature_info_list)} features...")
 
             def query_single_feature(args):
                 feature_type, layer, feature_id, index = args
@@ -357,63 +347,63 @@ def get_feature_top_fen_batch(mongo_client, features_list, sae_series: str = "BT
                     pass
                 return None
 
-            # 使用线程池并行查询
-            max_workers = min(20, len(feature_info_list))  # 最多20个并发线程
+            # use thread pool to parallel query
+            max_workers = min(20, len(feature_info_list))
             try:
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = [executor.submit(query_single_feature, info) for info in feature_info_list]
-                    for future in tqdm(as_completed(futures), total=len(futures), desc=f"查询{sae_name}"):
+                    for future in tqdm(as_completed(futures), total=len(futures), desc=f"Query {sae_name}"):
                         query_result = future.result()
                         if query_result:
                             key, analysis = query_result
                             sae_features[key] = analysis
             except Exception as e:
-                print(f"并行查询失败，回退到顺序查询: {e}")
-                # 回退到顺序查询
-                for info in tqdm(feature_info_list, desc=f"顺序查询{sae_name}"):
+                print(f"Parallel query failed, fall back to sequential query: {e}")
+                # fall back to sequential query
+                for info in tqdm(feature_info_list, desc=f"Sequential query {sae_name}"):
                     query_result = query_single_feature(info)
                     if query_result:
                         key, analysis = query_result
                         sae_features[key] = analysis
 
-            print(f"  SAE {sae_name} 成功获取 {len(sae_features)} 个features")
+            print(f"  Successfully get {len(sae_features)} features for SAE {sae_name}")
 
-            # 处理这个SAE的所有features
+            # process all features of the SAE
             if sae_features:
                 _process_sae_features_batch(mongo_client, sae_features, result)
 
         except Exception as e:
-            print(f"处理SAE {sae_name} 失败: {e}")
+            print(f"Failed to process SAE {sae_name}: {e}")
             import traceback
             traceback.print_exc()
             continue
 
-    print(f"🎉 get_feature_top_fen_batch 执行完成")
-    print(f"   返回结果包含 {len(result)} 个features")
+    print(f"get_feature_top_fen_batch completed")
+    print(f"    return result contains {len(result)} features")
     total_fens = sum(len(fen_list) for fen_list in result.values())
-    print(f"   总共收集了 {total_fens} 个唯一FEN")
+    print(f"    total collected {total_fens} unique FENs")
     if result:
         avg_fens = total_fens / len(result)
-        print(f"   平均每个feature {avg_fens:.1f} 个FEN")
+        print(f"    average {avg_fens:.1f} FENs per feature")
 
     return result
 
 
 def _process_sae_features_batch(mongo_client, sae_features, result):
-    """处理单个SAE的所有features的批量FEN提取"""
-    print(f"🔧 _process_sae_features_batch 开始执行")
-    print(f"   sae_features 数量: {len(sae_features)}")
-    print(f"   result 当前大小: {len(result)}")
+    """process all features of a SAE for batch FEN extraction"""
+    print(f"Start _process_sae_features_batch")
+    print(f"   number of sae_features: {len(sae_features)}")
+    print(f"   current size of result: {len(result)}")
 
     if not sae_features:
-        print("⚠️ sae_features 为空，直接返回")
+        print("sae_features is empty, return")
         return
 
-    # 收集所有需要的context_idx
+    # collect all needed context_idx
     all_context_indices = set()
     feature_to_contexts = {}
 
-    print("📋 收集context indices...")
+    print("Collect context indices...")
     for (feature_type, layer, feature_id), analysis in sae_features.items():
         context_indices = set()
         for sampling in analysis.samplings:
@@ -423,18 +413,18 @@ def _process_sae_features_batch(mongo_client, sae_features, result):
         feature_to_contexts[(feature_type, layer, feature_id)] = context_indices
         all_context_indices.update(context_indices)
 
-    print(f"   收集完成: {len(feature_to_contexts)} 个features, {len(all_context_indices)} 个唯一context indices")
-    print(f"   context indices 范围: {min(all_context_indices)} - {max(all_context_indices)}")
+    print(f"    collected {len(feature_to_contexts)} features, {len(all_context_indices)} unique context indices")
+    print(f"   context indices range: {min(all_context_indices)} - {max(all_context_indices)}")
 
     if not all_context_indices:
-        print("⚠️ 没有context indices，直接返回")
+        print("No context indices, return")
         return
 
-    # 按分片分组context_idx
+    # group context_idx by shard
     shard_groups = {}
     context_to_shard_info = {}
 
-    # 为每个feature遍历其所有samplings，收集分片信息
+    # for each feature, traverse all samplings, collect shard information
     for (feature_type, layer, feature_id), analysis in sae_features.items():
         for sampling in analysis.samplings:
             context_indices = sampling.context_idx
@@ -460,24 +450,24 @@ def _process_sae_features_batch(mongo_client, sae_features, result):
                             shard_groups[key].append(context_idx)
                         context_to_shard_info[context_idx] = key
 
-    print(f"📦 分片分组完成: {len(shard_groups)} 个分片groups")
-    for (shard_idx, n_shards, dataset_name), indices in list(shard_groups.items())[:3]:  # 只显示前3个
-        print(f"   分片 ({shard_idx}/{n_shards}, {dataset_name}): {len(indices)} 个context indices")
+    print(f"Group by shard completed: {len(shard_groups)} shard groups")
+    for (shard_idx, n_shards, dataset_name), indices in list(shard_groups.items())[:3]:
+        print(f"    shard ({shard_idx}/{n_shards}, {dataset_name}): {len(indices)} context indices")
 
-    # 批量加载FEN (多线程版本)
+    # batch load FEN (multi-thread version)
     context_idx_to_fen = {}
 
     def load_single_shard(shard_info):
-        """加载单个分片的FEN数据"""
+        """load FEN data of a single shard"""
         (shard_idx_val, n_shards_val, dataset_name_val), context_indices_group = shard_info
         shard_results = {}
 
         try:
-            print(f"  加载分片 {shard_idx_val}/{n_shards_val} ({dataset_name_val}), 包含 {len(context_indices_group)} 个context indices...")
+            print(f"load shard {shard_idx_val}/{n_shards_val} ({dataset_name_val}), contains {len(context_indices_group)} context indices...")
             cfg = mongo_client.get_dataset_cfg(dataset_name_val)
             if cfg:
                 dataset = load_dataset_shard(cfg, shard_idx_val, n_shards_val)
-                print(f"    数据集大小: {len(dataset)}")
+                print(f"dataset size: {len(dataset)}")
                 for context_idx in context_indices_group:
                     if context_idx < len(dataset):
                         fen_data = dataset[context_idx]
@@ -491,87 +481,86 @@ def _process_sae_features_batch(mongo_client, sae_features, result):
                     else:
                         shard_results[context_idx] = None
             else:
-                print(f"    无法获取数据集配置: {dataset_name_val}")
+                print(f"cannot get dataset configuration: {dataset_name_val}")
                 for context_idx in context_indices_group:
                     shard_results[context_idx] = None
         except Exception as e:
-            print(f"    加载分片失败: {e}")
+            print(f"load shard failed: {e}")
             for context_idx in context_indices_group:
                 shard_results[context_idx] = None
         return shard_results
 
-    print(f"多线程加载 {len(shard_groups)} 个分片的数据...")
-    max_workers = min(8, len(shard_groups))  # 最多8个并发线程加载分片
+    print(f"multi-thread load {len(shard_groups)} shards...")
+    max_workers = min(8, len(shard_groups))
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(load_single_shard, shard_info) for shard_info in shard_groups.items()]
-            for future in tqdm(as_completed(futures), total=len(futures), desc="加载分片"):
+            for future in tqdm(as_completed(futures), total=len(futures), desc="load shards"):
                 shard_results = future.result()
                 context_idx_to_fen.update(shard_results)
     except Exception as e:
-        print(f"❌ 多线程加载失败，回退到顺序加载: {e}")
+        print(f"multi-thread load failed, fall back to sequential load: {e}")
         # 回退到顺序加载
-        for shard_info in tqdm(shard_groups.items(), desc="顺序加载分片"):
+        for shard_info in tqdm(shard_groups.items(), desc="sequential load shards"):
             shard_results = load_single_shard(shard_info)
             context_idx_to_fen.update(shard_results)
 
-    print(f"✅ 分片加载完成: 加载了 {len(context_idx_to_fen)} 个context indices")
+    print(f"shard load completed: loaded {len(context_idx_to_fen)} context indices")
 
-    # 处理非分片的情况 (多线程版本)
+    # process non-shard cases (multi-thread version)
     non_shard_contexts = [ctx for ctx in all_context_indices if ctx not in context_idx_to_fen]
     if non_shard_contexts:
-        print(f"发现 {len(non_shard_contexts)} 个非分片context indices")
-        print(f"  总共有 {len(all_context_indices)} 个context indices")
-        print(f"  分片加载了 {len(context_idx_to_fen)} 个context indices")
-        print(f"  非分片indices示例: {sorted(non_shard_contexts)[:5]}")
+        print(f"found {len(non_shard_contexts)} non-shard context indices")
+        print(f"total {len(all_context_indices)} context indices")
+        print(f"shard loaded {len(context_idx_to_fen)} context indices")
 
-        # 检查为什么这些context_idx没有被分片加载
-        print(f"  检查分片覆盖情况...")
+        # examine why these context_idx are not covered by shards
+        print(f"   examine shard coverage...")
         covered_by_shards = set()
         for context_indices_group in shard_groups.values():
             covered_by_shards.update(context_indices_group)
-        print(f"  分片groups覆盖了 {len(covered_by_shards)} 个context indices")
+        print(f"   shard groups cover {len(covered_by_shards)} context indices")
         not_covered = all_context_indices - covered_by_shards
         if not_covered:
-            print(f"  未被分片覆盖的context indices: {sorted(list(not_covered))[:10]}")
-            print(f"  这些可能来自没有分片信息的samplings")
+            print(f"   context indices not covered by shards: {sorted(list(not_covered))[:10]}")
+            print(f"   these may come from samplings without shard information")
 
         def load_single_non_shard_context(context_idx):
-            """加载单个非分片context的FEN"""
+            """load FEN of a single non-shard context"""
             try:
                 fen = get_fen_from_context_idx(context_idx, DATASET_PATH, mongo_client=mongo_client)
                 return context_idx, fen
             except Exception as e:
-                print(f"    获取context_idx {context_idx} 失败: {e}")
+                print(f"     get context_idx {context_idx} failed: {e}")
                 return context_idx, None
 
-        max_workers = min(16, len(non_shard_contexts))  # 最多16个并发线程
+        max_workers = min(16, len(non_shard_contexts))
         try:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(load_single_non_shard_context, ctx) for ctx in non_shard_contexts]
-                for future in tqdm(as_completed(futures), total=len(futures), desc="加载非分片数据"):
+                for future in tqdm(as_completed(futures), total=len(futures), desc="load non-shard data"):
                     context_idx, fen = future.result()
                     context_idx_to_fen[context_idx] = fen
         except Exception as e:
-            print(f"多线程加载非分片数据失败，回退到顺序加载: {e}")
-            # 回退到顺序加载
-            for context_idx in tqdm(non_shard_contexts, desc="顺序加载非分片数据"):
+            print(f"multi-thread load non-shard data failed, fall back to sequential load: {e}")
+            # fall back to sequential load
+            for context_idx in tqdm(non_shard_contexts, desc="sequential load non-shard data"):
                 try:
                     fen = get_fen_from_context_idx(context_idx, DATASET_PATH, mongo_client=mongo_client)
                     context_idx_to_fen[context_idx] = fen
                 except Exception as e:
-                    print(f"    获取context_idx {context_idx} 失败: {e}")
+                    print(f"     get context_idx {context_idx} failed: {e}")
                     context_idx_to_fen[context_idx] = None
 
-    print(f"📈 所有context indices加载完成: 总共 {len(context_idx_to_fen)} 个")
+    print(f"all context indices loaded: total {len(context_idx_to_fen)}")
     fen_count = sum(1 for fen in context_idx_to_fen.values() if fen is not None)
-    print(f"   成功加载FEN: {fen_count}/{len(context_idx_to_fen)} ({fen_count/len(context_idx_to_fen)*100:.1f}%)")
+    print(f"    successfully loaded FEN: {fen_count}/{len(context_idx_to_fen)} ({fen_count/len(context_idx_to_fen)*100:.1f}%)")
 
-    # 为每个feature生成FEN列表 (多线程版本)
-    print(f"为 {len(feature_to_contexts)} 个features生成FEN列表...")
+    # generate FEN list for each feature (multi-thread version)
+    print(f"generate FEN list for {len(feature_to_contexts)} features...")
 
     def generate_fen_list(feature_info):
-        """为单个feature生成FEN列表"""
+        """generate FEN list for a single feature"""
         key, context_indices = feature_info
         unique_fens = set()
         for context_idx in context_indices:
@@ -580,7 +569,7 @@ def _process_sae_features_batch(mongo_client, sae_features, result):
                 unique_fens.add(fen)
         return key, list(unique_fens)
 
-    max_workers = min(32, len(feature_to_contexts))  # 最多32个并发线程
+    max_workers = min(32, len(feature_to_contexts))
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(generate_fen_list, feature_info) for feature_info in feature_to_contexts.items()]
@@ -588,14 +577,13 @@ def _process_sae_features_batch(mongo_client, sae_features, result):
                 key, fen_list = future.result()
                 result[key] = fen_list
 
-                # 每处理一定数量就报告进度
                 if (i + 1) % 100 == 0:
-                    print(f"    已处理 {i + 1}/{len(feature_to_contexts)} 个features")
+                    print(f"processed {i + 1}/{len(feature_to_contexts)} features")
 
     except Exception as e:
-        print(f"多线程生成FEN列表失败，回退到顺序生成: {e}")
-        # 回退到顺序生成
-        for i, (key, context_indices) in enumerate(tqdm(feature_to_contexts.items(), desc="顺序生成FEN列表")):
+        print(f"multi-thread generate FEN list failed, fall back to sequential generate: {e}")
+        # fall back to sequential generate
+        for i, (key, context_indices) in enumerate(tqdm(feature_to_contexts.items(), desc="sequential generate FEN list")):
             unique_fens = set()
             for context_idx in context_indices:
                 fen = context_idx_to_fen.get(context_idx)
@@ -604,12 +592,12 @@ def _process_sae_features_batch(mongo_client, sae_features, result):
             result[key] = list(unique_fens)
 
             if (i + 1) % 50 == 0:
-                print(f"    已处理 {i + 1}/{len(feature_to_contexts)} 个features")
+                print(f"processed {i + 1}/{len(feature_to_contexts)} features")
 
-    print(f"✅ _process_sae_features_batch 完成")
-    print(f"   处理了 {len(result)} 个features")
+    print(f"generate FEN list completed")
+    print(f"processed {len(result)} features")
     total_fens = sum(len(fen_list) for fen_list in result.values())
-    print(f"   总共生成了 {total_fens} 个唯一FEN")
+    print(f"total generated {total_fens} unique FENs")
     avg_fens_per_feature = total_fens / len(result) if result else 0
-    print(f"   平均每个feature {avg_fens_per_feature:.1f} 个FEN")
+    print(f"average {avg_fens_per_feature:.1f} FENs per feature")
 

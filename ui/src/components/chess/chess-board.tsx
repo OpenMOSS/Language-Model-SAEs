@@ -21,6 +21,8 @@ interface ChessBoardProps {
   moveColor?: string; // arrow color (match node color)
   showSelfPlay?: boolean;
   disableAutoAnalyze?: boolean; // disable auto board analysis to avoid repeated model load
+  /** When set with disableAutoAnalyze, schedule loadWdl after this index * delay (e.g. 1.5s) so WDL loads one-by-one after all boards render */
+  wdlLoadDelayIndex?: number;
 }
 
 // Piece SVG filename map (aligned with exp/chess-board-visualizer, load from pieces dir)
@@ -204,6 +206,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   moveColor,
   showSelfPlay = false,
   disableAutoAnalyze = false,
+  wdlLoadDelayIndex,
 }) => {
   // Debug: log display data
   console.log(`[CB#${sampleIndex ?? 'NA'}] activations:`, activations);
@@ -216,6 +219,8 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   // Click selection state
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null);
   const [boardEvaluation, setBoardEvaluation] = useState<number[] | null>(null);
+  const [boardAnalysisLoading, setBoardAnalysisLoading] = useState(false);
+  const [boardAnalysisError, setBoardAnalysisError] = useState<string | null>(null);
 
   // Self-play state
   const [selfPlayData, setSelfPlayData] = useState<any>(null);
@@ -229,29 +234,56 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   const [forwardInferenceLoading, setForwardInferenceLoading] = useState(false);
   const [forwardInferenceError, setForwardInferenceError] = useState<string | null>(null);
 
-  const handleAnalyze = useCallback(async () => {
-    if (disableAutoAnalyze) {
-      return; // Skip when auto-analyze is disabled
-    }
+  // WDL only: one forward pass via /analyze/board (do NOT use logit_lens here)
+  const loadWdl = useCallback(async () => {
+    setBoardAnalysisLoading(true);
+    setBoardAnalysisError(null);
     try {
-      console.log(`[CB#${sampleIndex ?? 'NA'}] Analyzing position: ${fen.substring(0, 50)}...`);
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/analyze/board`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fen })
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `HTTP ${res.status}`);
+      }
       const data = await res.json();
-      setBoardEvaluation(data.evaluation);
-      console.log(`[CB#${sampleIndex ?? 'NA'}] Position analysis done:`, data.evaluation);
+      setBoardEvaluation(data.evaluation ?? null);
     } catch (error) {
-      console.error(`[CB#${sampleIndex ?? 'NA'}] Position analysis failed:`, error);
+      const msg = error instanceof Error ? error.message : "WDL request failed";
+      setBoardAnalysisError(msg);
+      console.error(`[CB#${sampleIndex ?? 'NA'}] Position WDL failed:`, error);
+    } finally {
+      setBoardAnalysisLoading(false);
     }
-  }, [fen, disableAutoAnalyze, sampleIndex]);
+  }, [fen, sampleIndex]);
 
-  // Auto-run handleAnalyze when fen changes (backend has load lock, no duplicate load)
+  const handleAnalyze = useCallback(() => {
+    if (disableAutoAnalyze) return;
+    loadWdl();
+  }, [disableAutoAnalyze, loadWdl]);
+
+  // Defer auto WDL to next tick so the board renders first
   useEffect(() => {
-    handleAnalyze();
-  }, [handleAnalyze]);
+    if (disableAutoAnalyze) return;
+    const t = setTimeout(() => handleAnalyze(), 0);
+    return () => clearTimeout(t);
+  }, [handleAnalyze, disableAutoAnalyze]);
+
+  // When disableAutoAnalyze + wdlLoadDelayIndex: after all boards render, load WDL one-by-one (index * 1.5s)
+  const [wdlAutoScheduled, setWdlAutoScheduled] = useState(false);
+  const WDL_STAGGER_MS = 1500;
+  useEffect(() => {
+    if (!disableAutoAnalyze || wdlLoadDelayIndex === undefined) return;
+    setWdlAutoScheduled(true);
+    const delay = wdlLoadDelayIndex * WDL_STAGGER_MS;
+    const t = setTimeout(() => loadWdl(), delay);
+    return () => {
+      clearTimeout(t);
+      setWdlAutoScheduled(false);
+    };
+  }, [disableAutoAnalyze, wdlLoadDelayIndex, loadWdl]);
 
   // Forward inference
   const handleForwardInference = useCallback(async () => {
@@ -761,6 +793,20 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
           <div className="mt-1 text-sm text-gray-700">
             w:{boardEvaluation[0].toFixed(2)}, d:{boardEvaluation[1].toFixed(2)}, l:{boardEvaluation[2].toFixed(2)}
           </div>
+        ) : boardAnalysisLoading ? (
+          <div className="mt-1 text-sm text-gray-500">Loading WDL...</div>
+        ) : boardAnalysisError ? (
+          <div className="mt-1 text-sm text-red-600">{boardAnalysisError}</div>
+        ) : disableAutoAnalyze && wdlLoadDelayIndex !== undefined && wdlAutoScheduled ? (
+          <div className="mt-1 text-sm text-gray-500">Loading WDL...</div>
+        ) : disableAutoAnalyze ? (
+          <button
+            type="button"
+            onClick={() => loadWdl()}
+            className="mt-1 text-sm text-blue-600 hover:underline"
+          >
+            Get WDL
+          </button>
         ) : (
           <div className="mt-1 text-sm text-gray-700">Analyzing position...</div>
         )}

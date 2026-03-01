@@ -40,6 +40,10 @@ from .explanation_prompts import (
     generate_explanation_prompt,
     generate_explanation_prompt_neuronpedia,
 )
+from .explanation_prompts_chess import (
+    generate_explanation_prompt_chess,
+    generate_format_interpretation_prompt_chess,
+)
 
 logger = get_logger("analysis.feature_interpreter")
 
@@ -49,7 +53,7 @@ _BT4_MODEL_NAME = "lc0/BT4-1024x15x32h"
 
 # Per-source cap for z_pattern: for each activated square as source, keep at most this many (largest |z_pattern|).
 # Adjust this to control how many contributing targets are kept (e.g. 6, 8, 12). Frontend chess board uses 8.
-MAX_Z_PATTERN_TARGETS_PER_SOURCE = 8
+MAX_Z_PATTERN_TARGETS_PER_SOURCE = 3
 
 
 def _get_bt4_hooked_model(device: str = "cuda") -> Any | None:
@@ -311,10 +315,14 @@ def generate_activating_examples(
             current_sequence_mask = z_pattern_indices[0] == i
             current_z_pattern_indices = z_pattern_indices[1:, current_sequence_mask]
             current_z_pattern_values = z_pattern_values[current_sequence_mask]
-            # Need to adjust indices since the text has been cropped
-            # and remove negative indices
-            out_of_right_end_indices = current_z_pattern_indices.lt(right_end).all(dim=0)
-            current_z_pattern_indices = current_z_pattern_indices - left_end
+            # Chess: sample is full 64 segments (no cropping), so do not shift indices.
+            # Non-chess: indices are cropped by [left_end, right_end), so subtract left_end.
+            if fen_raw is not None and len(origins) == 64:
+                zp_left, zp_right = 0, len(origins)
+            else:
+                zp_left, zp_right = left_end, right_end
+            out_of_right_end_indices = current_z_pattern_indices.lt(zp_right).all(dim=0)
+            current_z_pattern_indices = current_z_pattern_indices - zp_left
             z_pattern_with_negative_indices = current_z_pattern_indices.ge(0).all(dim=0)
             mask = out_of_right_end_indices * z_pattern_with_negative_indices
             idx_2d = current_z_pattern_indices[:, mask]
@@ -337,10 +345,10 @@ def generate_activating_examples(
                 idx_2d = idx_2d[:, keep]
                 val = val[keep]
             sample.add_z_pattern_data(idx_2d, val, origins)
-        
+
         # DEBUGGING
         print(f'{sample = }')
-        
+
         samples.append(sample)
         
         if len(samples) >= n:
@@ -544,6 +552,10 @@ class FeatureInterpreter:
         """
         if self.cfg.explainer_type is ExplainerType.OPENAI:
             system_prompt, user_prompt = generate_explanation_prompt(self.cfg, activating_examples)
+        elif self.cfg.explainer_type is ExplainerType.NEURONPEDIA_CHESS:
+            system_prompt, user_prompt = generate_explanation_prompt_chess(
+                self.cfg, activating_examples, top_logits
+            )
         else:
             system_prompt, user_prompt = generate_explanation_prompt_neuronpedia(
                 self.cfg, activating_examples, top_logits
@@ -585,6 +597,64 @@ class FeatureInterpreter:
             "response": explanation,
             "time": response_time,
         }
+
+    async def format_interpretation_chess(self, raw_explanation: str) -> str:
+        """Format raw chess interpretation (with reasoning) into a single [Tag]Short description line.
+
+        Args:
+            raw_explanation: Raw model output that may include steps and examples.
+
+        Returns:
+            Single-line formatted interpretation, e.g. [Src]Source square or [Det]OwnPawn.
+            On API failure or empty response, returns the last line of raw_explanation that looks
+            like [Tag]... or the original raw_explanation stripped.
+        """
+        system_prompt, user_prompt = generate_format_interpretation_prompt_chess(raw_explanation)
+        try:
+            response = await self.explainer_client.chat.completions.create(
+                model=self.cfg.openai_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                stream=False,
+            )
+            content = response.choices[0].message.content
+            if content and content.strip():
+                return content.strip().split("\n")[0].strip()
+            # fallback: take last line that looks like [Tag]...
+            for line in reversed(raw_explanation.strip().split("\n")):
+                line = line.strip()
+                if line and (
+                    line.startswith("[Det]")
+                    or line.startswith("[Src]")
+                    or line.startswith("[Tgt]")
+                    or line.startswith("[Val]")
+                    or line.startswith("[Cap]")
+                    or line.startswith("[Tac]")
+                    or line.startswith("[Spa]")
+                    or line.startswith("[Mov]")
+                    or line.startswith("[Other]")
+                ):
+                    return line
+            return raw_explanation.strip()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Format interpretation failed: %s. Using fallback.", e)
+            for line in reversed(raw_explanation.strip().split("\n")):
+                line = line.strip()
+                if line and (
+                    line.startswith("[Det]")
+                    or line.startswith("[Src]")
+                    or line.startswith("[Tgt]")
+                    or line.startswith("[Val]")
+                    or line.startswith("[Cap]")
+                    or line.startswith("[Tac]")
+                    or line.startswith("[Spa]")
+                    or line.startswith("[Mov]")
+                    or line.startswith("[Other]")
+                ):
+                    return line
+            return raw_explanation.strip()
 
     async def evaluate_explanation_detection(
         self,
@@ -842,6 +912,16 @@ class FeatureInterpreter:
         explanation_result = await self.generate_explanation(activating_examples, top_logits)
         explanation: dict[str, Any] = explanation_result["response"]
         response_time += explanation_result["time"]
+
+        # Chess: format raw output (reasoning + examples) into single line [Tag]Short description
+        if self.cfg.explainer_type is ExplainerType.NEURONPEDIA_CHESS:
+            raw = explanation.get("final_explanation", "")
+            if raw and isinstance(raw, str):
+                print("[autointerp raw_explanation]\n" + raw + "\n[/autointerp raw_explanation]")
+                formatted = await self.format_interpretation_chess(raw)
+                explanation["raw_explanation"] = raw
+                explanation["final_explanation"] = formatted
+
         # Evaluate explanation
         evaluation_results = []
 

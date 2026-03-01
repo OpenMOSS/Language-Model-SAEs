@@ -260,15 +260,8 @@ def compute_graph_scores(graph: Graph, use_lorsa:bool=True) -> tuple[float, floa
     print(f'fraction: {token_influence.item()} {(token_influence + error_influence).item()}')
     replacement_score = token_influence / (token_influence + error_influence)
     
-    
-
-    # non_error_fractions = normalized_matrix[:, :].sum(dim=-1) 
-    # non_error_fractions = normalized_matrix[:, :].sum(dim=-1) - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1) # not from error 
-    non_error_fractions = 1 - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1)  # not from error 
-    # print(f'node_influence: {node_influence.sum()}')
+    non_error_fractions = 1 - normalized_matrix[:, n_features:error_end_idx].sum(dim=-1)
     output_influence = node_influence + logit_weights
-    # print(f'{node_influence.shape=} {logit_weights.shape=}')
-    # print(f'{non_error_fractions.shape=} {output_influence.shape=}')
     completeness_score = (non_error_fractions * output_influence).sum() / output_influence.sum()
     
 
@@ -314,13 +307,13 @@ def prune_graph(
     # print(f'{logit_weights = }')
     # print(f'{n_logits = }')
     if n_logits > 0:
-        # 常规情况：从真实 logits 出发计算影响力
+        # normal case: compute influence from real logits
         logit_weights[-n_logits:] = graph.logit_probabilities
     else:
-        # 特征终点模式：没有 logits（例如只做 feature-seeded trace）
-        # 为避免全零导致归一化/阈值计算出错，这里给所有节点一个均匀的非零权重。
-        # 注意：此时 adjacency_matrix 一般已经是「从指定 feature 出发」计算得到，
-        # 因此影响力排序仍然是围绕该 feature 的传播结构。
+        # feature-seeded trace mode: no logits
+        # to avoid zero weights causing normalization/threshold calculation errors, give all nodes a uniform non-zero weight
+        # note: at this point, adjacency_matrix is usually computed from a specified feature,
+        # so the influence ranking is still around the propagation structure of that feature
         logit_weights.fill_(1.0 / graph.adjacency_matrix.shape[0])
 
     # Calculate node influence and apply threshold

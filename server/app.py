@@ -620,7 +620,6 @@ def get_feature(
             sae_series=sae_series,
             index=feature_index)
     )
-    print(f'{feature = }')
     
     if feature is None:
         return Response(
@@ -673,7 +672,6 @@ def get_feature(
 
         # Get origins for the features
         origins = model.trace({k: [v] for k, v in data.items()})[0]
-        print(f'{origins = }')
 
         # Process image data if present
         image_key = next(
@@ -922,11 +920,16 @@ def get_feature(
                 status_code=400,
             )
 
+    # Normalize interpretation so frontend always receives validation (array); autointerp may omit it
+    interpretation = feature.interpretation
+    if interpretation is not None and isinstance(interpretation, dict) and "validation" not in interpretation:
+        interpretation = {**interpretation, "validation": []}
+
     # Prepare response
     response_data = {
         "feature_index": feature.index,
         "analysis_name": analysis.name,
-        "interpretation": feature.interpretation,
+        "interpretation": interpretation,
         "dictionary_name": feature.sae_name,
         "decoder_norms": analysis.decoder_norms,
         "decoder_similarity_matrices": analysis.decoder_similarity_matrices,

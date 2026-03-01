@@ -61,7 +61,7 @@ def compute_virtual_weight_single(
         feature_id=up_fid,
     )
 
-    # 使用考虑 feature 类型位置的路径传播函数
+    # Consider the position of the feature types in the path propagation function
     if apply_layernorm_path:
         dec_vec = apply_layernorm_path_with_feature_types(
             dec_vec,
@@ -185,23 +185,17 @@ def compute_weighted_virtual_weight_from_json(
     lorsas: List[LowRankSparseAttention],
     apply_layernorm_path: bool = True,
 ) -> Tuple[float, int, int]:
-    """从 JSON 文件读取 feature pairs，计算加权平均 virtual_weight。
+    """Read feature pairs from a JSON file, compute the weighted average virtual_weight.
 
-    参数
-    ----
+    Parameters:
     json_path:
-        JSON 文件路径，包含 feature pairs 数据。
+        JSON file path, containing feature pairs data.
     transcoders:
-        Transcoder SAE 字典。
+        Transcoder SAE dictionary.
     lorsas:
-        Lorsa 列表。
+        Lorsa list.
     apply_layernorm_path:
-        是否应用 LayerNorm 路径传播。
-
-    返回
-    ----
-    Tuple[float, int, int]
-        (加权平均 virtual_weight, 成功计算的 pair 数量, 总 pair 数量)
+        Whether to apply LayerNorm path propagation.
     """
     with open(json_path, "r") as f:
         data = json.load(f)
@@ -210,7 +204,7 @@ def compute_weighted_virtual_weight_from_json(
         raise ValueError(f"JSON file {json_path} should contain a list of feature pairs")
 
     virtual_weights: List[float] = []
-    weights: List[float] = []  # 使用 -reduction_ratio 作为权重
+    weights: List[float] = []
 
     for pair in tqdm(data, desc=f"Processing {json_path.name}", leave=False):
         source_layer = int(pair["source_layer"])
@@ -222,10 +216,7 @@ def compute_weighted_virtual_weight_from_json(
         target_type = str(pair["target_type"]).lower()
 
         reduction_ratio = float(pair.get("reduction_ratio", 0.0))
-        weight = -reduction_ratio  # 使用 reduction_ratio 的相反数作为权重
-
-        # 计算 virtual_weight
-        # 注意：这里直接传递字符串，compute_virtual_weight_single 内部会处理类型转换
+        weight = -reduction_ratio
         vw = compute_virtual_weight_single(
             layer1=source_layer,
             feature_id1=source_feature,
@@ -248,10 +239,8 @@ def compute_weighted_virtual_weight_from_json(
     if successful_pairs == 0:
         return float("nan"), 0, total_pairs
 
-    # 计算加权平均
     total_weight = sum(weights)
     if total_weight == 0:
-        # 如果所有权重为 0，则使用简单平均
         weighted_mean = sum(virtual_weights) / successful_pairs
     else:
         weighted_mean = sum(vw * w for vw, w in zip(virtual_weights, weights)) / total_weight
@@ -260,27 +249,27 @@ def compute_weighted_virtual_weight_from_json(
 
 
 def _is_within_path(json_filename: str) -> bool:
-    """判断 JSON 文件名是否表示 path 内的 virtual_weight。
+    """Check if the JSON file name represents a virtual_weight within a path.
     
-    path 内：source 和 target 来自同一个 path（例如 f6g7_f6g7.json）
-    path 间：source 和 target 来自不同的 path（例如 f6g7_h3d7.json）
+    Within path: source and target come from the same path (e.g. f6g7_f6g7.json)
+    Between path: source and target come from different paths (e.g. f6g7_h3d7.json)
     
-    文件名格式：move1_move2.json，其中 move1 和 move2 是 4 个字符的棋步（例如 f6g7, h3d7）
-    如果 move1 == move2，则是 path 内；否则是 path 间。
+    File name format: move1_move2.json, where move1 and move2 are 4-character chess moves (e.g. f6g7, h3d7)
+    If move1 == move2, it is within path; otherwise it is between path.
     """
-    # 提取文件名（不含扩展名）
+    # Extract the file name (without extension)
     name = json_filename.replace(".json", "")
     parts = name.split("_")
     
-    # 简单判断：如果只有两个部分，且它们相同，则是 path 内
+    # Simple check: if there are only two parts and they are the same, it is within path
     if len(parts) == 2:
         return parts[0] == parts[1]
     
-    # 如果有多于两个部分，尝试提取前两个部分和后两个部分
-    # 例如：f6g7_f6g7.json -> ['f6g7', 'f6g7']
-    # 或者：move1_move2_move3_move4.json -> 检查前两个是否等于后两个
+    # If there are more than two parts, try to extract the first two parts and the last two parts
+    # e.g. f6g7_f6g7.json -> ['f6g7', 'f6g7']
+    # or: move1_move2_move3_move4.json -> check if the first two are equal to the last two
     if len(parts) >= 2:
-        # 检查第一个部分（通常是 4 个字符的棋步）是否等于第二个部分
+        # Check if the first part (usually a 4-character chess move) is equal to the second part
         if len(parts[0]) == 4 and len(parts[1]) == 4:
             return parts[0] == parts[1]
     
@@ -293,42 +282,30 @@ def compute_folder_virtual_weight(
     lorsas: List[LowRankSparseAttention],
     apply_layernorm_path: bool = True,
 ) -> Tuple[Dict[str, float], Dict[str, float], float, float]:
-    """计算文件夹中 CSV 或 JSON 文件的 virtual_weight。
+    """Compute the virtual_weight of CSV or JSON files in a folder.
 
-    如果文件夹中包含 JSON 文件（包含 feature pairs 和 reduction_ratio），
-    则使用加权平均（权重为 -reduction_ratio）计算 virtual_weight。
-    会区分 path 内和 path 间的 virtual_weight。
+    If the folder contains JSON files (containing feature pairs and reduction_ratio),
+    use weighted average (weight = -reduction_ratio) to compute virtual_weight.
+    It will distinguish between within path and between path virtual_weight.
 
-    参数
-    ----
-    folder_path:
-        文件夹路径，包含 CSV 或 JSON 文件。
-    transcoders:
-        Transcoder SAE 字典。
-    lorsas:
-        Lorsa 列表。
-    apply_layernorm_path:
-        是否应用 LayerNorm 路径传播。
-
-    返回
-    ----
+    Returns:
     Tuple[Dict[str, float], Dict[str, float], float, float]
-        (path 内 virtual_weight 字典, path 间 virtual_weight 字典, 
-         path 内整体平均, path 间整体平均)
+        (within path virtual_weight dictionary, between path virtual_weight dictionary,
+         within path mean, between path mean)
     """
     folder = Path(folder_path)
     
-    # 检查是否有 JSON 文件（排除 infl_all_feature.json 等特殊文件）
+    # Check if there are JSON files (exclude infl_all_feature.json etc.)
     json_files = [
         f for f in sorted(folder.glob("*.json"), key=lambda p: p.name)
         if not f.name.startswith("infl_")
     ]
     
     if json_files:
-        # 使用 JSON 文件模式：计算加权平均 virtual_weight
-        # 区分 path 内和 path 间
-        within_path_means: Dict[str, float] = {}  # path 内的 virtual_weight
-        between_path_means: Dict[str, float] = {}  # path 间的 virtual_weight
+        # Use JSON file mode: compute weighted average virtual_weight
+        # Distinguish between within path and between path
+        within_path_means: Dict[str, float] = {}  # within path virtual_weight
+        between_path_means: Dict[str, float] = {}  # between path virtual_weight
         
         for json_file in tqdm(json_files, desc="virtual_weight_from_json"):
             weighted_vw, successful, total = compute_weighted_virtual_weight_from_json(
@@ -338,13 +315,13 @@ def compute_folder_virtual_weight(
                 apply_layernorm_path=apply_layernorm_path,
             )
             
-            # 根据文件名判断是 path 内还是 path 间
+            # Check if the file name represents within path or between path
             if _is_within_path(json_file.name):
                 within_path_means[json_file.name] = weighted_vw
             else:
                 between_path_means[json_file.name] = weighted_vw
         
-        # 计算 path 内和 path 间的整体平均
+        # Compute the mean of within path and between path
         within_path_mean = (
             _mean_from_list([v for v in within_path_means.values() if not pd.isna(v)])
             if within_path_means
@@ -359,9 +336,9 @@ def compute_folder_virtual_weight(
         return within_path_means, between_path_means, within_path_mean, between_path_mean
     
     else:
-        # 使用传统的 CSV 文件模式
-        # 对于 CSV 模式，我们仍然返回 path 内和 path 间的格式
-        # 但 CSV 模式下，所有文件都视为 path 内
+        # Use the traditional CSV file mode
+        # For CSV mode, we still return the format of within path and between path
+        # But in CSV mode, all files are regarded as within path
         csv_files = sorted(folder.glob("*top100_features.csv"), key=lambda p: p.name)
         within_path_means: Dict[str, float] = {}
         for csv in tqdm(csv_files, desc="virtual_weight_within_folder"):
@@ -373,7 +350,7 @@ def compute_folder_virtual_weight(
             )
             within_path_means[csv.name] = _mean_from_list(ws)
 
-        # CSV 模式下没有 path 间的概念，返回空字典
+        # CSV mode has no concept of between path, return empty dictionary
         between_path_means: Dict[str, float] = {}
 
         within_path_mean = (
@@ -381,6 +358,6 @@ def compute_folder_virtual_weight(
             if within_path_means
             else float("nan")
         )
-        between_path_mean = float("nan")  # CSV 模式下没有 path 间数据
+        between_path_mean = float("nan")
 
         return within_path_means, between_path_means, within_path_mean, between_path_mean
