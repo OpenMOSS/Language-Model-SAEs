@@ -64,7 +64,10 @@ class Atlas:
 
     def export_to_json(self):
         return {
-            "nodes": list(self.nodes.keys()),
+            "nodes": [
+                {node.name: node.influence}
+                for node in self.nodes.values()
+            ],
             "links": [
                 {
                     "source": link[0],

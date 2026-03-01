@@ -507,5 +507,5 @@ class ForwardOnlyReplacementModel(ReplacementModel):
             ).to(self.cfg.dtype)
             for layer in range(self.cfg.n_layers)
         ], dim=1)  # batch n_layer d_sae
-        
+
         self.downstream_transcoder_attribution += downstream_transcoder_aij * self.downstream_transcoder_vw
