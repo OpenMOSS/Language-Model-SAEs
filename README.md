@@ -35,13 +35,13 @@
 Use [pip](https://pypi.org/project/pip/) to install Language-Model-SAEs:
 
 ```bash
-pip install lm-saes==2.0.0b18
+pip install lm-saes==2.0.0b19
 ```
 
 We also highly recommend using [uv](https://docs.astral.sh/uv/) to manage your own project dependencies. You can use
 
 ```bash
-uv add lm-saes==2.0.0b18
+uv add lm-saes==2.0.0b19
 ```
 
 to add Language-Model-SAEs as your project dependency.

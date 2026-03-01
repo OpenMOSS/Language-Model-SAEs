@@ -1,3 +1,15 @@
+## v2.0.0b19 (2026-03-01)
+
+### Fix
+
+- add VS Code configuration to .gitignore
+- **circuit**: ensure feature activations are correctly compared in attribution
+- **circuit**: add list_of_features parameter to relevant functions and classes
+
+### Refactor
+
+- **circuit**: optimize linear layer probing with vectorized Jacobian computation
+
 ## v2.0.0b18 (2026-02-27)
 
 ## v2.0.0b17 (2026-02-27)
