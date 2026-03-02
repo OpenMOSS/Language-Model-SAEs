@@ -2,16 +2,16 @@
 
 Sparse Autoencoders (SAEs) are the foundational architecture for learning interpretable features from language model activations. They decompose neural network activations into sparse, interpretable features that help address the superposition problem.
 
-Given a model activation vector \(\mathbf{x} \in \mathbb{R}^{d_{\text{model}}}\), an SAE first **encodes** it into a high-dimensional sparse latent representation, then **decodes** it back to reconstruct the original activation:
+Given a model activation vector $\mathbf{x} \in \mathbb{R}^{d_{\text{model}}}$, an SAE first **encodes** it into a high-dimensional sparse latent representation, then **decodes** it back to reconstruct the original activation:
 
-\[
+$$
 \begin{aligned}
 \mathbf{z} &= \sigma(W_E \mathbf{x} + \mathbf{b}_E) \in \mathbb{R}^{d_{\text{SAE}}} \\
 \hat{\mathbf{x}} &= W_D \mathbf{z} + \mathbf{b}_D \in \mathbb{R}^{d_{\text{model}}}
 \end{aligned}
-\]
+$$
 
-where \(W_E \in \mathbb{R}^{d_{\text{SAE}} \times d_{\text{model}}}\) and \(W_D \in \mathbb{R}^{d_{\text{model}} \times d_{\text{SAE}}}\) are the encoder and decoder weight matrices, \(\mathbf{b}_E, \mathbf{b}_D\) are bias terms, and \(\sigma(\cdot)\) is a sparsity-inducing activation function (e.g., ReLU, TopK). The model is trained to minimize the reconstruction loss \(\|\mathbf{x} - \hat{\mathbf{x}}\|^2\) while keeping \(\mathbf{z}\) sparse, encouraging each dimension of \(\mathbf{z}\) to correspond to a monosemantic feature.
+where $W_E \in \mathbb{R}^{d_{\text{SAE}} \times d_{\text{model}}}$ and $W_D \in \mathbb{R}^{d_{\text{model}} \times d_{\text{SAE}}}$ are the encoder and decoder weight matrices, $\mathbf{b}_E, \mathbf{b}_D$ are bias terms, and $\sigma(\cdot)$ is a sparsity-inducing activation function (e.g., ReLU, TopK). The model is trained to minimize the reconstruction loss $\|\mathbf{x} - \hat{\mathbf{x}}\|^2$ while keeping $\mathbf{z}$ sparse, encouraging each dimension of $\mathbf{z}$ to correspond to a monosemantic feature.
 
 The architecture was introduced in foundational works including [*Sparse Autoencoders Find Highly Interpretable Features in Language Models*](https://arxiv.org/abs/2309.08600) and [*Towards Monosemanticity: Decomposing Language Models With Dictionary Learning*](https://transformer-circuits.pub/2023/monosemantic-features). For detailed architectural specifications and mathematical formulations, please refer to these papers.
 

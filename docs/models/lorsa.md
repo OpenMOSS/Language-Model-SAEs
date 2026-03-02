@@ -2,32 +2,32 @@
 
 Low-Rank Sparse Attention (Lorsa) is a specialized sparse dictionary architecture designed to decompose attention layers into interpretable sparse components. Unlike standard SAEs that treat attention as a black box, Lorsa explicitly models the query-key-value structure while maintaining sparsity and interpretability.
 
-Given an input sequence \(X \in \mathbb{R}^{n \times d}\), Lorsa has:
+Given an input sequence $X \in \mathbb{R}^{n \times d}$, Lorsa has:
 
-- \(n_{\text{qk\_heads}}\) QK heads, each with projections \(W_q^h, W_k^h \in \mathbb{R}^{d \times d_{\text{qk\_head}}}\)
-- \(n_{\text{ov\_heads}}\) rank-1 OV heads, each with projections \(\mathbf{w}_v^i \in \mathbb{R}^{d \times 1}\), \(\mathbf{w}_o^i \in \mathbb{R}^{1 \times d}\)
+- $n_{\text{qk\_heads}}$ QK heads, each with projections $W_q^h, W_k^h \in \mathbb{R}^{d \times d_{\text{qk\_head}}}$
+- $n_{\text{ov\_heads}}$ rank-1 OV heads, each with projections $\mathbf{w}_v^i \in \mathbb{R}^{d \times 1}$, $\mathbf{w}_o^i \in \mathbb{R}^{1 \times d}$
 
-Every group of \(n_{\text{ov\_heads}} / n_{\text{qk\_heads}}\) consecutive OV heads shares the same QK head. Denote the QK head assigned to OV head \(i\) as \(h(i)\). The forward pass for each OV head \(i\) is:
+Every group of $n_{\text{ov\_heads}} / n_{\text{qk\_heads}}$ consecutive OV heads shares the same QK head. Denote the QK head assigned to OV head $i$ as $h(i)$. The forward pass for each OV head $i$ is:
 
-\[
+$$
 \begin{aligned}
 Q^{h(i)} &= X W_q^{h(i)}, \quad K^{h(i)} = X W_k^{h(i)} \\
 A^{h(i)} &= \operatorname{softmax}\!\left(\frac{Q^{h(i)} {(K^{h(i)})}^\top}{\sqrt{d_{\text{qk\_head}}}}\right) \in \mathbb{R}^{n \times n} \\
 \tilde{\mathbf{z}}^i &= A^{h(i)}\, (X \mathbf{w}_v^i) \in \mathbb{R}^{n \times 1}
 \end{aligned}
-\]
+$$
 
-The pre-activations across all OV heads are then passed through a sparsity-inducing activation function \(\sigma(\cdot)\):
+The pre-activations across all OV heads are then passed through a sparsity-inducing activation function $\sigma(\cdot)$:
 
-\[
+$$
 [\mathbf{z}^0, \ldots, \mathbf{z}^{n_{\text{ov\_heads}}-1}] = \sigma([\tilde{\mathbf{z}}^0, \ldots, \tilde{\mathbf{z}}^{n_{\text{ov\_heads}}-1}])
-\]
+$$
 
 The final output sums the contributions of all OV heads weighted by their activations:
 
-\[
+$$
 \hat{Y} = \sum_{i=0}^{n_{\text{ov\_heads}}-1} \mathbf{z}^i\, (\mathbf{w}_o^i)^\top \in \mathbb{R}^{n \times d}
-\]
+$$
 
 The architecture was introduced in [*Towards Understanding the Nature of Attention with Low-Rank Sparse Decomposition*](https://openreview.net/forum?id=9A2etpDFIB) (ICLR 2026), which proposes using sparse dictionary learning to address *attention superposition*—the challenge of disentangling attention-mediated interactions between features at different token positions. For detailed architectural specifications and mathematical formulations, please refer to this paper.
 
