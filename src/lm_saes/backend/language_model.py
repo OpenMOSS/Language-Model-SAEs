@@ -249,9 +249,7 @@ def hook_in_fn_builder(replacement_module: AbstractSparseAutoEncoder) -> Callabl
             assert hook in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
             cache_activations[hook + ".x"] = x
             cache_activations[hook + ".feature_acts.up"] = replacement_module.encode(x).to_sparse(-1).coalesce()
-            cache_activations[hook + ".feature_acts.down"] = (
-                cache_activations[hook + ".feature_acts.up"].detach().coalesce()
-            )
+            cache_activations[hook + ".feature_acts.down"] = cache_activations[hook + ".feature_acts.up"].detach()
             cache_activations[hook + ".feature_acts.down"].requires_grad_(True)
             return x.detach()
 
@@ -277,9 +275,7 @@ def hook_in_fn_builder(replacement_module: AbstractSparseAutoEncoder) -> Callabl
             cache_activations[hook + ".feature_acts.up"] = (
                 encode_result[0].to_sparse(-1).coalesce()
             )  # batch, seq_len, d_sae
-            cache_activations[hook + ".feature_acts.down"] = (
-                cache_activations[hook + ".feature_acts.up"].detach().coalesce()
-            )
+            cache_activations[hook + ".feature_acts.down"] = cache_activations[hook + ".feature_acts.up"].detach()
             cache_activations[hook + ".feature_acts.down"].requires_grad_(True)
             return x.detach()
 
@@ -411,57 +407,51 @@ class TransformerLensLanguageModel(LanguageModel):
             if activation.grad is not None:
                 activation.grad = None
 
-    def _build_edge_row_block_from_cache(
+    def _update_edge_matrix_from_cache(
         self,
-        *,
-        cur_batch_size: int,
-        edge_matrix: torch.Tensor,
-        row_slice: slice,
+        edge_rows: torch.Tensor,
         token_embed: torch.Tensor,  # batch, pos, d_model
         feature_acts_down: list[torch.Tensor],
         errors: list[torch.Tensor],
-        token_col_slice: slice,
-        feature_col_slice: slice,
-        error_col_slice: slice,
     ) -> None:
-        token_grad = token_embed.grad
-        if token_grad is None:
-            token_block = torch.zeros(cur_batch_size, token_embed.shape[1], dtype=edge_matrix.dtype, device="cpu")
-        else:
-            token_block = (
-                einops.reduce((token_embed * token_grad)[:cur_batch_size], "b pos d_model -> b pos", "sum")
+        assert token_embed.grad is not None, "token_embed must have a gradient"
+        col_start = 0
+        token_block = (
+            einops.einsum(
+                token_embed[: edge_rows.shape[0]],
+                token_embed.grad[: edge_rows.shape[0]],
+                "b pos d_model, b pos d_model -> b pos",
+            )
+            .detach()
+            .cpu()
+        )
+        edge_rows[:, col_start : col_start + token_embed.shape[1]] = token_block
+        col_start += token_embed.shape[1]
+
+        for acts in feature_acts_down:
+            assert acts.grad is not None, "feature_acts_down must have a gradient"
+            grad = acts.grad.coalesce().to_dense() if acts.grad.is_sparse else acts.grad
+            indices = acts.indices()
+            mask = indices[0] < edge_rows.shape[0]
+            idx = indices[:, mask]
+            values = acts.values()[mask].reshape(edge_rows.shape[0], -1)
+            grad_values = grad[idx[0], idx[1], idx[2]].reshape(edge_rows.shape[0], -1)
+            products = einops.einsum(values, grad_values, "b k, b k -> b k").detach().cpu()
+            edge_rows[:, col_start : col_start + products.shape[1]] = products
+            col_start += products.shape[1]
+
+        for error in errors:
+            assert error.grad is not None, "error must have a gradient"
+            edge_rows[:, col_start : col_start + error.shape[1]] = (
+                einops.einsum(
+                    error[: edge_rows.shape[0]],
+                    error.grad[: edge_rows.shape[0]],
+                    "b pos ..., b pos ... -> b pos",
+                )
                 .detach()
                 .cpu()
             )
-        edge_matrix[row_slice, token_col_slice] = token_block
-
-        feature_blocks: list[torch.Tensor] = []
-        # token + feature + error
-        for acts in feature_acts_down:
-            grad = acts.grad
-            if grad is None:
-                feature_blocks.append(torch.zeros(cur_batch_size, acts._nnz(), dtype=edge_matrix.dtype, device="cpu"))
-                continue
-            grad = grad.coalesce().to_dense() if grad.is_sparse else grad
-
-            indices = acts.indices()
-            mask = indices[0] < cur_batch_size
-            idx = indices[:, mask]
-            products = acts.values()[mask] * grad[idx[0], idx[1], idx[2]]
-            feature_blocks.append(einops.rearrange(products, "(b k) -> b k", b=cur_batch_size).detach().cpu())
-
-        edge_matrix[row_slice, feature_col_slice] = torch.cat(feature_blocks, dim=1)
-
-        error_blocks: list[torch.Tensor] = []
-        for error in errors:
-            grad = error.grad
-            if grad is None:
-                error_blocks.append(torch.zeros(cur_batch_size, 1, dtype=edge_matrix.dtype, device="cpu"))
-                continue
-            contrib = einops.reduce((error * grad)[:cur_batch_size], "b ... -> b", "sum")
-            error_blocks.append(contrib.detach().cpu().unsqueeze(-1))
-
-        edge_matrix[row_slice, error_col_slice] = torch.cat(error_blocks, dim=1)
+            col_start += error.shape[1]
 
     def attribute(
         self,
@@ -523,8 +513,8 @@ class TransformerLensLanguageModel(LanguageModel):
             cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
             top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
         n_logits = len(top_idx)
-        num_active_features = sum(acts._nnz() for acts in feature_acts_up)
-        num_error_nodes = len(errors)
+        num_active_features = sum(acts._nnz() // batch_size for acts in feature_acts_up)
+        num_error_nodes = len(errors) * n_tokens
         feature_nodes = min(max_feature_nodes or num_active_features, num_active_features)
         edge_matrix = torch.zeros(
             feature_nodes + n_logits, n_tokens + num_active_features + num_error_nodes
@@ -535,20 +525,18 @@ class TransformerLensLanguageModel(LanguageModel):
             batch_nodes = batch_logits[:, top_idx[i : i + cur_batch_size]] - torch.mean(batch_logits[0], dim=-1)
             self._clear_cache_activation_grads()
             batch_nodes.diagonal().sum().backward(retain_graph=True)
-            row_slice = slice(feature_nodes + i, feature_nodes + i + cur_batch_size)
-            self._build_edge_row_block_from_cache(
-                cur_batch_size=cur_batch_size,
-                edge_matrix=edge_matrix,
-                row_slice=row_slice,
+            self._update_edge_matrix_from_cache(
+                edge_rows=edge_matrix[feature_nodes + i : feature_nodes + i + cur_batch_size, :],
                 token_embed=self.cache_activations["hook_embed"],
                 feature_acts_down=feature_acts_down,
                 errors=errors,
-                token_col_slice=slice(0, n_tokens),
-                feature_col_slice=slice(n_tokens, n_tokens + num_active_features),
-                error_col_slice=slice(n_tokens + num_active_features, n_tokens + num_active_features + num_error_nodes),
             )
 
-        # TODO: trace from features
+        def normalize_edge_maxtrix(edge_matrix: torch.Tensor) -> torch.Tensor:
+            edge_matrix = edge_matrix.abs_()
+            return edge_matrix / edge_matrix.sum(dim=1, keepdim=True).clamp(min=1e-8)
+
+        feature_row_to_col = torch.zeros(feature_nodes, dtype=torch.int64, device="cpu")
 
     @property
     def eos_token_id(self) -> int | None:
