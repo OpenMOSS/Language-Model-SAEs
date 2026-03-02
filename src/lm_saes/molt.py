@@ -9,7 +9,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from lm_saes.abstract_sae import (
+from lm_saes.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,

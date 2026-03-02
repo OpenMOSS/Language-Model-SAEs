@@ -5,7 +5,7 @@ Load a Transcoder from HuggingFace.
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import SparseDictionary
+from lm_saes.sparse_dictionary import SparseDictionary
 
 # Load sparse dictionary from HuggingFace
 sae = SparseDictionary.from_pretrained(

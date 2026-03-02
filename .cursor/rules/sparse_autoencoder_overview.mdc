@@ -20,7 +20,7 @@ A typical SAE consists of:
 - A **decoder** that reconstructs the original activations from the latent space
 - A **sparsity mechanism** (often L1 regularization or TopK activation) that enforces sparse activations
 
-The main implementation can be found in [src/lm_saes/sae.py](mdc:src/lm_saes/sae.py) with the abstract class defined in [src/lm_saes/abstract_sae.py](mdc:src/lm_saes/abstract_sae.py).
+The main implementation can be found in [src/lm_saes/sae.py](mdc:src/lm_saes/sae.py) with the abstract class defined in [src/lm_saes/sparse_dictionary.py](mdc:src/lm_saes/sparse_dictionary.py).
 
 ## Types of SAEs
 

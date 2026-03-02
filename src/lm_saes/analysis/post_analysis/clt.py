@@ -9,7 +9,7 @@ from typing import Any
 import torch
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes.abstract_sae import SparseDictionary
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper

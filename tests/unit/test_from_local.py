@@ -9,7 +9,7 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes import SAEConfig, SparseAutoEncoder
-from lm_saes.abstract_sae import SparseDictionary
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.testing import distributed_test
 
 

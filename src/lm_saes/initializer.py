@@ -8,7 +8,7 @@ from transformer_lens.components import Attention, GroupedQueryAttention, Transf
 from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import SparseDictionary, SparseDictionaryConfig
+from lm_saes.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
 from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseConfig

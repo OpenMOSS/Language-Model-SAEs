@@ -12,7 +12,7 @@ from bson import ObjectId
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from lm_saes.abstract_sae import SparseDictionaryConfig
+from lm_saes.sparse_dictionary import SparseDictionaryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.config import DatasetConfig
 from lm_saes.sae import SAEConfig
