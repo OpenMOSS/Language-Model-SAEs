@@ -1,0 +1,2682 @@
+<!DOCTYPE html><html lang="en" class="no-js"><head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://lm-saes.readthedocs.io/train-saes/">
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../models/overview/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.3">
+    
+    
+      
+        <title>Train SAEs - Language Model SAEs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="https://unpkg.com/katex@0/dist/katex.min.css">
+    
+      <link rel="stylesheet" href="../assets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  <link href="../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#train-sparse-autoencoders" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Language Model SAEs" class="md-header__button md-logo" aria-label="Language Model SAEs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Language Model SAEs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Train SAEs
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/OpenMOSS/Language-Model-SAEs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Language Model SAEs" class="md-nav__button md-logo" aria-label="Language Model SAEs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+
+    </a>
+    Language Model SAEs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/OpenMOSS/Language-Model-SAEs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Train SAEs
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Train SAEs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#training-basic-sparse-autoencoders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training Basic Sparse Autoencoders
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Training Basic Sparse Autoencoders">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#load-model-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load Model &amp; Dataset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-activations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generate Activations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-and-initialize-sae" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create and Initialize SAE
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#train-sae" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Train SAE
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-high-level-runner-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the High-Level Runner API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging-to-wb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging to W&amp;B
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checkpoints-and-continue-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checkpoints and Continue Training
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#activation-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Activation Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Activation Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#relu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ReLU
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jumprelu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JumpReLU
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TopK
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batchtopk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BatchTopK
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BatchTopK">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#convert-batchtopk-to-jumprelu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Convert BatchTopK to JumpReLU
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sparsity-penalties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparsity Penalties
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sparsity Penalties">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lp-norm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        \(L^p\)-Norm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tanh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tanh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tanh-quadratic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tanh-Quadratic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auxiliary-losses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auxiliary Losses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Auxiliary Losses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#jumprelu-pre-act-loss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JumpReLU Pre-act Loss
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aux-k-loss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aux-K Loss
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legacy-stategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy Stategies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#caching-activations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caching Activations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Caching Activations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#training-with-cached-activations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training with Cached Activations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#use-huggingface-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use HuggingFace Backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sparse Dictionaries
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Sparse Dictionaries
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/sae/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sparse Autoencoder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/transcoder/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transcoder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/lorsa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Low-Rank Sparse Attention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analyze-saes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analyze SAEs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../distributed-guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Distributed Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../style-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Style Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8">
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Code Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/training/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/activation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/runners/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runners
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/infrastructure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#training-basic-sparse-autoencoders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training Basic Sparse Autoencoders
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Training Basic Sparse Autoencoders">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#load-model-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load Model &amp; Dataset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-activations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generate Activations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-and-initialize-sae" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create and Initialize SAE
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#train-sae" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Train SAE
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-high-level-runner-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the High-Level Runner API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging-to-wb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging to W&amp;B
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checkpoints-and-continue-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checkpoints and Continue Training
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#activation-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Activation Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Activation Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#relu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ReLU
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jumprelu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JumpReLU
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#topk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TopK
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batchtopk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BatchTopK
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BatchTopK">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#convert-batchtopk-to-jumprelu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Convert BatchTopK to JumpReLU
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sparsity-penalties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparsity Penalties
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sparsity Penalties">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lp-norm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        \(L^p\)-Norm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tanh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tanh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tanh-quadratic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tanh-Quadratic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auxiliary-losses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auxiliary Losses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Auxiliary Losses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#jumprelu-pre-act-loss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JumpReLU Pre-act Loss
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aux-k-loss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aux-K Loss
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legacy-stategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy Stategies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#caching-activations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caching Activations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Caching Activations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#training-with-cached-activations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training with Cached Activations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#use-huggingface-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use HuggingFace Backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="train-sparse-autoencoders">Train Sparse Autoencoders</h1>
+<p><code>Language-Model-SAEs</code> provides a general way to train, analyze and visualize Sparse Autoencoders and their variants. To help you get started quickly, we've included <a href="">example scripts</a> that guide you through each stage of working with SAEs. This guide begins with a foundational example and progressively introduces the core features and capabilities of the library.</p>
+<h2 id="training-basic-sparse-autoencoders">Training Basic Sparse Autoencoders</h2>
+<p>A <a href="">Sparse Autoencoder</a> is trained to reconstruct model activations at specific position. We depend on <a href="https://github.com/TransformerLensOrg/TransformerLens">TransformerLens</a> to take activations out of model forward pass, specified by hook points. <code>Language-Model-SAEs</code> provides complete abstraction on the necessary components to train Sparse Autoencoders at ease.</p>
+<h3 id="load-model-dataset">Load Model &amp; Dataset</h3>
+<p>Generation of our training data, the model activations, requires the presence of both the language model and the dataset. First, we can load a pretrained language model by:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="n">LanguageModelConfig</span><span class="p">,</span> <span class="n">TransformerLensLanguageModel</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">TransformerLensLanguageModel</span><span class="p">(</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">LanguageModelConfig</span><span class="p">(</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        <span class="n">model_name</span><span class="o">=</span><span class="s2">"EleutherAI/pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        <span class="n">dtype</span><span class="o">=</span><span class="s2">"torch.float16"</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="p">)</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>where <code>TransformerLensLanguageModel</code> is a simple wrapper around the TransformerLens <code>HookedTransformer</code>, enhanced with:</p>
+<ol>
+<li><strong>Unified interface</strong> for extracting activations (compatible with native HuggingFace transformers) and tracing token positions from original texts.</li>
+<li><strong>Distributed training support</strong> with simple data parallelism integrated.</li>
+</ol>
+<p>See the <a href="">section</a> below to find how to use HuggingFace transformers directly for generating activation.</p>
+<div class="admonition tip">
+<p class="admonition-title">Use Half Precision</p>
+<p>Activation generation constitutes the majority of training time. We strongly recommend using half precision (<code>float16</code> or <code>bfloat16</code>) to accelerate the forward pass and reduce GPU memory usage. Here we use FP16 since Pythia models are trained in FP16.</p>
+</div>
+<p>Next, we load some text corpus from HuggingFace. Different pretraining text corpus often does not have so much effect on SAE training. Here we load <a href="https://huggingface.co/datasets/Hzfinfdu/SlimPajama-3B"><code>Hzfinfdu/SlimPajama-3B</code></a>, a 3B-token subset of the <a href="https://huggingface.co/datasets/cerebras/SlimPajama-627B">627B SlimPajama dataset</a>, which is typically sufficient for basic SAE training.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">datasets</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">load_dataset</span><span class="p">(</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="s2">"Hzfinfdu/SlimPajama-3B"</span><span class="p">,</span> 
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">split</span><span class="o">=</span><span class="s2">"train"</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="generate-activations">Generate Activations</h3>
+<p>Model activations often require some further transformation to ensure correct and efficient SAE training. We provide <code>ActivationFactory</code> as the core abstraction for producing activation streams. It provides a comprehensive interface to generate activations from model forward passes, filter unnecessary tokens, and reshape, re-batch, and shuffle activations.</p>
+<p>We can create an <code>ActivationFactory</code> as follow:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">ActivationFactory</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">ActivationFactoryConfig</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">ActivationFactoryDatasetSource</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">ActivationFactoryTarget</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">BufferShuffleConfig</span><span class="p">,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="p">)</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">activation_factory</span> <span class="o">=</span> <span class="n">ActivationFactory</span><span class="p">(</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">ActivationFactoryConfig</span><span class="p">(</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>        <span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="n">ActivationFactoryDatasetSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"SlimPajama-3B"</span><span class="p">)],</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>        <span class="n">target</span><span class="o">=</span><span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span><span class="p">,</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        <span class="n">hook_points</span><span class="o">=</span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">],</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>        <span class="n">batch_size</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="n">buffer_size</span><span class="o">=</span><span class="mi">4096</span> <span class="o">*</span> <span class="mi">4</span><span class="p">,</span> <span class="c1"># Set to enable the online activation shuffling</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>        <span class="n">buffer_shuffle</span><span class="o">=</span><span class="n">BufferShuffleConfig</span><span class="p">(</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>            <span class="n">perm_seed</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>            <span class="n">generator_device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>        <span class="p">),</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>    <span class="p">)</span>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Then, we call the <code>.process</code> method, passing in our loaded model and dataset, to start the stream processing of the activations.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">activations_stream</span> <span class="o">=</span> <span class="n">activation_factory</span><span class="o">.</span><span class="n">process</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">model_name</span><span class="o">=</span><span class="s2">"pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">datasets</span><span class="o">=</span><span class="p">{</span><span class="s2">"SlimPajama-3B"</span><span class="p">:</span> <span class="n">dataset</span><span class="p">},</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>It returns a streaming iterator. Each item is a dictionary mainly containing:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"blocks.6.hook_resid_post"</code></td>
+<td>Activation tensor with shape <code>(batch_size, d_model)</code> — in this config, <code>(4096, 768)</code></td>
+</tr>
+<tr>
+<td><code>"tokens"</code></td>
+<td>The corresponding token IDs</td>
+</tr>
+</tbody>
+</table>
+<p>With target set to <code>ActivationFactoryTarget.ACTIVATIONS_1D</code>, the produced activations will have no sequence dimension. They are shuffled across both samples and context positions to ensure the SAE trains on randomly sampled activations from any position in any sample.</p>
+<h3 id="create-and-initialize-sae">Create and Initialize SAE</h3>
+<p>We've successfully prepared the data we need. It's time to turn to the SAE itself! But before training, we should first define the SAE architecture and initialize it. Create an <code>SAEConfig</code> to define the SAE architecture:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="n">SAEConfig</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">sae_cfg</span> <span class="o">=</span> <span class="n">SAEConfig</span><span class="p">(</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">hook_point_in</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">hook_point_out</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">d_model</span><span class="o">=</span><span class="mi">768</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">expansion_factor</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">act_fn</span><span class="o">=</span><span class="s2">"relu"</span><span class="p">,</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Here're some brief explanations of the config we set:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hook_point_in</code> / <code>hook_point_out</code></td>
+<td>When identical, this defines an SAE; when different, it becomes a transcoder</td>
+</tr>
+<tr>
+<td><code>d_model</code></td>
+<td>Must match the model's hidden size (768 for Pythia-160m)</td>
+</tr>
+<tr>
+<td><code>expansion_factor</code></td>
+<td>Multiplier for the latent dimension. Here, <code>d_sae = 768 × 8 = 6144</code></td>
+</tr>
+<tr>
+<td><code>act_fn</code></td>
+<td>Activation function. Modern SAEs often use <code>"jumprelu"</code> or <code>"batchtopk"</code>, but we use <code>"relu"</code> for simplicity</td>
+</tr>
+</tbody>
+</table>
+<p>More options of <code>SAEConfig</code> are introduced in the <a href="">reference</a>.</p>
+<p>With only SAEConfig defined, the created SAE will have nothing but empty tensors as parameters. We need to fill the empty parameters with proper initialization, which is often proved crucial for final SAE performance. The <code>Initializer</code> class handles parameter initialization. The <code>grid_search_init_norm</code> option (recommended) searches for the optimal encoder/decoder parameter scale to minimize initial MSE loss on the activation distribution.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="n">Initializer</span><span class="p">,</span> <span class="n">InitializerConfig</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">initializer</span> <span class="o">=</span> <span class="n">Initializer</span><span class="p">(</span><span class="n">InitializerConfig</span><span class="p">(</span><span class="n">grid_search_init_norm</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">sae</span> <span class="o">=</span> <span class="n">initializer</span><span class="o">.</span><span class="n">initialize_sae_from_config</span><span class="p">(</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">sae_cfg</span><span class="p">,</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">activation_stream</span><span class="o">=</span><span class="n">activations_stream</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="train-sae">Train SAE</h3>
+<p>Finally, we can start training! A <code>Trainer</code> instance is responsible for holding optimizer &amp; scheduler states.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="n">Trainer</span><span class="p">,</span> <span class="n">TrainerConfig</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">Trainer</span><span class="p">(</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">TrainerConfig</span><span class="p">(</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>        <span class="n">amp_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>        <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>        <span class="n">total_training_tokens</span><span class="o">=</span><span class="mi">800_000_000</span><span class="p">,</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>        <span class="n">log_frequency</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>        <span class="n">exp_result_path</span><span class="o">=</span><span class="s2">"results"</span><span class="p">,</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="p">)</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>amp_dtype</code></td>
+<td>Mixed precision dtype. Also handles precision mismatches between SAE parameters and activations</td>
+</tr>
+<tr>
+<td><code>lr</code></td>
+<td>Learning rate</td>
+</tr>
+<tr>
+<td><code>total_training_tokens</code></td>
+<td>Total tokens for training. Training steps = total tokens / batch size</td>
+</tr>
+<tr>
+<td><code>log_frequency</code></td>
+<td>Logging interval (in steps) for console and W&amp;B</td>
+</tr>
+<tr>
+<td><code>exp_result_path</code></td>
+<td>Directory for saving results and checkpoints</td>
+</tr>
+</tbody>
+</table>
+<p>More options on the optimizer/scheduler and other hyperparameters are available. See the <a href="">reference</a> for more detail.</p>
+<p>Just run <code>trainer.fit</code> and pass in the initialized SAE and the activation stream, and keep eyes on the console log to see whether the training goes well!</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">sae</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">save_hyperparameters</span><span class="p">(</span><span class="s2">"results"</span><span class="p">)</span> <span class="c1"># Save hyperparameter before training</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">sae</span><span class="o">=</span><span class="n">sae</span><span class="p">,</span> 
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">activation_stream</span><span class="o">=</span><span class="n">activations_stream</span><span class="p">,</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="p">)</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">sae</span><span class="o">.</span><span class="n">save_pretrained</span><span class="p">(</span><span class="n">save_path</span><span class="o">=</span><span class="s2">"results"</span><span class="p">)</span> <span class="c1"># Save the trained weight after training</span>
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Consistent Save Path</p>
+<p>The path in <code>sae.cfg.save_hyperparameters</code> and <code>sae.save_pretrained</code> should be the same as specified in <code>exp_result_path</code> in <code>TrainerConfig</code>. Otherwise, the trained SAE may not be able to be correctly loaded.</p>
+</div>
+<hr>
+<h2 id="using-the-high-level-runner-api">Using the High-Level Runner API</h2>
+<p>For a more streamlined experience, <code>Language-Model-SAEs</code> also provides a high-level <code>train_sae</code> function that bundles all configuration into a single <code>TrainSAESettings</code> object. You can programmatically create the settings object and call the <code>train_sae</code>, or you can also use a configuration-file based settings and run it with our <code>lm-saes</code> CLI:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio"><input id="__tabbed_1_2" name="__tabbed_1" type="radio"><input id="__tabbed_1_3" name="__tabbed_1" type="radio"><div class="tabbed-labels"><label for="__tabbed_1_1">Runner</label><label for="__tabbed_1_2">CLI</label><label for="__tabbed_1_3">Full Script</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>Create the <code>TrainSAESettings</code> in Python and call <code>train_sae</code> with it. </p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">TrainSAESettings</span><span class="p">,</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">train_sae</span><span class="p">,</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">SAEConfig</span><span class="p">,</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">InitializerConfig</span><span class="p">,</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">TrainerConfig</span><span class="p">,</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="n">LanguageModelConfig</span><span class="p">,</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="n">DatasetConfig</span><span class="p">,</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="n">ActivationFactoryConfig</span><span class="p">,</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="n">ActivationFactoryDatasetSource</span><span class="p">,</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    <span class="n">ActivationFactoryTarget</span><span class="p">,</span>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>    <span class="n">BufferShuffleConfig</span><span class="p">,</span>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="p">)</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">TrainSAESettings</span><span class="p">(</span>
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>    <span class="n">sae</span><span class="o">=</span><span class="n">SAEConfig</span><span class="p">(</span>
+</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>        <span class="n">hook_point_in</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>        <span class="n">hook_point_out</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>        <span class="n">d_model</span><span class="o">=</span><span class="mi">768</span><span class="p">,</span>
+</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>        <span class="n">expansion_factor</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>        <span class="n">act_fn</span><span class="o">=</span><span class="s2">"relu"</span><span class="p">,</span>
+</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>        <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+</span><span id="__span-8-24"><a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-8-25"><a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>    <span class="p">),</span>
+</span><span id="__span-8-26"><a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>    <span class="n">initializer</span><span class="o">=</span><span class="n">InitializerConfig</span><span class="p">(</span>
+</span><span id="__span-8-27"><a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>        <span class="n">grid_search_init_norm</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-8-28"><a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>    <span class="p">),</span>
+</span><span id="__span-8-29"><a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>    <span class="n">trainer</span><span class="o">=</span><span class="n">TrainerConfig</span><span class="p">(</span>
+</span><span id="__span-8-30"><a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>        <span class="n">amp_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+</span><span id="__span-8-31"><a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>        <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-8-32"><a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a>        <span class="n">total_training_tokens</span><span class="o">=</span><span class="mi">800_000_000</span><span class="p">,</span>
+</span><span id="__span-8-33"><a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a>        <span class="n">log_frequency</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+</span><span id="__span-8-34"><a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a>        <span class="n">exp_result_path</span><span class="o">=</span><span class="s2">"results"</span><span class="p">,</span>
+</span><span id="__span-8-35"><a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a>    <span class="p">),</span>
+</span><span id="__span-8-36"><a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>    <span class="n">model</span><span class="o">=</span><span class="n">LanguageModelConfig</span><span class="p">(</span>
+</span><span id="__span-8-37"><a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a>        <span class="n">model_name</span><span class="o">=</span><span class="s2">"EleutherAI/pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-8-38"><a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-8-39"><a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a>        <span class="n">dtype</span><span class="o">=</span><span class="s2">"torch.float16"</span><span class="p">,</span>
+</span><span id="__span-8-40"><a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a>    <span class="p">),</span>
+</span><span id="__span-8-41"><a id="__codelineno-8-41" name="__codelineno-8-41" href="#__codelineno-8-41"></a>    <span class="n">model_name</span><span class="o">=</span><span class="s2">"pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-8-42"><a id="__codelineno-8-42" name="__codelineno-8-42" href="#__codelineno-8-42"></a>    <span class="n">datasets</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-8-43"><a id="__codelineno-8-43" name="__codelineno-8-43" href="#__codelineno-8-43"></a>        <span class="s2">"SlimPajama-3B"</span><span class="p">:</span> <span class="n">DatasetConfig</span><span class="p">(</span>
+</span><span id="__span-8-44"><a id="__codelineno-8-44" name="__codelineno-8-44" href="#__codelineno-8-44"></a>            <span class="n">dataset_name_or_path</span><span class="o">=</span><span class="s2">"Hzfinfdu/SlimPajama-3B"</span><span class="p">,</span>
+</span><span id="__span-8-45"><a id="__codelineno-8-45" name="__codelineno-8-45" href="#__codelineno-8-45"></a>        <span class="p">)</span>
+</span><span id="__span-8-46"><a id="__codelineno-8-46" name="__codelineno-8-46" href="#__codelineno-8-46"></a>    <span class="p">},</span>
+</span><span id="__span-8-47"><a id="__codelineno-8-47" name="__codelineno-8-47" href="#__codelineno-8-47"></a>    <span class="n">activation_factory</span><span class="o">=</span><span class="n">ActivationFactoryConfig</span><span class="p">(</span>
+</span><span id="__span-8-48"><a id="__codelineno-8-48" name="__codelineno-8-48" href="#__codelineno-8-48"></a>        <span class="n">sources</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-8-49"><a id="__codelineno-8-49" name="__codelineno-8-49" href="#__codelineno-8-49"></a>            <span class="n">ActivationFactoryDatasetSource</span><span class="p">(</span>
+</span><span id="__span-8-50"><a id="__codelineno-8-50" name="__codelineno-8-50" href="#__codelineno-8-50"></a>                <span class="n">name</span><span class="o">=</span><span class="s2">"SlimPajama-3B"</span><span class="p">,</span>
+</span><span id="__span-8-51"><a id="__codelineno-8-51" name="__codelineno-8-51" href="#__codelineno-8-51"></a>            <span class="p">)</span>
+</span><span id="__span-8-52"><a id="__codelineno-8-52" name="__codelineno-8-52" href="#__codelineno-8-52"></a>        <span class="p">],</span>
+</span><span id="__span-8-53"><a id="__codelineno-8-53" name="__codelineno-8-53" href="#__codelineno-8-53"></a>        <span class="n">target</span><span class="o">=</span><span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span><span class="p">,</span>
+</span><span id="__span-8-54"><a id="__codelineno-8-54" name="__codelineno-8-54" href="#__codelineno-8-54"></a>        <span class="n">hook_points</span><span class="o">=</span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">],</span>
+</span><span id="__span-8-55"><a id="__codelineno-8-55" name="__codelineno-8-55" href="#__codelineno-8-55"></a>        <span class="n">batch_size</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+</span><span id="__span-8-56"><a id="__codelineno-8-56" name="__codelineno-8-56" href="#__codelineno-8-56"></a>        <span class="n">buffer_size</span><span class="o">=</span><span class="mi">4096</span> <span class="o">*</span> <span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-8-57"><a id="__codelineno-8-57" name="__codelineno-8-57" href="#__codelineno-8-57"></a>        <span class="n">buffer_shuffle</span><span class="o">=</span><span class="n">BufferShuffleConfig</span><span class="p">(</span>
+</span><span id="__span-8-58"><a id="__codelineno-8-58" name="__codelineno-8-58" href="#__codelineno-8-58"></a>            <span class="n">perm_seed</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>
+</span><span id="__span-8-59"><a id="__codelineno-8-59" name="__codelineno-8-59" href="#__codelineno-8-59"></a>            <span class="n">generator_device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-8-60"><a id="__codelineno-8-60" name="__codelineno-8-60" href="#__codelineno-8-60"></a>        <span class="p">),</span>
+</span><span id="__span-8-61"><a id="__codelineno-8-61" name="__codelineno-8-61" href="#__codelineno-8-61"></a>    <span class="p">),</span>
+</span><span id="__span-8-62"><a id="__codelineno-8-62" name="__codelineno-8-62" href="#__codelineno-8-62"></a>    <span class="n">sae_name</span><span class="o">=</span><span class="s2">"pythia-160m-sae"</span><span class="p">,</span>
+</span><span id="__span-8-63"><a id="__codelineno-8-63" name="__codelineno-8-63" href="#__codelineno-8-63"></a>    <span class="n">sae_series</span><span class="o">=</span><span class="s2">"pythia-sae"</span><span class="p">,</span>
+</span><span id="__span-8-64"><a id="__codelineno-8-64" name="__codelineno-8-64" href="#__codelineno-8-64"></a><span class="p">)</span>
+</span><span id="__span-8-65"><a id="__codelineno-8-65" name="__codelineno-8-65" href="#__codelineno-8-65"></a>
+</span><span id="__span-8-66"><a id="__codelineno-8-66" name="__codelineno-8-66" href="#__codelineno-8-66"></a><span class="n">train_sae</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>CLI-based workflow requires a configuration file containing the settings consistent with <code>TrainSAESettings</code>. Common configuration file type like TOML, JSON and YAML are supported.</p>
+<p>Create a TOML configuration file (e.g., <code>train_config.toml</code>) with the following content:</p>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">sae_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"pythia-160m-sae"</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">sae_series</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"pythia-sae"</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">model_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"pythia-160m"</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">device_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="k">[sae]</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">sae_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"sae"</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="n">hook_point_in</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"blocks.6.hook_resid_post"</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="n">hook_point_out</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"blocks.6.hook_resid_post"</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="n">d_model</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">768</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="n">expansion_factor</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="n">act_fn</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"relu"</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="n">dtype</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"torch.float32"</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="n">device</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="k">[initializer]</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="n">grid_search_init_norm</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a><span class="k">[trainer]</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a><span class="n">amp_dtype</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"torch.float32"</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a><span class="n">lr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0001</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a><span class="n">total_training_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">800_000_000</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a><span class="n">log_frequency</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1000</span>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a><span class="n">exp_result_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"results"</span>
+</span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>
+</span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a><span class="k">[model]</span>
+</span><span id="__span-9-27"><a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a><span class="n">model_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"EleutherAI/pythia-160m"</span>
+</span><span id="__span-9-28"><a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a><span class="n">device</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span><span id="__span-9-29"><a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a><span class="n">dtype</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"torch.float16"</span>
+</span><span id="__span-9-30"><a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>
+</span><span id="__span-9-31"><a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a><span class="k">[datasets.</span><span class="s2">"SlimPajama-3B"</span><span class="k">]</span>
+</span><span id="__span-9-32"><a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a><span class="n">dataset_name_or_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Hzfinfdu/SlimPajama-3B"</span>
+</span><span id="__span-9-33"><a id="__codelineno-9-33" name="__codelineno-9-33" href="#__codelineno-9-33"></a>
+</span><span id="__span-9-34"><a id="__codelineno-9-34" name="__codelineno-9-34" href="#__codelineno-9-34"></a><span class="k">[activation_factory]</span>
+</span><span id="__span-9-35"><a id="__codelineno-9-35" name="__codelineno-9-35" href="#__codelineno-9-35"></a><span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"activations-1d"</span>
+</span><span id="__span-9-36"><a id="__codelineno-9-36" name="__codelineno-9-36" href="#__codelineno-9-36"></a><span class="n">hook_points</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">]</span>
+</span><span id="__span-9-37"><a id="__codelineno-9-37" name="__codelineno-9-37" href="#__codelineno-9-37"></a><span class="n">batch_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4096</span>
+</span><span id="__span-9-38"><a id="__codelineno-9-38" name="__codelineno-9-38" href="#__codelineno-9-38"></a><span class="n">buffer_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16384</span>
+</span><span id="__span-9-39"><a id="__codelineno-9-39" name="__codelineno-9-39" href="#__codelineno-9-39"></a>
+</span><span id="__span-9-40"><a id="__codelineno-9-40" name="__codelineno-9-40" href="#__codelineno-9-40"></a><span class="k">[[activation_factory.sources]]</span>
+</span><span id="__span-9-41"><a id="__codelineno-9-41" name="__codelineno-9-41" href="#__codelineno-9-41"></a><span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"dataset"</span>
+</span><span id="__span-9-42"><a id="__codelineno-9-42" name="__codelineno-9-42" href="#__codelineno-9-42"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"SlimPajama-3B"</span>
+</span><span id="__span-9-43"><a id="__codelineno-9-43" name="__codelineno-9-43" href="#__codelineno-9-43"></a>
+</span><span id="__span-9-44"><a id="__codelineno-9-44" name="__codelineno-9-44" href="#__codelineno-9-44"></a><span class="k">[activation_factory.buffer_shuffle]</span>
+</span><span id="__span-9-45"><a id="__codelineno-9-45" name="__codelineno-9-45" href="#__codelineno-9-45"></a><span class="n">perm_seed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span>
+</span><span id="__span-9-46"><a id="__codelineno-9-46" name="__codelineno-9-46" href="#__codelineno-9-46"></a><span class="n">generator_device</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span></code></pre></div>
+<p>Then run the training with:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>lm-saes<span class="w"> </span>train<span class="w"> </span>train_config.toml
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>We also recommend users to directly use the low level semantics for launching training, which allows more granular control and easier customizing:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">datasets</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">ActivationFactory</span><span class="p">,</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">ActivationFactoryConfig</span><span class="p">,</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="n">ActivationFactoryDatasetSource</span><span class="p">,</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">ActivationFactoryTarget</span><span class="p">,</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="n">BufferShuffleConfig</span><span class="p">,</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="n">Initializer</span><span class="p">,</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>    <span class="n">InitializerConfig</span><span class="p">,</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>    <span class="n">LanguageModelConfig</span><span class="p">,</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="n">SAEConfig</span><span class="p">,</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>    <span class="n">Trainer</span><span class="p">,</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="n">TrainerConfig</span><span class="p">,</span>
+</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>    <span class="n">TransformerLensLanguageModel</span><span class="p">,</span>
+</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="p">)</span>
+</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>
+</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="c1"># 1. Load Model &amp; Dataset</span>
+</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="n">model</span> <span class="o">=</span> <span class="n">TransformerLensLanguageModel</span><span class="p">(</span>
+</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>    <span class="n">LanguageModelConfig</span><span class="p">(</span>
+</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>        <span class="n">model_name</span><span class="o">=</span><span class="s2">"EleutherAI/pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-11-22"><a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-11-23"><a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a>        <span class="n">dtype</span><span class="o">=</span><span class="s2">"torch.float16"</span><span class="p">,</span>
+</span><span id="__span-11-24"><a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a>    <span class="p">)</span>
+</span><span id="__span-11-25"><a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a><span class="p">)</span>
+</span><span id="__span-11-26"><a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a>
+</span><span id="__span-11-27"><a id="__codelineno-11-27" name="__codelineno-11-27" href="#__codelineno-11-27"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">load_dataset</span><span class="p">(</span>
+</span><span id="__span-11-28"><a id="__codelineno-11-28" name="__codelineno-11-28" href="#__codelineno-11-28"></a>    <span class="s2">"Hzfinfdu/SlimPajama-3B"</span><span class="p">,</span>
+</span><span id="__span-11-29"><a id="__codelineno-11-29" name="__codelineno-11-29" href="#__codelineno-11-29"></a>    <span class="n">split</span><span class="o">=</span><span class="s2">"train"</span><span class="p">,</span>
+</span><span id="__span-11-30"><a id="__codelineno-11-30" name="__codelineno-11-30" href="#__codelineno-11-30"></a><span class="p">)</span>
+</span><span id="__span-11-31"><a id="__codelineno-11-31" name="__codelineno-11-31" href="#__codelineno-11-31"></a>
+</span><span id="__span-11-32"><a id="__codelineno-11-32" name="__codelineno-11-32" href="#__codelineno-11-32"></a><span class="c1"># 2. Generate Activations</span>
+</span><span id="__span-11-33"><a id="__codelineno-11-33" name="__codelineno-11-33" href="#__codelineno-11-33"></a><span class="n">activation_factory</span> <span class="o">=</span> <span class="n">ActivationFactory</span><span class="p">(</span>
+</span><span id="__span-11-34"><a id="__codelineno-11-34" name="__codelineno-11-34" href="#__codelineno-11-34"></a>    <span class="n">ActivationFactoryConfig</span><span class="p">(</span>
+</span><span id="__span-11-35"><a id="__codelineno-11-35" name="__codelineno-11-35" href="#__codelineno-11-35"></a>        <span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="n">ActivationFactoryDatasetSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"SlimPajama-3B"</span><span class="p">)],</span>
+</span><span id="__span-11-36"><a id="__codelineno-11-36" name="__codelineno-11-36" href="#__codelineno-11-36"></a>        <span class="n">target</span><span class="o">=</span><span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span><span class="p">,</span>
+</span><span id="__span-11-37"><a id="__codelineno-11-37" name="__codelineno-11-37" href="#__codelineno-11-37"></a>        <span class="n">hook_points</span><span class="o">=</span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">],</span>
+</span><span id="__span-11-38"><a id="__codelineno-11-38" name="__codelineno-11-38" href="#__codelineno-11-38"></a>        <span class="n">batch_size</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+</span><span id="__span-11-39"><a id="__codelineno-11-39" name="__codelineno-11-39" href="#__codelineno-11-39"></a>        <span class="n">buffer_size</span><span class="o">=</span><span class="mi">4096</span> <span class="o">*</span> <span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-11-40"><a id="__codelineno-11-40" name="__codelineno-11-40" href="#__codelineno-11-40"></a>        <span class="n">buffer_shuffle</span><span class="o">=</span><span class="n">BufferShuffleConfig</span><span class="p">(</span>
+</span><span id="__span-11-41"><a id="__codelineno-11-41" name="__codelineno-11-41" href="#__codelineno-11-41"></a>            <span class="n">perm_seed</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>
+</span><span id="__span-11-42"><a id="__codelineno-11-42" name="__codelineno-11-42" href="#__codelineno-11-42"></a>            <span class="n">generator_device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-11-43"><a id="__codelineno-11-43" name="__codelineno-11-43" href="#__codelineno-11-43"></a>        <span class="p">),</span>
+</span><span id="__span-11-44"><a id="__codelineno-11-44" name="__codelineno-11-44" href="#__codelineno-11-44"></a>    <span class="p">)</span>
+</span><span id="__span-11-45"><a id="__codelineno-11-45" name="__codelineno-11-45" href="#__codelineno-11-45"></a><span class="p">)</span>
+</span><span id="__span-11-46"><a id="__codelineno-11-46" name="__codelineno-11-46" href="#__codelineno-11-46"></a>
+</span><span id="__span-11-47"><a id="__codelineno-11-47" name="__codelineno-11-47" href="#__codelineno-11-47"></a><span class="n">activations_stream</span> <span class="o">=</span> <span class="n">activation_factory</span><span class="o">.</span><span class="n">process</span><span class="p">(</span>
+</span><span id="__span-11-48"><a id="__codelineno-11-48" name="__codelineno-11-48" href="#__codelineno-11-48"></a>    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+</span><span id="__span-11-49"><a id="__codelineno-11-49" name="__codelineno-11-49" href="#__codelineno-11-49"></a>    <span class="n">model_name</span><span class="o">=</span><span class="s2">"pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-11-50"><a id="__codelineno-11-50" name="__codelineno-11-50" href="#__codelineno-11-50"></a>    <span class="n">datasets</span><span class="o">=</span><span class="p">{</span><span class="s2">"SlimPajama-3B"</span><span class="p">:</span> <span class="n">dataset</span><span class="p">},</span>
+</span><span id="__span-11-51"><a id="__codelineno-11-51" name="__codelineno-11-51" href="#__codelineno-11-51"></a><span class="p">)</span>
+</span><span id="__span-11-52"><a id="__codelineno-11-52" name="__codelineno-11-52" href="#__codelineno-11-52"></a>
+</span><span id="__span-11-53"><a id="__codelineno-11-53" name="__codelineno-11-53" href="#__codelineno-11-53"></a><span class="c1"># 3. Create and Initialize SAE</span>
+</span><span id="__span-11-54"><a id="__codelineno-11-54" name="__codelineno-11-54" href="#__codelineno-11-54"></a><span class="n">sae_cfg</span> <span class="o">=</span> <span class="n">SAEConfig</span><span class="p">(</span>
+</span><span id="__span-11-55"><a id="__codelineno-11-55" name="__codelineno-11-55" href="#__codelineno-11-55"></a>    <span class="n">hook_point_in</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-11-56"><a id="__codelineno-11-56" name="__codelineno-11-56" href="#__codelineno-11-56"></a>    <span class="n">hook_point_out</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-11-57"><a id="__codelineno-11-57" name="__codelineno-11-57" href="#__codelineno-11-57"></a>    <span class="n">d_model</span><span class="o">=</span><span class="mi">768</span><span class="p">,</span>
+</span><span id="__span-11-58"><a id="__codelineno-11-58" name="__codelineno-11-58" href="#__codelineno-11-58"></a>    <span class="n">expansion_factor</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+</span><span id="__span-11-59"><a id="__codelineno-11-59" name="__codelineno-11-59" href="#__codelineno-11-59"></a>    <span class="n">act_fn</span><span class="o">=</span><span class="s2">"relu"</span><span class="p">,</span>
+</span><span id="__span-11-60"><a id="__codelineno-11-60" name="__codelineno-11-60" href="#__codelineno-11-60"></a>    <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+</span><span id="__span-11-61"><a id="__codelineno-11-61" name="__codelineno-11-61" href="#__codelineno-11-61"></a>    <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-11-62"><a id="__codelineno-11-62" name="__codelineno-11-62" href="#__codelineno-11-62"></a><span class="p">)</span>
+</span><span id="__span-11-63"><a id="__codelineno-11-63" name="__codelineno-11-63" href="#__codelineno-11-63"></a>
+</span><span id="__span-11-64"><a id="__codelineno-11-64" name="__codelineno-11-64" href="#__codelineno-11-64"></a><span class="n">initializer</span> <span class="o">=</span> <span class="n">Initializer</span><span class="p">(</span><span class="n">InitializerConfig</span><span class="p">(</span><span class="n">grid_search_init_norm</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+</span><span id="__span-11-65"><a id="__codelineno-11-65" name="__codelineno-11-65" href="#__codelineno-11-65"></a><span class="n">sae</span> <span class="o">=</span> <span class="n">initializer</span><span class="o">.</span><span class="n">initialize_sae_from_config</span><span class="p">(</span>
+</span><span id="__span-11-66"><a id="__codelineno-11-66" name="__codelineno-11-66" href="#__codelineno-11-66"></a>    <span class="n">sae_cfg</span><span class="p">,</span>
+</span><span id="__span-11-67"><a id="__codelineno-11-67" name="__codelineno-11-67" href="#__codelineno-11-67"></a>    <span class="n">activation_stream</span><span class="o">=</span><span class="n">activations_stream</span><span class="p">,</span>
+</span><span id="__span-11-68"><a id="__codelineno-11-68" name="__codelineno-11-68" href="#__codelineno-11-68"></a><span class="p">)</span>
+</span><span id="__span-11-69"><a id="__codelineno-11-69" name="__codelineno-11-69" href="#__codelineno-11-69"></a>
+</span><span id="__span-11-70"><a id="__codelineno-11-70" name="__codelineno-11-70" href="#__codelineno-11-70"></a><span class="c1"># 4. Train SAE</span>
+</span><span id="__span-11-71"><a id="__codelineno-11-71" name="__codelineno-11-71" href="#__codelineno-11-71"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">Trainer</span><span class="p">(</span>
+</span><span id="__span-11-72"><a id="__codelineno-11-72" name="__codelineno-11-72" href="#__codelineno-11-72"></a>    <span class="n">TrainerConfig</span><span class="p">(</span>
+</span><span id="__span-11-73"><a id="__codelineno-11-73" name="__codelineno-11-73" href="#__codelineno-11-73"></a>        <span class="n">amp_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+</span><span id="__span-11-74"><a id="__codelineno-11-74" name="__codelineno-11-74" href="#__codelineno-11-74"></a>        <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-11-75"><a id="__codelineno-11-75" name="__codelineno-11-75" href="#__codelineno-11-75"></a>        <span class="n">total_training_tokens</span><span class="o">=</span><span class="mi">800_000_000</span><span class="p">,</span>
+</span><span id="__span-11-76"><a id="__codelineno-11-76" name="__codelineno-11-76" href="#__codelineno-11-76"></a>        <span class="n">log_frequency</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+</span><span id="__span-11-77"><a id="__codelineno-11-77" name="__codelineno-11-77" href="#__codelineno-11-77"></a>        <span class="n">exp_result_path</span><span class="o">=</span><span class="s2">"results"</span><span class="p">,</span>
+</span><span id="__span-11-78"><a id="__codelineno-11-78" name="__codelineno-11-78" href="#__codelineno-11-78"></a>    <span class="p">)</span>
+</span><span id="__span-11-79"><a id="__codelineno-11-79" name="__codelineno-11-79" href="#__codelineno-11-79"></a><span class="p">)</span>
+</span><span id="__span-11-80"><a id="__codelineno-11-80" name="__codelineno-11-80" href="#__codelineno-11-80"></a>
+</span><span id="__span-11-81"><a id="__codelineno-11-81" name="__codelineno-11-81" href="#__codelineno-11-81"></a><span class="n">sae</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">save_hyperparameters</span><span class="p">(</span><span class="s2">"results"</span><span class="p">)</span>
+</span><span id="__span-11-82"><a id="__codelineno-11-82" name="__codelineno-11-82" href="#__codelineno-11-82"></a>
+</span><span id="__span-11-83"><a id="__codelineno-11-83" name="__codelineno-11-83" href="#__codelineno-11-83"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-11-84"><a id="__codelineno-11-84" name="__codelineno-11-84" href="#__codelineno-11-84"></a>    <span class="n">sae</span><span class="o">=</span><span class="n">sae</span><span class="p">,</span>
+</span><span id="__span-11-85"><a id="__codelineno-11-85" name="__codelineno-11-85" href="#__codelineno-11-85"></a>    <span class="n">activation_stream</span><span class="o">=</span><span class="n">activations_stream</span><span class="p">,</span>
+</span><span id="__span-11-86"><a id="__codelineno-11-86" name="__codelineno-11-86" href="#__codelineno-11-86"></a><span class="p">)</span>
+</span><span id="__span-11-87"><a id="__codelineno-11-87" name="__codelineno-11-87" href="#__codelineno-11-87"></a>
+</span><span id="__span-11-88"><a id="__codelineno-11-88" name="__codelineno-11-88" href="#__codelineno-11-88"></a><span class="n">sae</span><span class="o">.</span><span class="n">save_pretrained</span><span class="p">(</span><span class="n">save_path</span><span class="o">=</span><span class="s2">"results"</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<h2 id="logging-to-wb">Logging to W&amp;B</h2>
+<p>Aside from the console logger, we support logging to Weights &amp; Biases for tracking loss and metric changes throughout the training. Training metrics including <a href="https://www.lesswrong.com/posts/E3nsbq2tiBv6GLqjB/x-explains-z-of-the-variance-in-y">explained variance</a> and <span class="arithmatex">\(L^0\)</span> norm will be automatically recorded. Below is a screenshot of the W&amp;B logging:</p>
+<figure>
+<p><a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../assets/images/wandb.png" data-desc-position="bottom"><img alt="Screenshot of W&amp;B logging in training our LlamaScope 2 Beta PLTs" src="../assets/images/wandb.png"></a></p>
+<figcaption>
+<p>Screenshot of W&amp;B logging in training our LlamaScope 2 Beta PLTs.</p>
+</figcaption>
+</figure>
+<p>To enable W&amp;B logging, add the <code>wandb</code> configuration to your training setup:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:3"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio"><input id="__tabbed_2_2" name="__tabbed_2" type="radio"><input id="__tabbed_2_3" name="__tabbed_2" type="radio"><div class="tabbed-labels"><label for="__tabbed_2_1">Runner</label><label for="__tabbed_2_2">CLI</label><label for="__tabbed_2_3">Full Script</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="n">WandbConfig</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">TrainSAESettings</span><span class="p">(</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="c1"># ... other settings ...</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="n">wandb</span><span class="o">=</span><span class="n">WandbConfig</span><span class="p">(</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>        <span class="n">wandb_project</span><span class="o">=</span><span class="s2">"my-sae-training"</span><span class="p">,</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>        <span class="n">exp_name</span><span class="o">=</span><span class="s2">"pythia-160m-sae"</span><span class="p">,</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="p">),</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="p">)</span>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="n">train_sae</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># ... other configurations ... </span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="k">[wandb]</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">wandb_project</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"my-sae-training"</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">exp_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"pythia-160m-sae"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">wandb</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="c1"># ... other training logics ...</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="c1"># Create a W&amp;B instance</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="n">wandb_logger</span> <span class="o">=</span> <span class="n">wandb</span><span class="o">.</span><span class="n">init</span><span class="p">(</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>    <span class="n">project</span><span class="o">=</span><span class="s2">"my-sae-training"</span><span class="p">,</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">"pythia-160m-sae"</span><span class="p">,</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="p">)</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="c1"># Pass it to `trainer.fit`</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="n">sae</span><span class="o">=</span><span class="n">sae</span><span class="p">,</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>    <span class="n">activation_stream</span><span class="o">=</span><span class="n">activations_stream</span><span class="p">,</span>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>    <span class="n">wandb_logger</span><span class="o">=</span><span class="n">wandb_logger</span><span class="p">,</span>
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="p">)</span>
+</span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a>
+</span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="n">wandb_logger</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<h2 id="checkpoints-and-continue-training">Checkpoints and Continue Training</h2>
+<p>WIP</p>
+<h2 id="activation-functions">Activation Functions</h2>
+<p>Activation functions are the direct architectural design to enforce a sparse feature activations in SAE and its variants. </p>
+<h3 id="relu">ReLU</h3>
+<p>ReLU is the most classical activation, proposed in initial works (<em><a href="https://arxiv.org/abs/2309.08600">Sparse Autoencoders Find Highly Interpretable Features in Language Models</a></em> and <em><a href="https://transformer-circuits.pub/2023/monosemantic-features">Towards Monosemanticity: Decomposing Language Models With Dictionary Learning</a></em>) using SAEs to disentangle superposition. Though its performance is found inferior to other activation functions in term of explained variance and <span class="arithmatex">\(L^0\)</span> norms, it might be a good starting point to understand how SAE works due to its simplicity.</p>
+<p>To use ReLU activation function, just set <code class="language-python highlight"><span class="n">act_fn</span> <span class="o">=</span> <span class="s2">"relu"</span></code> in <code>SAEConfig</code>.</p>
+<h3 id="jumprelu">JumpReLU</h3>
+<p>JumpReLU is a state-of-the-art activation function proposed in <em><a href="https://arxiv.org/abs/2407.14435">Jumping Ahead: Improving Reconstruction
+Fidelity with JumpReLU Sparse Autoencoders</a></em>, and adopted by both Google DeepMind <a href="https://arxiv.org/abs/2408.05147">GemmaScope</a> and <a href="https://storage.googleapis.com/deepmind-media/DeepMind.com/Blog/gemma-scope-2-helping-the-ai-safety-community-deepen-understanding-of-complex-language-model-behavior/Gemma_Scope_2_Technical_Paper.pdf">GemmaScope 2</a>, and Anthropic <a href="https://transformer-circuits.pub/2025/attribution-graphs/methods.html#building-architecture">Cross Layer Transcoder</a>.</p>
+<p>JumpReLU modifies the ReLU activation function, allowing only elements that passing the corresponding element-wise thresholds to activate. Consider an input element <span class="arithmatex">\(x\)</span> and a log-threshold <span class="arithmatex">\(t\)</span>, it computes:</p>
+<div class="arithmatex">\[
+\operatorname{JumpReLU}(x;t) = H(x-e^t)x
+\]</div>
+<p>where <span class="arithmatex">\(H(\cdot)\)</span> is the <a href="https://en.wikipedia.org/wiki/Heaviside_step_function">Heaviside step function</a><sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup>. For comparison, ReLU can be written as <span class="arithmatex">\(\operatorname{ReLU}(x) = H(x)x\)</span>.</p>
+<p>Since the Heaviside step function cannot be differentiated, JumpReLU uses a straight-through estimator of the gradient through the discontinuity of the nonlinearity. See <a href="https://transformer-circuits.pub/2025/january-update/index.html#DL">Anthropic Circuit Update - January 2025</a> to learn how (log) JumpReLU thresholds are optimized.</p>
+<p>To use the JumpReLU activation function, set <code class="language-python highlight"><span class="n">act_fn</span> <span class="o">=</span> <span class="s2">"jumprelu"</span></code> in <code>SAEConfig</code>. You may also adjust the <code>jumprelu_threshold_window</code> to control the sensitivity of how JumpReLU thresholds update.</p>
+<div class="admonition note">
+<p class="admonition-title">Dedicated Learning Rate for Log JumpReLU Thresholds</p>
+<p>In our crosscoder training experiments in <a href="https://arxiv.org/abs/2509.17196">Evolution of Concepts in Language Model Pre-Training</a>, we find it better to apply a smaller learning rate (0.1x) to the log JumpReLU thresholds. Though this setting hardly affects the final performance on reconstruction and sparsity, it makes the training loss far more smooth. The mean feature activation becomes lower after the change.</p>
+</div>
+<h3 id="topk">TopK</h3>
+<p>TopK is an activation function proposed in <a href="https://arxiv.org/abs/2406.04093">Scaling and evaluating sparse autoencoders</a>. It keeps only the <span class="arithmatex">\(k\)</span> largest elements, zeroing out the rest, thus directly enforcing strict sparsity on feature activation. To this end, it removes the need for additional sparsity penalties (which are typically basic requirements for ReLU &amp; JumpReLU activations), and enables direct control over the sparsity quantitative (<span class="arithmatex">\(L^0\)</span>) of feature activation.</p>
+<p>To use TopK activation function, set <code class="language-python highlight"><span class="n">act_fn</span> <span class="o">=</span> <span class="s2">"topk"</span></code> in <code>SAEConfig</code>, and set the <code>top_k</code> value to control the final sparsity of feature activation. We also provide some options in <code>TrainerConfig</code> to enable scheduling on <span class="arithmatex">\(k\)</span> value during training:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>initial_k</code></td>
+<td>The starting <span class="arithmatex">\(k\)</span> value for scheduling. Must be greater than or equal to <code>top_k</code> set in <code>SAEConfig</code>.</td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><code>k_warmup_steps</code></td>
+<td>Steps (int) or fraction of total steps (float) for <span class="arithmatex">\(k\)</span> to decay from <code>initial_k</code> to <code>top_k</code>.</td>
+<td><code>0.1</code></td>
+</tr>
+<tr>
+<td><code>k_cold_booting_steps</code></td>
+<td>Steps (int) or fraction of total steps (float) to keep <span class="arithmatex">\(k\)</span> at <code>initial_k</code> before starting the decay.</td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td><code>k_schedule_type</code></td>
+<td>Scheduling strategy: <code>"linear"</code> or <code>"exponential"</code>.</td>
+<td><code>"linear"</code></td>
+</tr>
+<tr>
+<td><code>k_exponential_factor</code></td>
+<td>Controls the curvature of the exponential decay.</td>
+<td><code>3.0</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">Use BatchTopK Activation</p>
+<p>TopK activation enforces unnecessary fixed allocation of active latents. For strict architectural sparsity control, we recommend using <a href="#batchtopk">BatchTopK</a> for better performance.</p>
+</div>
+<h3 id="batchtopk">BatchTopK</h3>
+<p>BatchTopK is a state-of-the-art activation function proposed in <a href="https://arxiv.org/abs/2412.06410">BatchTopK Sparse Autoencoders</a>. It follows the idea of TopK to directly enforce sparsity, but replaces the sample-level TopK operation with a batch-level BatchTopK operation. For pre-feature-activations of shape <code>(batch_size, d_sae)</code>, it selects the top <code>batch_size * top_k</code> activations across the entire batch of <code>batch_size</code> samples. This allows for more flexible allocation of active latents.</p>
+<p>To use TopK activation function, set <code class="language-python highlight"><span class="n">act_fn</span> <span class="o">=</span> <span class="s2">"batchtopk"</span></code> in <code>SAEConfig</code>, and set the <code>top_k</code> value to control the final sparsity of feature activation. We also provide some options in <code>TrainerConfig</code> to enable scheduling on <span class="arithmatex">\(k\)</span> value during training:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>initial_k</code></td>
+<td>The starting <span class="arithmatex">\(k\)</span> value for scheduling. Must be greater than or equal to <code>top_k</code> set in <code>SAEConfig</code>.</td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><code>k_warmup_steps</code></td>
+<td>Steps (int) or fraction of total steps (float) for <span class="arithmatex">\(k\)</span> to decay from <code>initial_k</code> to <code>top_k</code>.</td>
+<td><code>0.1</code></td>
+</tr>
+<tr>
+<td><code>k_cold_booting_steps</code></td>
+<td>Steps (int) or fraction of total steps (float) to keep <span class="arithmatex">\(k\)</span> at <code>initial_k</code> before starting the decay.</td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td><code>k_schedule_type</code></td>
+<td>Scheduling strategy: <code>"linear"</code> or <code>"exponential"</code>.</td>
+<td><code>"linear"</code></td>
+</tr>
+<tr>
+<td><code>k_exponential_factor</code></td>
+<td>Controls the curvature of the exponential decay.</td>
+<td><code>3.0</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="convert-batchtopk-to-jumprelu">Convert BatchTopK to JumpReLU</h4>
+<p>BatchTopK introduces a dependency between the activations for the samples in a batch. To eliminate the effect, it's better to estimate a threshold <span class="arithmatex">\(\theta\)</span> as average minimum positive activation values, and convert the activation function to JumpReLU with this threshold.</p>
+<h2 id="sparsity-penalties">Sparsity Penalties</h2>
+<p>Activation functions like ReLU and JumpReLU do not strictly enforce sparsity on feature activations. It's the responsibility of the regularization functions to provide dynamics pushing feature activations sparse. <code>Language-Model-SAEs</code> supports the following sparsity penalties on feature activations:</p>
+<h3 id="lp-norm"><span class="arithmatex">\(L^p\)</span>-Norm</h3>
+<p>Sparsity referes to the number of active latents in feature activation. In principle, we may want to directly add <span class="arithmatex">\(L^0\)</span> norm to the loss term. However, <span class="arithmatex">\(L^0\)</span> norm is discontinuous and cannot be differentiated,</p>
+<p>In practice, <span class="arithmatex">\(L^1\)</span> norm, as the <em>best convex approximation</em> to <span class="arithmatex">\(L^0\)</span><sup id="fnref:2"><a class="footnote-ref" href="#fn:2">2</a></sup>, is widely used in SAE training for controlling sparsity without lossing convexity of the optimization. <code>Language-Model-SAEs</code> implements a more general <span class="arithmatex">\(L^p\)</span> norm as regularization, which is computed as:</p>
+<div class="arithmatex">\[L_s = \lambda \| f(x) \cdot \| W_\text{dec} \|_2 \|_p\]</div>
+<p>where <span class="arithmatex">\(f(x)\)</span> is the feature activation, <span class="arithmatex">\(\| W_\text{dec} \|_2\)</span> is the decoder norm, <span class="arithmatex">\(p\)</span> is the <span class="arithmatex">\(L^p\)</span> power, and <span class="arithmatex">\(\lambda\)</span> is the coefficient for the sparsity loss term.</p>
+<p>To use the <span class="arithmatex">\(L^p\)</span> norm, set <code class="language-python highlight"><span class="n">sparsity_loss_type</span><span class="o">=</span><span class="s2">"power"</span></code> in <code>TrainerConfig</code>. Other parameters include:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>l1_coefficient</code></td>
+<td>Coefficient <span class="arithmatex">\(\lambda\)</span> for the sparsity loss term.</td>
+<td><code>0.00008</code></td>
+</tr>
+<tr>
+<td><code>l1_coefficient_warmup_steps</code></td>
+<td>Steps (int) or fraction of total steps (float) to warm up the sparsity coefficient from 0.</td>
+<td><code>0.1</code></td>
+</tr>
+<tr>
+<td><code>p</code></td>
+<td>The power <span class="arithmatex">\(p\)</span> for <span class="arithmatex">\(L^p\)</span> norm. Set to <span class="arithmatex">\(1\)</span> for <span class="arithmatex">\(L^1\)</span> norm.</td>
+<td><code>1</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="tanh">Tanh</h3>
+<p>One challenge with <span class="arithmatex">\(L^1\)</span> penalty is <em>shrinkage</em>: in addition to encouraging sparsity, the penalty encourages activations to be smaller than they would be otherwise. This causes SAEs to recover a smaller fraction of the model loss than might be expected<sup id="fnref:3"><a class="footnote-ref" href="#fn:3">3</a></sup>.</p>
+<p>The <span class="arithmatex">\(\tanh\)</span> penalty addresses shrinkage by applying a bounded function to feature activations. For marginal cases where a feature is on the edge of activating, it provides the same gradient towards zero as <span class="arithmatex">\(L^1\)</span>, but for strongly-activating features it provides no penalty and hence no incentive to shrink the activation. The loss is computed as:</p>
+<div class="arithmatex">\[L_s = \lambda \sum_i \tanh(c \cdot f_i(x) \cdot \| W_{\text{dec},i} \|_2)\]</div>
+<p>where <span class="arithmatex">\(f_i(x)\)</span> is the <span class="arithmatex">\(i\)</span>-th feature activation, <span class="arithmatex">\(\| W_{\text{dec},i} \|_2\)</span> is the decoder norm for feature <span class="arithmatex">\(i\)</span>, and <span class="arithmatex">\(c\)</span> is the stretch coefficient. Since <span class="arithmatex">\(\tanh(x) \to 1\)</span> as <span class="arithmatex">\(x \to \infty\)</span>, this loss approximates counting the number of active features (<span class="arithmatex">\(L^0\)</span> norm).</p>
+<p>While the <span class="arithmatex">\(\tanh\)</span> penalty was found to be a Pareto improvement in the <span class="arithmatex">\(L^0\)</span>/MSE tradeoff, <a href="https://transformer-circuits.pub/2024/feb-update/index.html#dict-learning-tanh">Anthropic's experiments</a> showed that features trained with tanh were much harder to interpret due to many more high-frequency features (some activating on over 10% of inputs). However, their <a href="https://transformer-circuits.pub/2024/june-update/index.html#topk-gated-comparison">following up experiments</a> show that these high density features don’t seem to be pathological as previous thought.</p>
+<p>To use the <span class="arithmatex">\(\tanh\)</span> penalty, set <code class="language-python highlight"><span class="n">sparsity_loss_type</span><span class="o">=</span><span class="s2">"tanh"</span></code> in <code>TrainerConfig</code>. Other parameters include:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>l1_coefficient</code></td>
+<td>Coefficient <span class="arithmatex">\(\lambda\)</span> for the sparsity loss term.</td>
+<td><code>0.00008</code></td>
+</tr>
+<tr>
+<td><code>l1_coefficient_warmup_steps</code></td>
+<td>Steps (int) or fraction of total steps (float) to warm up the sparsity coefficient from 0.</td>
+<td><code>0.1</code></td>
+</tr>
+<tr>
+<td><code>tanh_stretch_coefficient</code></td>
+<td>Stretch coefficient <span class="arithmatex">\(c\)</span> controlling the steepness of the tanh function.</td>
+<td><code>4.0</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="tanh-quadratic">Tanh-Quadratic</h3>
+<p>A key issue with standard sparsity penalties (<span class="arithmatex">\(L^0\)</span>, <span class="arithmatex">\(L^1\)</span>, or <span class="arithmatex">\(\tanh\)</span>) is that they only control the <em>average</em> number of active features, but are indifferent to the <em>distribution</em> of firing frequencies (See <a href="https://www.alignmentforum.org/posts/4uXCAJNuPKtKBsi28/negative-results-for-saes-on-downstream-tasks#Removing_High_Frequency_Latents_from_JumpReLU_SAEs">Removing High Frequency Latents from JumpReLU SAEs</a> from the GDM Mech Interp Team for a detailed analysis). This allows some features to fire on a large fraction of inputs (&gt;10%), which often leads to uninterpretable high-frequency features.</p>
+<p>The tanh-quadratic loss addresses this by adding a quadratic term that specifically penalizes high-frequency features. First, an approximate frequency <span class="arithmatex">\(\hat{p}_i\)</span> is computed by averaging the tanh scores across samples:</p>
+<div class="arithmatex">\[\hat{p}_i = \mathbb{E}_{x}\left[\tanh(c \cdot f_i(x) \cdot \| W_{\text{dec},i} \|_2)\right]\]</div>
+<p>Then the loss is:</p>
+<div class="arithmatex">\[L_s = \lambda \sum_i \hat{p}_i \left(1 + \frac{\hat{p}_i}{s}\right)\]</div>
+<p>where <span class="arithmatex">\(s\)</span> is the frequency scale (controlled by <code>frequency_scale</code>). The first term <span class="arithmatex">\(\hat{p}_i\)</span> behaves like a standard sparsity penalty for low-frequency features (<span class="arithmatex">\(\hat{p}_i \ll s\)</span>), while the quadratic term <span class="arithmatex">\(\hat{p}_i^2 / s\)</span> dominates for high-frequency features (<span class="arithmatex">\(\hat{p}_i \gtrsim s\)</span>), making it increasingly expensive for features to activate on a large fraction of inputs.</p>
+<p>This formulation successfully eliminates high-frequency latents with only a modest impact on reconstruction loss, while improving frequency-weighted interpretability scores compared to standard JumpReLU SAEs.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Our implementation of quadratic loss term uses <span class="arithmatex">\(\tanh\)</span> as differentiable <span class="arithmatex">\(L^0\)</span> proxies, which is different to the original proposal by GDM which directly use <span class="arithmatex">\(L^0\)</span> paired with straight-through estimators.</p>
+</div>
+<p>To use tanh-quadratic, set <code class="language-python highlight"><span class="n">sparsity_loss_type</span><span class="o">=</span><span class="s2">"tanh-quad"</span></code> in <code>TrainerConfig</code>. Other parameters include:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>l1_coefficient</code></td>
+<td>Coefficient <span class="arithmatex">\(\lambda\)</span> for the sparsity loss term.</td>
+<td><code>0.00008</code></td>
+</tr>
+<tr>
+<td><code>l1_coefficient_warmup_steps</code></td>
+<td>Steps (int) or fraction of total steps (float) to warm up the sparsity coefficient from 0.</td>
+<td><code>0.1</code></td>
+</tr>
+<tr>
+<td><code>tanh_stretch_coefficient</code></td>
+<td>Stretch coefficient <span class="arithmatex">\(c\)</span> controlling the steepness of the tanh function.</td>
+<td><code>4.0</code></td>
+</tr>
+<tr>
+<td><code>frequency_scale</code></td>
+<td>Scale factor <span class="arithmatex">\(s\)</span> for the quadratic penalty. Smaller values penalize high-frequency features more aggressively. Typical values are <code>0.1</code> or <code>0.01</code> to suppress features firing on &gt;10% of tokens.</td>
+<td><code>0.01</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="auxiliary-losses">Auxiliary Losses</h2>
+<h3 id="jumprelu-pre-act-loss">JumpReLU Pre-act Loss</h3>
+<p>For JumpReLU SAEs, an additional <span class="arithmatex">\(L_p\)</span> penalty (called the "pre-act loss") proposed by <a href="https://transformer-circuits.pub/2025/january-update/index.html">Anthropic</a> applies a small penalty to features which don't fire:</p>
+<div class="arithmatex">\[L_p = \lambda_p \sum_i \text{ReLU}(e^{\theta_i} - h_i) \| W_{\text{dec},i} \|_2\]</div>
+<p>where <span class="arithmatex">\(\theta_i\)</span> is the log-threshold and <span class="arithmatex">\(h_i\)</span> is the pre-activation. This loss has been found extremely helpful in reducing dead features by providing a gradient signal whenever a feature is inactive, pushing the threshold lower.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Since this loss provides a gradient signal whenever a feature is inactive, the appropriate scale for <code>lp_coefficient</code> should be a factor of the typical feature activation density lower than other loss terms (e.g., <code>l1_coefficient</code>).</p>
+</div>
+<p>To use the JumpReLU pre-act loss, set <code>lp_coefficient</code> to a positive value in <code>TrainerConfig</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lp_coefficient</code></td>
+<td>Coefficient <span class="arithmatex">\(\lambda_p\)</span> for the JumpReLU pre-act loss. Recommended value is <code>3e-6</code>. Set to <code>None</code> to disable.</td>
+<td><code>None</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="aux-k-loss">Aux-K Loss</h3>
+<p>For TopK activation function, an additional auxiliary loss (AuxK) proposed in <a href="https://arxiv.org/abs/2406.04093">Scaling and evaluating sparse autoencoders</a> helps revive dead latents during training, similar to <a href="https://transformer-circuits.pub/2024/jan-update/index.html#dict-learning-resampling">Ghost Grads</a>.</p>
+<p>A latent is flagged as "dead" during training if it has not activated for a predetermined number of tokens (typically 10 million). Given the reconstruction error from the main model <span class="arithmatex">\(e = x - \hat{x}\)</span>, the auxiliary loss models this error using the top-<span class="arithmatex">\(k_{\text{aux}}\)</span> dead latents:</p>
+<div class="arithmatex">\[L_{\text{aux}} = \| e - \hat{e} \|_2^2\]</div>
+<p>where <span class="arithmatex">\(\hat{e} = W_{\text{dec}} z_{\text{dead}}\)</span> is the reconstruction using only the top-<span class="arithmatex">\(k_{\text{aux}}\)</span> dead latents. The full loss is then:</p>
+<div class="arithmatex">\[L = L_{\text{rec}} + \alpha L_{\text{aux}}\]</div>
+<p>where <span class="arithmatex">\(\alpha\)</span> is a small coefficient (typically <span class="arithmatex">\(1/32\)</span>). Since the encoder forward pass can be shared (and dominates decoder cost and encoder backwards cost), adding this auxiliary loss only increases the computational cost by about 10%.</p>
+<p>To use the Aux-K loss, set <code>auxk_coefficient</code> to a positive value in <code>TrainerConfig</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auxk_coefficient</code></td>
+<td>Coefficient <span class="arithmatex">\(\alpha\)</span> for the Aux-K loss. Set to <code>None</code> to disable. Typical value is <code>1/32</code> (~0.03125).</td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><code>k_aux</code></td>
+<td>Number of top dead latents <span class="arithmatex">\(k_{\text{aux}}\)</span> to use for auxiliary reconstruction.</td>
+<td><code>512</code></td>
+</tr>
+<tr>
+<td><code>dead_threshold</code></td>
+<td>Number of tokens a latent must not activate for to be considered dead.</td>
+<td><code>10_000_000</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Aux-K loss is specifically designed for TopK SAEs. It will not have effect on other activation functions like ReLU or JumpReLU.</p>
+</div>
+<h2 id="legacy-stategies">Legacy Stategies</h2>
+<p>Early researches on SAEs employ strategies like <a href="https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling">Neuron Resampling</a> and <a href="https://transformer-circuits.pub/2024/jan-update/index.html#dict-learning-resampling">Ghost Grads</a> to make dead neurons live again. However, modern initialization and sparsity losses have largely alleviated dead neurons. Thus, we remove the support for these strategies for simplicity of our internal code structure.</p>
+<h2 id="caching-activations">Caching Activations</h2>
+<p>Training with cached activations is a common workflow in practice. It enables efficient hyperparameter sweeping by reusing pre-generated activations and facilitates parallelized training and analysis (DP/TP). This approach significantly accelerates training; for example, training an 8x expansion SAE on Pythia 160M with 800M tokens typically drops from ~6 hours (on-the-fly) to ~30 minutes (cached). However, caching requires substantial disk space. For 800M tokens of activations from a single Pythia 160M layer (<span class="arithmatex">\(d_{\text{model}}=768\)</span>) stored in FP16, the storage requirement is:</p>
+<div class="arithmatex">\[ 800 \times 10^6 \times 768 \times 2 \text{ bytes} \approx 1.2 \text{ TB} \]</div>
+<p>In this workflow, a separate task caches activations to disk at the output of <code>ActivationFactory</code>. When training, we re-configure the <code>ActivationFactory</code> to directly read from disk instead of generating activation from the language model on the fly.</p>
+<p>To cache activation on disk, you can:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="3:3"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio"><input id="__tabbed_3_2" name="__tabbed_3" type="radio"><input id="__tabbed_3_3" name="__tabbed_3" type="radio"><div class="tabbed-labels"><label for="__tabbed_3_1">Runner</label><label for="__tabbed_3_2">CLI</label><label for="__tabbed_3_3">Full Script</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>Create the <code>GenerateActivationsSettings</code> in Python and call <code>generate_activations</code> with it. Configurations except <code>output_dir</code> and <code>total_tokens</code> should be consistent with on-the-fly settings <a href="#using-the-high-level-runner-api">above</a>. <code>output_dir</code> is where you want to place your generated activations. Ensure you have enough space at this directory. <code>total_tokens</code> should be equal or greater than the <code>total_training_tokens</code> you want to train your SAE on. </p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>    <span class="n">GenerateActivationsSettings</span><span class="p">,</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="n">generate_activations</span><span class="p">,</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>    <span class="n">LanguageModelConfig</span><span class="p">,</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">DatasetConfig</span><span class="p">,</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="n">ActivationFactoryTarget</span><span class="p">,</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="n">BufferShuffleConfig</span><span class="p">,</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="p">)</span>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">GenerateActivationsSettings</span><span class="p">(</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">model</span><span class="o">=</span><span class="n">LanguageModelConfig</span><span class="p">(</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>        <span class="n">model_name</span><span class="o">=</span><span class="s2">"EleutherAI/pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>        <span class="n">dtype</span><span class="o">=</span><span class="s2">"torch.float16"</span><span class="p">,</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>    <span class="p">),</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>    <span class="n">model_name</span><span class="o">=</span><span class="s2">"pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>    <span class="n">dataset</span><span class="o">=</span><span class="n">DatasetConfig</span><span class="p">(</span><span class="n">dataset_name_or_path</span><span class="o">=</span><span class="s2">"Hzfinfdu/SlimPajama-3B"</span><span class="p">),</span>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>    <span class="n">dataset_name</span><span class="o">=</span><span class="s2">"SlimPajama-3B"</span><span class="p">,</span>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a>    <span class="n">hook_points</span><span class="o">=</span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">],</span>
+</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"path/to/activations"</span><span class="p">,</span>
+</span><span id="__span-15-21"><a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>    <span class="n">total_tokens</span><span class="o">=</span><span class="mi">800_000_000</span><span class="p">,</span>
+</span><span id="__span-15-22"><a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a>    <span class="n">context_size</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+</span><span id="__span-15-23"><a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a>    <span class="n">target</span><span class="o">=</span><span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span><span class="p">,</span>
+</span><span id="__span-15-24"><a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a>    <span class="n">model_batch_size</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+</span><span id="__span-15-25"><a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+</span><span id="__span-15-26"><a id="__codelineno-15-26" name="__codelineno-15-26" href="#__codelineno-15-26"></a>    <span class="n">buffer_size</span><span class="o">=</span><span class="mi">16384</span><span class="p">,</span>
+</span><span id="__span-15-27"><a id="__codelineno-15-27" name="__codelineno-15-27" href="#__codelineno-15-27"></a>    <span class="n">buffer_shuffle</span><span class="o">=</span><span class="n">BufferShuffleConfig</span><span class="p">(</span>
+</span><span id="__span-15-28"><a id="__codelineno-15-28" name="__codelineno-15-28" href="#__codelineno-15-28"></a>        <span class="n">perm_seed</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>
+</span><span id="__span-15-29"><a id="__codelineno-15-29" name="__codelineno-15-29" href="#__codelineno-15-29"></a>        <span class="n">generator_device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-15-30"><a id="__codelineno-15-30" name="__codelineno-15-30" href="#__codelineno-15-30"></a>    <span class="p">),</span>
+</span><span id="__span-15-31"><a id="__codelineno-15-31" name="__codelineno-15-31" href="#__codelineno-15-31"></a>    <span class="n">device_type</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-15-32"><a id="__codelineno-15-32" name="__codelineno-15-32" href="#__codelineno-15-32"></a><span class="p">)</span>
+</span><span id="__span-15-33"><a id="__codelineno-15-33" name="__codelineno-15-33" href="#__codelineno-15-33"></a>
+</span><span id="__span-15-34"><a id="__codelineno-15-34" name="__codelineno-15-34" href="#__codelineno-15-34"></a><span class="n">generate_activations</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>CLI-based workflow requires a configuration file containing the settings consistent with <code>GenerateActivationsSettings</code>. Common configuration file type like TOML, JSON and YAML are supported.</p>
+<p>Create a TOML configuration file (e.g., <code>generate_config.toml</code>) with the following content:</p>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">model_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"pythia-160m"</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">dataset_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"SlimPajama-3B"</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">hook_points</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">]</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">output_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"path/to/activations"</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">total_tokens</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">800_000_000</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="n">context_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"activations-1d"</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="n">model_batch_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">32</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="n">batch_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4096</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="n">buffer_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16384</span>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="n">device_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>
+</span><span id="__span-16-13"><a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="k">[model]</span>
+</span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="n">model_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"EleutherAI/pythia-160m"</span>
+</span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="n">device</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span><span id="__span-16-16"><a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a><span class="n">dtype</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"torch.float16"</span>
+</span><span id="__span-16-17"><a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>
+</span><span id="__span-16-18"><a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a><span class="k">[dataset]</span>
+</span><span id="__span-16-19"><a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a><span class="n">dataset_name_or_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"Hzfinfdu/SlimPajama-3B"</span>
+</span><span id="__span-16-20"><a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a>
+</span><span id="__span-16-21"><a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a><span class="k">[buffer_shuffle]</span>
+</span><span id="__span-16-22"><a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a><span class="n">perm_seed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span>
+</span><span id="__span-16-23"><a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a><span class="n">generator_device</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span></code></pre></div>
+<p>Then run the generation with:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>lm-saes<span class="w"> </span>generate<span class="w"> </span>generate_config.toml
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Also, you can directly create <code>ActivationFactory</code> and <code>ActivationWriter</code> instances to generate and write activations to disk.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">datasets</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="n">LanguageModelConfig</span><span class="p">,</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="n">TransformerLensLanguageModel</span><span class="p">,</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">ActivationFactory</span><span class="p">,</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">ActivationFactoryConfig</span><span class="p">,</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="n">ActivationFactoryDatasetSource</span><span class="p">,</span>
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>    <span class="n">ActivationFactoryTarget</span><span class="p">,</span>
+</span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>    <span class="n">BufferShuffleConfig</span><span class="p">,</span>
+</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>    <span class="n">ActivationWriter</span><span class="p">,</span>
+</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>    <span class="n">ActivationWriterConfig</span><span class="p">,</span>
+</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="p">)</span>
+</span><span id="__span-18-13"><a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>
+</span><span id="__span-18-14"><a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="c1"># Use same way to generate activations</span>
+</span><span id="__span-18-15"><a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="n">model</span> <span class="o">=</span> <span class="n">TransformerLensLanguageModel</span><span class="p">(</span>
+</span><span id="__span-18-16"><a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>    <span class="n">LanguageModelConfig</span><span class="p">(</span>
+</span><span id="__span-18-17"><a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a>        <span class="n">model_name</span><span class="o">=</span><span class="s2">"EleutherAI/pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-18-18"><a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-18-19"><a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a>        <span class="n">dtype</span><span class="o">=</span><span class="s2">"torch.float16"</span><span class="p">,</span>
+</span><span id="__span-18-20"><a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a>    <span class="p">)</span>
+</span><span id="__span-18-21"><a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a><span class="p">)</span>
+</span><span id="__span-18-22"><a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a>
+</span><span id="__span-18-23"><a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">load_dataset</span><span class="p">(</span>
+</span><span id="__span-18-24"><a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a>    <span class="s2">"Hzfinfdu/SlimPajama-3B"</span><span class="p">,</span>
+</span><span id="__span-18-25"><a id="__codelineno-18-25" name="__codelineno-18-25" href="#__codelineno-18-25"></a>    <span class="n">split</span><span class="o">=</span><span class="s2">"train"</span><span class="p">,</span>
+</span><span id="__span-18-26"><a id="__codelineno-18-26" name="__codelineno-18-26" href="#__codelineno-18-26"></a><span class="p">)</span>
+</span><span id="__span-18-27"><a id="__codelineno-18-27" name="__codelineno-18-27" href="#__codelineno-18-27"></a>
+</span><span id="__span-18-28"><a id="__codelineno-18-28" name="__codelineno-18-28" href="#__codelineno-18-28"></a><span class="n">factory_cfg</span> <span class="o">=</span> <span class="n">ActivationFactoryConfig</span><span class="p">(</span>
+</span><span id="__span-18-29"><a id="__codelineno-18-29" name="__codelineno-18-29" href="#__codelineno-18-29"></a>    <span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="n">ActivationFactoryDatasetSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"SlimPajama-3B"</span><span class="p">)],</span>
+</span><span id="__span-18-30"><a id="__codelineno-18-30" name="__codelineno-18-30" href="#__codelineno-18-30"></a>    <span class="n">target</span><span class="o">=</span><span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span><span class="p">,</span>
+</span><span id="__span-18-31"><a id="__codelineno-18-31" name="__codelineno-18-31" href="#__codelineno-18-31"></a>    <span class="n">hook_points</span><span class="o">=</span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">],</span>
+</span><span id="__span-18-32"><a id="__codelineno-18-32" name="__codelineno-18-32" href="#__codelineno-18-32"></a>    <span class="n">context_size</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+</span><span id="__span-18-33"><a id="__codelineno-18-33" name="__codelineno-18-33" href="#__codelineno-18-33"></a>    <span class="n">model_batch_size</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+</span><span id="__span-18-34"><a id="__codelineno-18-34" name="__codelineno-18-34" href="#__codelineno-18-34"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+</span><span id="__span-18-35"><a id="__codelineno-18-35" name="__codelineno-18-35" href="#__codelineno-18-35"></a>    <span class="n">buffer_size</span><span class="o">=</span><span class="mi">16384</span><span class="p">,</span>
+</span><span id="__span-18-36"><a id="__codelineno-18-36" name="__codelineno-18-36" href="#__codelineno-18-36"></a>    <span class="n">buffer_shuffle</span><span class="o">=</span><span class="n">BufferShuffleConfig</span><span class="p">(</span>
+</span><span id="__span-18-37"><a id="__codelineno-18-37" name="__codelineno-18-37" href="#__codelineno-18-37"></a>        <span class="n">perm_seed</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>
+</span><span id="__span-18-38"><a id="__codelineno-18-38" name="__codelineno-18-38" href="#__codelineno-18-38"></a>        <span class="n">generator_device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-18-39"><a id="__codelineno-18-39" name="__codelineno-18-39" href="#__codelineno-18-39"></a>    <span class="p">),</span>
+</span><span id="__span-18-40"><a id="__codelineno-18-40" name="__codelineno-18-40" href="#__codelineno-18-40"></a><span class="p">)</span>
+</span><span id="__span-18-41"><a id="__codelineno-18-41" name="__codelineno-18-41" href="#__codelineno-18-41"></a><span class="n">factory</span> <span class="o">=</span> <span class="n">ActivationFactory</span><span class="p">(</span><span class="n">factory_cfg</span><span class="p">)</span>
+</span><span id="__span-18-42"><a id="__codelineno-18-42" name="__codelineno-18-42" href="#__codelineno-18-42"></a>
+</span><span id="__span-18-43"><a id="__codelineno-18-43" name="__codelineno-18-43" href="#__codelineno-18-43"></a><span class="n">activations</span> <span class="o">=</span> <span class="n">factory</span><span class="o">.</span><span class="n">process</span><span class="p">(</span>
+</span><span id="__span-18-44"><a id="__codelineno-18-44" name="__codelineno-18-44" href="#__codelineno-18-44"></a>    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+</span><span id="__span-18-45"><a id="__codelineno-18-45" name="__codelineno-18-45" href="#__codelineno-18-45"></a>    <span class="n">model_name</span><span class="o">=</span><span class="s2">"pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-18-46"><a id="__codelineno-18-46" name="__codelineno-18-46" href="#__codelineno-18-46"></a>    <span class="n">datasets</span><span class="o">=</span><span class="p">{</span><span class="s2">"SlimPajama-3B"</span><span class="p">:</span> <span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="kc">None</span><span class="p">)},</span>
+</span><span id="__span-18-47"><a id="__codelineno-18-47" name="__codelineno-18-47" href="#__codelineno-18-47"></a><span class="p">)</span>
+</span><span id="__span-18-48"><a id="__codelineno-18-48" name="__codelineno-18-48" href="#__codelineno-18-48"></a>
+</span><span id="__span-18-49"><a id="__codelineno-18-49" name="__codelineno-18-49" href="#__codelineno-18-49"></a><span class="c1"># Create an ActivationWriter to write the activation stream to disk</span>
+</span><span id="__span-18-50"><a id="__codelineno-18-50" name="__codelineno-18-50" href="#__codelineno-18-50"></a><span class="n">writer_cfg</span> <span class="o">=</span> <span class="n">ActivationWriterConfig</span><span class="p">(</span>
+</span><span id="__span-18-51"><a id="__codelineno-18-51" name="__codelineno-18-51" href="#__codelineno-18-51"></a>    <span class="n">hook_points</span><span class="o">=</span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">],</span>
+</span><span id="__span-18-52"><a id="__codelineno-18-52" name="__codelineno-18-52" href="#__codelineno-18-52"></a>    <span class="n">total_generating_tokens</span><span class="o">=</span><span class="mi">800_000_000</span><span class="p">,</span>
+</span><span id="__span-18-53"><a id="__codelineno-18-53" name="__codelineno-18-53" href="#__codelineno-18-53"></a>    <span class="n">cache_dir</span><span class="o">=</span><span class="s2">"path/to/activations"</span><span class="p">,</span>
+</span><span id="__span-18-54"><a id="__codelineno-18-54" name="__codelineno-18-54" href="#__codelineno-18-54"></a><span class="p">)</span>
+</span><span id="__span-18-55"><a id="__codelineno-18-55" name="__codelineno-18-55" href="#__codelineno-18-55"></a><span class="n">writer</span> <span class="o">=</span> <span class="n">ActivationWriter</span><span class="p">(</span><span class="n">writer_cfg</span><span class="p">)</span>
+</span><span id="__span-18-56"><a id="__codelineno-18-56" name="__codelineno-18-56" href="#__codelineno-18-56"></a>
+</span><span id="__span-18-57"><a id="__codelineno-18-57" name="__codelineno-18-57" href="#__codelineno-18-57"></a><span class="n">writer</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="n">activations</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<h3 id="training-with-cached-activations">Training with Cached Activations</h3>
+<p>Once you have generated and saved activations to disk, you can configure the <code>ActivationFactory</code> to read from these files instead of running the language model. This is done by replacing <code>ActivationFactoryDatasetSource</code> with <code>ActivationFactoryActivationsSource</code> in the configuration.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="4:3"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio"><input id="__tabbed_4_2" name="__tabbed_4" type="radio"><input id="__tabbed_4_3" name="__tabbed_4" type="radio"><div class="tabbed-labels"><label for="__tabbed_4_1">Runner</label><label for="__tabbed_4_2">CLI</label><label for="__tabbed_4_3">Full Script</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>    <span class="n">TrainSAESettings</span><span class="p">,</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>    <span class="n">train_sae</span><span class="p">,</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="n">SAEConfig</span><span class="p">,</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>    <span class="n">TrainerConfig</span><span class="p">,</span>
+</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>    <span class="n">ActivationFactoryConfig</span><span class="p">,</span>
+</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>    <span class="n">ActivationFactoryActivationsSource</span><span class="p">,</span>
+</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>    <span class="n">ActivationFactoryTarget</span><span class="p">,</span>
+</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="p">)</span>
+</span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>
+</span><span id="__span-19-12"><a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">TrainSAESettings</span><span class="p">(</span>
+</span><span id="__span-19-13"><a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a>    <span class="n">sae</span><span class="o">=</span><span class="n">SAEConfig</span><span class="p">(</span>
+</span><span id="__span-19-14"><a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>        <span class="n">hook_point_in</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-19-15"><a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a>        <span class="n">hook_point_out</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-19-16"><a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a>        <span class="n">d_model</span><span class="o">=</span><span class="mi">768</span><span class="p">,</span>
+</span><span id="__span-19-17"><a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a>        <span class="n">expansion_factor</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+</span><span id="__span-19-18"><a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a>        <span class="n">act_fn</span><span class="o">=</span><span class="s2">"relu"</span><span class="p">,</span>
+</span><span id="__span-19-19"><a id="__codelineno-19-19" name="__codelineno-19-19" href="#__codelineno-19-19"></a>        <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+</span><span id="__span-19-20"><a id="__codelineno-19-20" name="__codelineno-19-20" href="#__codelineno-19-20"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-19-21"><a id="__codelineno-19-21" name="__codelineno-19-21" href="#__codelineno-19-21"></a>    <span class="p">),</span>
+</span><span id="__span-19-22"><a id="__codelineno-19-22" name="__codelineno-19-22" href="#__codelineno-19-22"></a>    <span class="n">trainer</span><span class="o">=</span><span class="n">TrainerConfig</span><span class="p">(</span>
+</span><span id="__span-19-23"><a id="__codelineno-19-23" name="__codelineno-19-23" href="#__codelineno-19-23"></a>        <span class="n">amp_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+</span><span id="__span-19-24"><a id="__codelineno-19-24" name="__codelineno-19-24" href="#__codelineno-19-24"></a>        <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-19-25"><a id="__codelineno-19-25" name="__codelineno-19-25" href="#__codelineno-19-25"></a>        <span class="n">total_training_tokens</span><span class="o">=</span><span class="mi">800_000_000</span><span class="p">,</span>
+</span><span id="__span-19-26"><a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a>        <span class="n">exp_result_path</span><span class="o">=</span><span class="s2">"results"</span><span class="p">,</span>
+</span><span id="__span-19-27"><a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a>    <span class="p">),</span>
+</span><span id="__span-19-28"><a id="__codelineno-19-28" name="__codelineno-19-28" href="#__codelineno-19-28"></a>    <span class="n">activation_factory</span><span class="o">=</span><span class="n">ActivationFactoryConfig</span><span class="p">(</span>
+</span><span id="__span-19-29"><a id="__codelineno-19-29" name="__codelineno-19-29" href="#__codelineno-19-29"></a>        <span class="n">sources</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-19-30"><a id="__codelineno-19-30" name="__codelineno-19-30" href="#__codelineno-19-30"></a>            <span class="n">ActivationFactoryActivationsSource</span><span class="p">(</span>
+</span><span id="__span-19-31"><a id="__codelineno-19-31" name="__codelineno-19-31" href="#__codelineno-19-31"></a>                <span class="n">path</span><span class="o">=</span><span class="s2">"path/to/activations"</span><span class="p">,</span>
+</span><span id="__span-19-32"><a id="__codelineno-19-32" name="__codelineno-19-32" href="#__codelineno-19-32"></a>                <span class="n">name</span><span class="o">=</span><span class="s2">"pythia-160m-cached"</span><span class="p">,</span>
+</span><span id="__span-19-33"><a id="__codelineno-19-33" name="__codelineno-19-33" href="#__codelineno-19-33"></a>                <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-19-34"><a id="__codelineno-19-34" name="__codelineno-19-34" href="#__codelineno-19-34"></a>            <span class="p">)</span>
+</span><span id="__span-19-35"><a id="__codelineno-19-35" name="__codelineno-19-35" href="#__codelineno-19-35"></a>        <span class="p">],</span>
+</span><span id="__span-19-36"><a id="__codelineno-19-36" name="__codelineno-19-36" href="#__codelineno-19-36"></a>        <span class="n">target</span><span class="o">=</span><span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span><span class="p">,</span>
+</span><span id="__span-19-37"><a id="__codelineno-19-37" name="__codelineno-19-37" href="#__codelineno-19-37"></a>        <span class="n">hook_points</span><span class="o">=</span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">],</span>
+</span><span id="__span-19-38"><a id="__codelineno-19-38" name="__codelineno-19-38" href="#__codelineno-19-38"></a>        <span class="n">batch_size</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+</span><span id="__span-19-39"><a id="__codelineno-19-39" name="__codelineno-19-39" href="#__codelineno-19-39"></a>    <span class="p">),</span>
+</span><span id="__span-19-40"><a id="__codelineno-19-40" name="__codelineno-19-40" href="#__codelineno-19-40"></a>    <span class="n">sae_name</span><span class="o">=</span><span class="s2">"pythia-160m-sae"</span><span class="p">,</span>
+</span><span id="__span-19-41"><a id="__codelineno-19-41" name="__codelineno-19-41" href="#__codelineno-19-41"></a>    <span class="n">sae_series</span><span class="o">=</span><span class="s2">"pythia-sae"</span><span class="p">,</span>
+</span><span id="__span-19-42"><a id="__codelineno-19-42" name="__codelineno-19-42" href="#__codelineno-19-42"></a><span class="p">)</span>
+</span><span id="__span-19-43"><a id="__codelineno-19-43" name="__codelineno-19-43" href="#__codelineno-19-43"></a>
+</span><span id="__span-19-44"><a id="__codelineno-19-44" name="__codelineno-19-44" href="#__codelineno-19-44"></a><span class="n">train_sae</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Update your training configuration to use the <code>activations</code> source type:</p>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># ... other configurations ...</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="k">[activation_factory]</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"activations-1d"</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="n">hook_points</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">]</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="n">batch_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4096</span>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="k">[[activation_factory.sources]]</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"activations"</span>
+</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"pythia-160m-cached"</span>
+</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"path/to/activations"</span>
+</span><span id="__span-20-12"><a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="n">device</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>In a full script, you can omit the language model and dataset loading, and directly use <code>ActivationFactory</code> with cached sources:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>    <span class="n">ActivationFactory</span><span class="p">,</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>    <span class="n">ActivationFactoryConfig</span><span class="p">,</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>    <span class="n">ActivationFactoryActivationsSource</span><span class="p">,</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>    <span class="n">ActivationFactoryTarget</span><span class="p">,</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>    <span class="n">SAEConfig</span><span class="p">,</span>
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>    <span class="n">Trainer</span><span class="p">,</span>
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>    <span class="n">TrainerConfig</span><span class="p">,</span>
+</span><span id="__span-21-10"><a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a>    <span class="n">SparseAutoEncoder</span><span class="p">,</span>
+</span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="p">)</span>
+</span><span id="__span-21-12"><a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a>
+</span><span id="__span-21-13"><a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="c1"># 1. Configure Activation Factory with Cached Source</span>
+</span><span id="__span-21-14"><a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a><span class="n">factory_cfg</span> <span class="o">=</span> <span class="n">ActivationFactoryConfig</span><span class="p">(</span>
+</span><span id="__span-21-15"><a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a>    <span class="n">sources</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-21-16"><a id="__codelineno-21-16" name="__codelineno-21-16" href="#__codelineno-21-16"></a>        <span class="n">ActivationFactoryActivationsSource</span><span class="p">(</span>
+</span><span id="__span-21-17"><a id="__codelineno-21-17" name="__codelineno-21-17" href="#__codelineno-21-17"></a>            <span class="n">path</span><span class="o">=</span><span class="s2">"path/to/activations"</span><span class="p">,</span>
+</span><span id="__span-21-18"><a id="__codelineno-21-18" name="__codelineno-21-18" href="#__codelineno-21-18"></a>            <span class="n">name</span><span class="o">=</span><span class="s2">"pythia-160m-cached"</span><span class="p">,</span>
+</span><span id="__span-21-19"><a id="__codelineno-21-19" name="__codelineno-21-19" href="#__codelineno-21-19"></a>            <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-21-20"><a id="__codelineno-21-20" name="__codelineno-21-20" href="#__codelineno-21-20"></a>        <span class="p">)</span>
+</span><span id="__span-21-21"><a id="__codelineno-21-21" name="__codelineno-21-21" href="#__codelineno-21-21"></a>    <span class="p">],</span>
+</span><span id="__span-21-22"><a id="__codelineno-21-22" name="__codelineno-21-22" href="#__codelineno-21-22"></a>    <span class="n">target</span><span class="o">=</span><span class="n">ActivationFactoryTarget</span><span class="o">.</span><span class="n">ACTIVATIONS_1D</span><span class="p">,</span>
+</span><span id="__span-21-23"><a id="__codelineno-21-23" name="__codelineno-21-23" href="#__codelineno-21-23"></a>    <span class="n">hook_points</span><span class="o">=</span><span class="p">[</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">],</span>
+</span><span id="__span-21-24"><a id="__codelineno-21-24" name="__codelineno-21-24" href="#__codelineno-21-24"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+</span><span id="__span-21-25"><a id="__codelineno-21-25" name="__codelineno-21-25" href="#__codelineno-21-25"></a><span class="p">)</span>
+</span><span id="__span-21-26"><a id="__codelineno-21-26" name="__codelineno-21-26" href="#__codelineno-21-26"></a>
+</span><span id="__span-21-27"><a id="__codelineno-21-27" name="__codelineno-21-27" href="#__codelineno-21-27"></a><span class="n">factory</span> <span class="o">=</span> <span class="n">ActivationFactory</span><span class="p">(</span><span class="n">factory_cfg</span><span class="p">)</span>
+</span><span id="__span-21-28"><a id="__codelineno-21-28" name="__codelineno-21-28" href="#__codelineno-21-28"></a><span class="n">activations_stream</span> <span class="o">=</span> <span class="n">factory</span><span class="o">.</span><span class="n">process</span><span class="p">()</span>
+</span><span id="__span-21-29"><a id="__codelineno-21-29" name="__codelineno-21-29" href="#__codelineno-21-29"></a>
+</span><span id="__span-21-30"><a id="__codelineno-21-30" name="__codelineno-21-30" href="#__codelineno-21-30"></a><span class="c1"># 2. Initialize SAE and Trainer</span>
+</span><span id="__span-21-31"><a id="__codelineno-21-31" name="__codelineno-21-31" href="#__codelineno-21-31"></a><span class="n">sae</span> <span class="o">=</span> <span class="n">SparseAutoEncoder</span><span class="p">(</span><span class="n">SAEConfig</span><span class="p">(</span>
+</span><span id="__span-21-32"><a id="__codelineno-21-32" name="__codelineno-21-32" href="#__codelineno-21-32"></a>    <span class="n">hook_point_in</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-21-33"><a id="__codelineno-21-33" name="__codelineno-21-33" href="#__codelineno-21-33"></a>    <span class="n">hook_point_out</span><span class="o">=</span><span class="s2">"blocks.6.hook_resid_post"</span><span class="p">,</span>
+</span><span id="__span-21-34"><a id="__codelineno-21-34" name="__codelineno-21-34" href="#__codelineno-21-34"></a>    <span class="n">d_model</span><span class="o">=</span><span class="mi">768</span><span class="p">,</span>
+</span><span id="__span-21-35"><a id="__codelineno-21-35" name="__codelineno-21-35" href="#__codelineno-21-35"></a>    <span class="n">expansion_factor</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+</span><span id="__span-21-36"><a id="__codelineno-21-36" name="__codelineno-21-36" href="#__codelineno-21-36"></a>    <span class="n">act_fn</span><span class="o">=</span><span class="s2">"relu"</span><span class="p">,</span>
+</span><span id="__span-21-37"><a id="__codelineno-21-37" name="__codelineno-21-37" href="#__codelineno-21-37"></a>    <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-21-38"><a id="__codelineno-21-38" name="__codelineno-21-38" href="#__codelineno-21-38"></a><span class="p">))</span>
+</span><span id="__span-21-39"><a id="__codelineno-21-39" name="__codelineno-21-39" href="#__codelineno-21-39"></a>
+</span><span id="__span-21-40"><a id="__codelineno-21-40" name="__codelineno-21-40" href="#__codelineno-21-40"></a><span class="n">trainer</span> <span class="o">=</span> <span class="n">Trainer</span><span class="p">(</span><span class="n">TrainerConfig</span><span class="p">(</span>
+</span><span id="__span-21-41"><a id="__codelineno-21-41" name="__codelineno-21-41" href="#__codelineno-21-41"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-21-42"><a id="__codelineno-21-42" name="__codelineno-21-42" href="#__codelineno-21-42"></a>    <span class="n">total_training_tokens</span><span class="o">=</span><span class="mi">800_000_000</span><span class="p">,</span>
+</span><span id="__span-21-43"><a id="__codelineno-21-43" name="__codelineno-21-43" href="#__codelineno-21-43"></a>    <span class="n">exp_result_path</span><span class="o">=</span><span class="s2">"results"</span><span class="p">,</span>
+</span><span id="__span-21-44"><a id="__codelineno-21-44" name="__codelineno-21-44" href="#__codelineno-21-44"></a><span class="p">))</span>
+</span><span id="__span-21-45"><a id="__codelineno-21-45" name="__codelineno-21-45" href="#__codelineno-21-45"></a>
+</span><span id="__span-21-46"><a id="__codelineno-21-46" name="__codelineno-21-46" href="#__codelineno-21-46"></a><span class="c1"># 3. Train</span>
+</span><span id="__span-21-47"><a id="__codelineno-21-47" name="__codelineno-21-47" href="#__codelineno-21-47"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">sae</span><span class="o">=</span><span class="n">sae</span><span class="p">,</span> <span class="n">activation_stream</span><span class="o">=</span><span class="n">activations_stream</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<h2 id="use-huggingface-backend">Use HuggingFace Backend</h2>
+<p>While TransformerLens provides a unified set of hook points across numerous Transformer variants, there are compelling reasons to use the Hugging Face Transformers library directly for generating activations:</p>
+<ul>
+<li>Provides a wider range of model architectures. Almost every frontier model is released with official Hugging Face-compatible modeling code, ensuring immediate support for the latest architectures.</li>
+<li>Integrates GPU accelerate kernels, e.g. Flash Attention, for faster activation generation.</li>
+<li>Reduces numerical errors. TransformerLens re-implements model logic using more semantic linear algebraic operation (primarily <a href="https://github.com/arogozhnikov/einops">Einsum</a>), which will inevitably introduce subtle numerical discrepancies. Direct usage of Huggingface ensures the activation used for training sparse dictionaries is just the same as whatever you use for other purpose.</li>
+</ul>
+<p>To use the HuggingFace backend, you simply need to change the <code>backend</code> field in <code>LanguageModelConfig</code> to <code>"huggingface"</code>, or (in full script) load the model with <code>HuggingFaceLanguageModel</code> wrapper.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="5:3"><input checked="checked" id="__tabbed_5_1" name="__tabbed_5" type="radio"><input id="__tabbed_5_2" name="__tabbed_5" type="radio"><input id="__tabbed_5_3" name="__tabbed_5" type="radio"><div class="tabbed-labels"><label for="__tabbed_5_1">Runner</label><label for="__tabbed_5_2">CLI</label><label for="__tabbed_5_3">Full Script</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># ...</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">TrainSAESettings</span><span class="p">(</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>    <span class="c1"># ...</span>
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>    <span class="n">model</span><span class="o">=</span><span class="n">LanguageModelConfig</span><span class="p">(</span>
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>        <span class="n">model_name</span><span class="o">=</span><span class="s2">"EleutherAI/pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a>        <span class="n">dtype</span><span class="o">=</span><span class="s2">"torch.float16"</span><span class="p">,</span>
+</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>        <span class="n">backend</span><span class="o">=</span><span class="s2">"huggingface"</span><span class="p">,</span>  <span class="c1"># Set backend to huggingface</span>
+</span><span id="__span-22-10"><a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a>    <span class="p">),</span>
+</span><span id="__span-22-11"><a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a>    <span class="c1"># ...</span>
+</span><span id="__span-22-12"><a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="p">)</span>
+</span><span id="__span-22-13"><a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a>
+</span><span id="__span-22-14"><a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="n">train_sae</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># ...</span>
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="k">[model]</span>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="n">model_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"EleutherAI/pythia-160m"</span>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="n">device</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"cuda"</span>
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="n">dtype</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"torch.float16"</span>
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="n">backend</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"huggingface"</span>
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>
+</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="c1"># The rest of the configuration remains the same</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">lm_saes</span><span class="w"> </span><span class="kn">import</span> <span class="n">HuggingFaceLanguageModel</span><span class="p">,</span> <span class="n">LanguageModelConfig</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">HuggingFaceLanguageModel</span><span class="p">(</span>
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>    <span class="n">LanguageModelConfig</span><span class="p">(</span>
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>        <span class="n">model_name</span><span class="o">=</span><span class="s2">"EleutherAI/pythia-160m"</span><span class="p">,</span>
+</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>        <span class="n">dtype</span><span class="o">=</span><span class="s2">"torch.float16"</span><span class="p">,</span>
+</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>    <span class="p">)</span>
+</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="p">)</span>
+</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>
+</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="c1"># The rest of the script remains the same</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<div class="footnote">
+<hr>
+<ol>
+<li id="fn:1">
+<p>The Heaviside step function <span class="arithmatex">\(H(x)\)</span> is defined as:</p>
+<div class="arithmatex">\[
+H(x) =
+\begin{cases}
+    1 &amp; \text{if } x &gt; 0 \\
+    0 &amp; \text{otherwise}
+\end{cases}
+\]</div>
+<p><a class="footnote-backref" href="#fnref:1" title="Jump back to footnote 1 in the text">↩</a></p>
+</li>
+<li id="fn:2">
+<p>See more discussion on <span class="arithmatex">\(L^0\)</span> approximate functions in <a href="https://arxiv.org/abs/0811.4706">Comparing Measures of Sparsity</a> and <a href="https://www.cs.utep.edu/vladik/2013/tr13-18.pdf">Why <span class="arithmatex">\(\ell_1\)</span> Is a Good Approximation to <span class="arithmatex">\(\ell_0\)</span>: A Geometric Explanation</a>.&nbsp;<a class="footnote-backref" href="#fnref:2" title="Jump back to footnote 2 in the text">↩</a></p>
+</li>
+<li id="fn:3">
+<p>See <a href="https://www.lesswrong.com/posts/3JuSjTZyMzaSeTxKk/fixing-feature-suppression-in-saes-2">Fixing Feature Suppression in SAEs</a> for more discussion.&nbsp;<a class="footnote-backref" href="#fnref:3" title="Jump back to footnote 3 in the text">↩</a></p>
+</li>
+</ol>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "content.footnote.tooltips"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../javascripts/katex.js"></script>
+      
+        <script src="https://unpkg.com/katex@0/dist/katex.min.js"></script>
+      
+        <script src="https://unpkg.com/katex@0/dist/contrib/auto-render.min.js"></script>
+      
+    
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>
