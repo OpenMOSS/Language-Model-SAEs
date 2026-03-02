@@ -8,7 +8,7 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.circuit.attribution import attribute
 from lm_saes.circuit.graph import Graph, compute_influence, normalize_matrix
 from lm_saes.circuit.replacement_model import ReplacementModel
@@ -63,7 +63,7 @@ class Evaluator:
 
     def evaluate(
         self,
-        sae: AbstractSparseAutoEncoder,
+        sae: SparseDictionary,
         data_stream: Iterable[dict[str, torch.Tensor]],
         wandb_logger: Run | None = None,
         model: HookedTransformer | None = None,

@@ -8,7 +8,7 @@ from transformer_lens.components import Attention, GroupedQueryAttention, Transf
 from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder, BaseSAEConfig
+from lm_saes.abstract_sae import SparseDictionary, SparseDictionaryConfig
 from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseConfig
@@ -56,7 +56,7 @@ class Initializer:
         self.cfg = cfg
 
     @torch.no_grad()
-    def initialize_parameters(self, sae: AbstractSparseAutoEncoder):
+    def initialize_parameters(self, sae: SparseDictionary):
         """Initialize the parameters of the SAE.
         Only used when the state is "training" to initialize sae.
         """
@@ -75,7 +75,7 @@ class Initializer:
     @torch.no_grad()
     def initialization_search(
         self,
-        sae: AbstractSparseAutoEncoder,
+        sae: SparseDictionary,
         activation_batch: Dict[str, Tensor],
         wandb_logger: Run | None = None,
     ):
@@ -143,7 +143,7 @@ class Initializer:
 
     def initialize_sae_from_config(
         self,
-        cfg: BaseSAEConfig,
+        cfg: SparseDictionaryConfig,
         activation_stream: Iterable[dict[str, Tensor]] | None = None,
         activation_norm: dict[str, float] | None = None,
         device_mesh: DeviceMesh | None = None,
@@ -158,7 +158,7 @@ class Initializer:
             activation_norm (dict[str, float] | None): The activation normalization. Used for dataset-wise normalization when self.cfg.norm_activation is "dataset-wise".
             device_mesh (DeviceMesh | None): The device mesh.
         """
-        sae: AbstractSparseAutoEncoder = AbstractSparseAutoEncoder.from_config(
+        sae: SparseDictionary = SparseDictionary.from_config(
             cfg,
             device_mesh=device_mesh,
         )

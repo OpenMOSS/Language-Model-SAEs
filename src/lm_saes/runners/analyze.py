@@ -9,7 +9,7 @@ import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor, DirectLogitAttributorConfig
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer, FeatureAnalyzerConfig
@@ -201,7 +201,7 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
-    sae = AbstractSparseAutoEncoder.from_pretrained(
+    sae = SparseDictionary.from_pretrained(
         settings.sae.pretrained_name_or_path,
         device_mesh=device_mesh,
         device=settings.sae.device,
@@ -459,7 +459,7 @@ def direct_logit_attribute(settings: DirectLogitAttributeSettings) -> None:
         logger.info(f"Analysis results to be updated: {settings.analysis_file}")
 
     logger.info("Loading SAE model")
-    sae = AbstractSparseAutoEncoder.from_pretrained(
+    sae = SparseDictionary.from_pretrained(
         settings.sae.pretrained_name_or_path,
         device=settings.sae.device,
         dtype=settings.sae.dtype,

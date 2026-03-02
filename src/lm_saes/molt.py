@@ -10,8 +10,8 @@ from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
 from lm_saes.abstract_sae import (
-    AbstractSparseAutoEncoder,
-    BaseSAEConfig,
+    SparseDictionary,
+    SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
@@ -23,7 +23,7 @@ logger = get_distributed_logger("molt")
 
 
 @register_sae_config("molt")
-class MOLTConfig(BaseSAEConfig):
+class MOLTConfig(SparseDictionaryConfig):
     """Configuration for Mixture of Linear Transforms (MOLT).
 
     MOLT is a more efficient alternative to transcoders that sparsely replaces
@@ -118,7 +118,7 @@ class MOLTConfig(BaseSAEConfig):
 
 
 @register_sae_model("molt")
-class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
+class MixtureOfLinearTransform(SparseDictionary):
     """Mixture of Linear Transforms (MOLT) model.
 
     MOLT is a sparse autoencoder variant that uses d_sae linear transforms,

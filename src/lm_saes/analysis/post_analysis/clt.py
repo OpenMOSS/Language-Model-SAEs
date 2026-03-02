@@ -9,7 +9,7 @@ from typing import Any
 import torch
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.utils.discrete import KeyedDiscreteMapper
@@ -26,7 +26,7 @@ class CLTPostAnalysisProcessor(PostAnalysisProcessor):
 
     def _process_tensors(
         self,
-        sae: AbstractSparseAutoEncoder,
+        sae: SparseDictionary,
         act_times: torch.Tensor,
         n_analyzed_tokens: int,
         max_feature_acts: torch.Tensor,

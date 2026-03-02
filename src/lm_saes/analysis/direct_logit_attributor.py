@@ -4,7 +4,7 @@ import einops
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.backend import LanguageModel
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
@@ -109,7 +109,7 @@ class DirectLogitAttributor:
 
     @torch.no_grad()
     def direct_logit_attribute(
-        self, sae: AbstractSparseAutoEncoder, model: LanguageModel, layer_idx: int | None = None
+        self, sae: SparseDictionary, model: LanguageModel, layer_idx: int | None = None
     ) -> list[dict]:
         """Compute direct logit attribution for the given SAE.
 

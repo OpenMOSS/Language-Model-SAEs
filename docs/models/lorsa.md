@@ -32,7 +32,7 @@ The architecture was introduced in [*Towards Understanding the Nature of Attenti
 
 ## Configuration
 
-Lorsa is configured using the `LorsaConfig` class. All sparse dictionary models inherit common parameters from `BaseSAEConfig`. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
+Lorsa is configured using the `LorsaConfig` class. All sparse dictionary models inherit common parameters from `SparseDictionaryConfig`. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
 
 ### Lorsa-Specific Parameters
 

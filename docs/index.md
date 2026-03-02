@@ -9,9 +9,9 @@ Sparse Autoencoders (SAEs) are neural network models used to extract interpretab
 This library provides:
 
 - **Scalability**: Our framework is fully distributed with arbitrary combinations of data, model, and head parallelism for both training and analysis. Enjoy training SAEs with millions of features!
-- **Flexibility**: We support a wide range of SAE variants, including vanilla SAEs, Lorsa (Low-rank Sparse Attention), CLT (Cross-layer Transcoder), MoLT (Mixture of Linear Transforms), CrossCoder, and more. Each variant can be combined with different activation functions (e.g., ReLU, JumpReLU, TopK, BatchTopK) and sparsity penalties (e.g., L1, Tanh).
+- **Flexibility**: We support a wide range of sparse dictionary variants, including vanilla SAEs, Lorsa (Low-rank Sparse Attention), CLT (Cross-layer Transcoder), MoLT (Mixture of Linear Transforms), CrossCoder, and more. Each variant can be combined with different activation functions (e.g., ReLU, JumpReLU, TopK, BatchTopK) and sparsity penalties (e.g., L1, Tanh).
 - **Easy to Use**: We provide high-level `runners` APIs to quickly launch experiments with simple configurations. Check our [examples](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples) for verified hyperparameters.
-- **Visualization**: We provide a unified web interface to visualize learned SAE variants and their features.
+- **Visualization**: We provide a unified web interface to visualize learned sparse dictionary variants and their features.
 
 ## Quick Start
 
@@ -47,15 +47,15 @@ This library provides:
     pip install lm-saes[npu]
     ```
 
-### Load a trained Sparse Autoencoder from HuggingFace
+### Load a trained sparse dictionary from HuggingFace
 
-Load any Sparse Autoencoder or other sparse dictionaries in `Language-Model-SAEs` or SAELens format.
+Load any sparse dictionary in `Language-Model-SAEs` or SAELens format.
 
 === "Language-Model-SAEs"
 
     ```python
     # Load Llama Scope 2 Transcoder
-    sae = AbstractSparseAutoEncoder.from_pretrained(
+    sae = SparseDictionary.from_pretrained(
         "OpenMOSS-Team/Llama-Scope-2-Qwen3-1.7B:transcoder/8x/k128/layer12_transcoder_8x_k128",
         fold_activation_scale=False
     )
@@ -65,7 +65,7 @@ Load any Sparse Autoencoder or other sparse dictionaries in `Language-Model-SAEs
 
     ```python
     # Load Gemma Scope 2 SAE
-    sae = AbstractSparseAutoEncoder.from_pretrained(
+    sae = SparseDictionary.from_pretrained(
         "gemma-scope-2-1b-pt-res-all:layer_12_width_16k_l0_small",
     )
     ```    

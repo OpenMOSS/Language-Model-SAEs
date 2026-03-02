@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder, BaseSAEConfig
+from lm_saes.abstract_sae import SparseDictionary, SparseDictionaryConfig
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.clt import CLTConfig
@@ -34,7 +34,7 @@ logger = get_distributed_logger("runners.train")
 class TrainSAESettings(BaseSettings):
     """Settings for training a Sparse Autoencoder (SAE)."""
 
-    sae: BaseSAEConfig | PretrainedSAE
+    sae: SparseDictionaryConfig | PretrainedSAE
     """Configuration for the SAE model architecture and parameters, or the path to a pretrained SAE."""
 
     sae_name: str
@@ -173,7 +173,7 @@ def train_sae(settings: TrainSAESettings) -> None:
         "Cannot use an initializer for a pretrained SAE"
     )
     if isinstance(settings.sae, PretrainedSAE):
-        sae = AbstractSparseAutoEncoder.from_pretrained(
+        sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
             fold_activation_scale=settings.sae.fold_activation_scale,
@@ -191,7 +191,7 @@ def train_sae(settings: TrainSAESettings) -> None:
             model=model,
         )
     else:
-        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+        sae = SparseDictionary.from_config(settings.sae, device_mesh=device_mesh)
 
     if settings.trainer.from_pretrained_path is not None:
         trainer = Trainer.from_checkpoint(
@@ -400,7 +400,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         "Cannot use an initializer for a pretrained CrossCoder"
     )
     if isinstance(settings.sae, PretrainedSAE):
-        sae = AbstractSparseAutoEncoder.from_pretrained(
+        sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
             fold_activation_scale=settings.sae.fold_activation_scale,
@@ -418,7 +418,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
             model=model,
         )
     else:
-        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+        sae = SparseDictionary.from_config(settings.sae, device_mesh=device_mesh)
 
     logger.info("CrossCoder initialized")
 
@@ -606,7 +606,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
         "Cannot use an initializer for a pretrained CLT"
     )
     if isinstance(settings.sae, PretrainedSAE):
-        sae = AbstractSparseAutoEncoder.from_pretrained(
+        sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
             fold_activation_scale=settings.sae.fold_activation_scale,
@@ -624,7 +624,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
             model=model,
         )
     else:
-        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+        sae = SparseDictionary.from_config(settings.sae, device_mesh=device_mesh)
 
     n_params = sum(p.numel() for p in sae.parameters())
     logger.info(f"CLT initialized with {n_params / 1e9:.2f}B parameters")
@@ -816,7 +816,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
         "Cannot use an initializer for a pretrained Lorsa"
     )
     if isinstance(settings.sae, PretrainedSAE):
-        sae = AbstractSparseAutoEncoder.from_pretrained(
+        sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
             fold_activation_scale=settings.sae.fold_activation_scale,
@@ -834,7 +834,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
             model=model,
         )
     else:
-        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+        sae = SparseDictionary.from_config(settings.sae, device_mesh=device_mesh)
 
     n_params = sum(p.numel() for p in sae.parameters())
     logger.info(f"lorsa initialized with {n_params / 1e9:.2f}B parameters")
@@ -1027,7 +1027,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         "Cannot use an initializer for a pretrained MOLT"
     )
     if isinstance(settings.sae, PretrainedSAE):
-        sae = AbstractSparseAutoEncoder.from_pretrained(
+        sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
             fold_activation_scale=settings.sae.fold_activation_scale,
@@ -1045,7 +1045,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
             model=model,
         )
     else:
-        sae = AbstractSparseAutoEncoder.from_config(settings.sae, device_mesh=device_mesh)
+        sae = SparseDictionary.from_config(settings.sae, device_mesh=device_mesh)
 
     logger.info(f"MOLT initialized: {type(sae).__name__}")
 
@@ -1101,7 +1101,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
 class SweepingItem(BaseModel):
     """A single item in a sweeping configuration."""
 
-    sae: BaseSAEConfig | PretrainedSAE
+    sae: SparseDictionaryConfig | PretrainedSAE
     """Configuration for the SAE model architecture and parameters, or the path to a pretrained SAE."""
 
     sae_name: str
@@ -1254,7 +1254,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         "Cannot use an initializer for a pretrained SAE"
     )
     if isinstance(item.sae, PretrainedSAE):
-        sae = AbstractSparseAutoEncoder.from_pretrained(
+        sae = SparseDictionary.from_pretrained(
             item.sae.pretrained_name_or_path,
             device_mesh=sae_device_mesh,
             fold_activation_scale=item.sae.fold_activation_scale,
@@ -1271,7 +1271,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
             model=model,
         )
     else:
-        sae = AbstractSparseAutoEncoder.from_config(item.sae, device_mesh=sae_device_mesh)
+        sae = SparseDictionary.from_config(item.sae, device_mesh=sae_device_mesh)
 
     wandb_logger = (
         wandb.init(

@@ -2,7 +2,7 @@ from functools import lru_cache
 
 from datasets import Dataset
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.backend import LanguageModel
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from server.config import (
@@ -40,10 +40,10 @@ def get_dataset(*, name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
 
 @synchronized
 @lru_cache(maxsize=LRU_CACHE_SIZE_SAES)
-def get_sae(*, name: str) -> AbstractSparseAutoEncoder:
+def get_sae(*, name: str) -> SparseDictionary:
     """Load and cache a sparse autoencoder."""
     path = client.get_sae_path(name, sae_series)
     assert path is not None, f"SAE {name} not found"
-    sae = AbstractSparseAutoEncoder.from_pretrained(path, device=device)
+    sae = SparseDictionary.from_pretrained(path, device=device)
     sae.eval()
     return sae
