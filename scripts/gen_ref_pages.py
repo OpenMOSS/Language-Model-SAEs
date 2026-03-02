@@ -13,7 +13,7 @@ CATEGORIES: dict[str, dict[str, list[str]]] = {
     "Models": {
         "description": "Sparse dictionary model architectures and their configuration classes.",
         "items": [
-            "lm_saes.BaseSAEConfig",
+            "lm_saes.SparseDictionaryConfig",
             "lm_saes.SAEConfig",
             "lm_saes.SparseAutoEncoder",
             "lm_saes.CrossCoderConfig",

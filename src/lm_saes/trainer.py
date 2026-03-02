@@ -21,7 +21,7 @@ from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.config import BaseConfig
 from lm_saes.metrics import (
     ExplainedVarianceMetric,
@@ -152,7 +152,7 @@ class Trainer:
         self.tokens_since_last_activation: Tensor | None = None
         self.is_dead: Tensor | None = None
 
-    def save_checkpoint(self, sae: AbstractSparseAutoEncoder, checkpoint_path: Path | str) -> None:
+    def save_checkpoint(self, sae: SparseDictionary, checkpoint_path: Path | str) -> None:
         """
         Save a complete checkpoint including model, optimizer, scheduler, and
         trainer state.
@@ -226,7 +226,7 @@ class Trainer:
     @classmethod
     def from_checkpoint(
         cls,
-        sae: AbstractSparseAutoEncoder,
+        sae: SparseDictionary,
         checkpoint_path: str,
     ) -> "Trainer":
         """
@@ -234,11 +234,11 @@ class Trainer:
         trainer state.
 
         Args:
-            device_mesh: The device mesh to load the model into
-            checkpoint_path: Path where the checkpoint was saved (without extension)
+            sae (SparseDictionary): The SAE model instance.
+            checkpoint_path (str): Path where the checkpoint was saved (without extension).
 
         Returns:
-            Trainer: A new trainer instance with loaded state
+            Trainer: A new trainer instance with loaded state.
         """
         # Load trainer state first to get the config
         checkpoint_dir = Path(checkpoint_path)
@@ -309,7 +309,7 @@ class Trainer:
     @timer.time("initialize_trainer")
     def _initialize_trainer(
         self,
-        sae: AbstractSparseAutoEncoder,
+        sae: SparseDictionary,
         activation_stream: Iterable[dict[str, Tensor]],
         wandb_logger: Run | None = None,
     ):
@@ -346,7 +346,7 @@ class Trainer:
         self.wandb_logger = wandb_logger
 
     @timer.time("initialize_optimizer")
-    def _initialize_optimizer(self, sae: AbstractSparseAutoEncoder):
+    def _initialize_optimizer(self, sae: SparseDictionary):
         assert isinstance(self.cfg.lr, float)
 
         def _apply_lr(parameters: dict[str, Any]):
@@ -400,7 +400,7 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
-    def _initialize_dead_statistics(self, sae: AbstractSparseAutoEncoder) -> None:
+    def _initialize_dead_statistics(self, sae: SparseDictionary) -> None:
         """Initialize the dead statistics tracking variables for auxk loss.
 
         Args:
@@ -456,7 +456,7 @@ class Trainer:
     @timer.time("training_step")
     def _training_step(
         self,
-        sae: AbstractSparseAutoEncoder,
+        sae: SparseDictionary,
         batch: dict[str, Tensor],
     ) -> dict[str, Tensor]:
         if "topk" in sae.cfg.act_fn and self.k_warmup_steps > 0:
@@ -511,7 +511,7 @@ class Trainer:
 
     @torch.no_grad()
     @timer.time("log")
-    def _log(self, sae: AbstractSparseAutoEncoder, ctx: dict[str, Any]):
+    def _log(self, sae: SparseDictionary, ctx: dict[str, Any]):
         """Log training metrics and sparsity statistics.
 
         Delegates model-specific logging to the model's methods.
@@ -562,7 +562,7 @@ class Trainer:
                 self.wandb_logger.log(metrics, step=self.cur_step + 1)
 
     @timer.time("save_checkpoint")
-    def _maybe_save_sae_checkpoint(self, sae: AbstractSparseAutoEncoder):
+    def _maybe_save_sae_checkpoint(self, sae: SparseDictionary):
         if len(self.checkpoint_thresholds) > 0 and self.cur_step >= self.checkpoint_thresholds[0]:
             suffix = "safetensors" if sae.device_mesh is None else "dcp"
             path = os.path.join(
@@ -575,9 +575,9 @@ class Trainer:
 
     def fit(
         self,
-        sae: AbstractSparseAutoEncoder,
+        sae: SparseDictionary,
         activation_stream: Iterable[dict[str, Tensor]],
-        eval_fn: Callable[[AbstractSparseAutoEncoder], None] | None = None,
+        eval_fn: Callable[[SparseDictionary], None] | None = None,
         wandb_logger: Run | None = None,
     ) -> bool | None:
         # Reset timer at the start of training

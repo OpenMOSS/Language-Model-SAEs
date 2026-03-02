@@ -10,13 +10,13 @@ This section provides comprehensive documentation for the various sparse diction
 
 - **[Transcoder](transcoder.md)**: Also known as Per-Layer Transcoder (PLT), this variant reads from one hook point and writes to another, enabling the decomposition of specific computational units like MLP layers.
 
-- **[Cross Layer Transcoder (CLT)](clt.md)**: An advanced architecture that captures cross-layer interactions by allowing features extracted at one layer to influence reconstructions at multiple downstream layers.
+<!-- - **[Cross Layer Transcoder (CLT)](clt.md)**: An advanced architecture that captures cross-layer interactions by allowing features extracted at one layer to influence reconstructions at multiple downstream layers. -->
 
 - **[Low-Rank Sparse Attention (Lorsa)](lorsa.md)**: A specialized architecture designed to decompose attention computations into interpretable sparse components.
 
 ## Common Configuration Parameters
 
-All sparse dictionary variants inherit from `BaseSAEConfig`, which provides common configuration parameters. These parameters are available for all model types unless specifically overridden.
+All sparse dictionary variants inherit from `SparseDictionaryConfig`, which provides common configuration parameters. These parameters are available for all model types unless specifically overridden.
 
 ### Core Architecture Parameters
 

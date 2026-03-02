@@ -1,14 +1,14 @@
 # Transcoder (Per-Layer Transcoder)
 
-Transcoders, also known as Per-Layer Transcoders (PLTs), are a variant of Sparse Autoencoders that read activations from one hook point and reconstruct at a different hook point within the same layer. This enables the decomposition of specific computational units, such as MLP sublayers, into interpretable sparse features. Unlike standard SAEs where `hook_point_in == hook_point_out`, transcoders have different input and output hook points. This allows them to faithfully approximate a computational unit (like an MLP layer) with a wider, sparsely-activating layer, making fine-grained circuit analysis more tractable.
+Transcoders, also known as Per-Layer Transcoders (PLTs), are a variant of Sparse Autoencoders that read activations from one hook point and reconstruct at a different hook point within the same layer. Transcoders are architecturally identical to Sparse Autoencoders, but use different activations for inputs and labels. This enables the decomposition of specific computational units, such as MLP sublayers, into interpretable sparse features.
 
-Transcoders were introduced in the following papers: [*Automatically Identifying Local and Global Circuits with Linear Computation Graphs*](https://arxiv.org/abs/2405.13868) (Ge et al., 2024) and [*Transcoders Find Interpretable LLM Feature Circuits*](https://arxiv.org/abs/2406.11944) (Dunefsky et al., 2024). These works demonstrate that transcoders can effectively decompose MLP computations into interpretable circuits while maintaining reconstruction fidelity. For detailed architectural specifications and mathematical formulations, please refer to these papers.
+Transcoders were proposed in [Anthropic Circuits Update - January 2024](https://transformer-circuits.pub/2024/jan-update/index.html#predict-future), and then explored in [*Transcoders Find Interpretable LLM Feature Circuits*](https://arxiv.org/abs/2406.11944) (Dunefsky et al., 2024) and [*Automatically Identifying Local and Global Circuits with Linear Computation Graphs*](https://arxiv.org/abs/2405.13868) (Ge et al., 2024), which demonstrate that transcoders can effectively decompose MLP computations into interpretable circuits while maintaining reconstruction fidelity.
 
 ## Configuration
 
 Transcoders use the same `SAEConfig` and `InitializerConfig` as standard SAEs. See the [SAE configuration guide](sae.md#configuration) for the full parameter reference.
 
-The only essential difference is that `hook_point_in` and `hook_point_out` must point to **different** locations—typically the input and output of the MLP sublayer you want to decompose:
+The only essential difference is that `hook_point_in` and `hook_point_out` should point to **different** locations—typically the input and output of the MLP sublayer you want to decompose:
 
 ```python
 transcoder_config = SAEConfig(

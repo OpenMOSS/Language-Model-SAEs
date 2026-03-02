@@ -5,15 +5,15 @@ Load a Transcoder from HuggingFace.
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 
-# Load Gemma Scope 2 SAE from HuggingFace
-sae = AbstractSparseAutoEncoder.from_pretrained(
+# Load sparse dictionary from HuggingFace
+sae = SparseDictionary.from_pretrained(
     "OpenMOSS-Team/Llama-Scope-2-Qwen3-1.7B:transcoder/8x/k128/layer12_transcoder_8x_k128",
     fold_activation_scale=False,
 ).to("cpu")
 
-print(f"Loaded SAE: {sae.cfg}")
+print(f"Loaded sparse dictionary: {sae.cfg}")
 
 # Load Gemma 3 with TransformerLens
 model = HookedTransformer.from_pretrained("Qwen/Qwen3-1.7B")

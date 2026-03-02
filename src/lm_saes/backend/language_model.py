@@ -144,7 +144,7 @@ class LanguageModelConfig(BaseModelConfig):
 
         Args:
             pretrained_name_or_path (str): The path to the pretrained SAE.
-            **kwargs: Additional keyword arguments to pass to the LanguageModelConfig constructor.
+            **kwargs (Any): Additional keyword arguments to pass to the LanguageModelConfig constructor.
         """
         sae_type = auto_infer_pretrained_sae_type(pretrained_name_or_path.split(":")[0])
         if sae_type == PretrainedSAEType.LOCAL:

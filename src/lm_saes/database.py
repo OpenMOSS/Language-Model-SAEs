@@ -7,11 +7,12 @@ import numpy as np
 import pymongo
 import pymongo.database
 import pymongo.errors
+import pymongo.results
 from bson import ObjectId
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from lm_saes.abstract_sae import BaseSAEConfig
+from lm_saes.abstract_sae import SparseDictionaryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.config import DatasetConfig
 from lm_saes.sae import SAEConfig
@@ -282,7 +283,7 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             self.fs.delete(data)
 
-    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig, model_name: str | None = None):
+    def create_sae(self, name: str, series: str, path: str, cfg: SparseDictionaryConfig, model_name: str | None = None):
         inserted_id = self.sae_collection.insert_one(
             {"name": name, "series": series, "path": path, "cfg": cfg.model_dump(), "model_name": model_name}
         ).inserted_id
@@ -577,7 +578,9 @@ class MongoClient:
         self.analysis_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})
         self.sae_collection.delete_one({"name": sae_name, "series": sae_series})
 
-    def update_feature(self, sae_name: str, feature_index: int, update_data: dict, sae_series: str | None = None):
+    def update_feature(
+        self, sae_name: str, feature_index: int, update_data: dict, sae_series: str | None = None
+    ) -> pymongo.results.UpdateResult:
         """Update a feature with additional data.
 
         Args:
@@ -587,7 +590,7 @@ class MongoClient:
             sae_series: Optional series of the SAE
 
         Returns:
-            Result of the update operation
+            Result of the update operation.
 
         Raises:
             ValueError: If the feature doesn't exist

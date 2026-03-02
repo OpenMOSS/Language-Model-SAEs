@@ -6,7 +6,7 @@ from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.clt import CrossLayerTranscoder
 
@@ -20,10 +20,10 @@ logger = get_distributed_logger("utils.topk_to_jumprelu_conversion")
 
 @torch.no_grad()
 def topk_to_jumprelu_conversion(
-    sae: AbstractSparseAutoEncoder,
+    sae: SparseDictionary,
     activations_stream: Iterable[dict[str, Tensor]],
     device_mesh: Optional[DeviceMesh] = None,
-) -> AbstractSparseAutoEncoder:
+) -> SparseDictionary:
     """Convert a CLT model from topk to jumprelu.
 
     Args:

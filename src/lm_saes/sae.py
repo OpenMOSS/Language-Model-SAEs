@@ -12,8 +12,8 @@ from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
 from lm_saes.abstract_sae import (
-    AbstractSparseAutoEncoder,
-    BaseSAEConfig,
+    SparseDictionary,
+    SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
@@ -22,7 +22,7 @@ from lm_saes.utils.distributed import DimMap
 
 
 @register_sae_config("sae")
-class SAEConfig(BaseSAEConfig):
+class SAEConfig(SparseDictionaryConfig):
     sae_type: str = "sae"
     hook_point_in: str
     hook_point_out: str
@@ -34,7 +34,7 @@ class SAEConfig(BaseSAEConfig):
 
 
 @register_sae_model("sae")
-class SparseAutoEncoder(AbstractSparseAutoEncoder):
+class SparseAutoEncoder(SparseDictionary):
     def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
         super(SparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg
@@ -199,18 +199,20 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
             scaled_activation = training_activation * (dataset_norm / sqrt(d_model))
 
-        Args:
-            dataset_average_activation_norm (dict[str, float]):
-                A dictionary where keys represent in or out and values
-                specify the average activation norm of the dataset during inference.
+        Note:
+            The model must have `dataset_average_activation_norm` set as an attribute,
+            which is a dictionary where keys represent in or out and values
+            specify the average activation norm of the dataset during inference.
+
+            Example::
 
                 dataset_average_activation_norm = {
                     self.cfg.hook_point_in: 1.0,
                     self.cfg.hook_point_out: 1.0,
                 }
 
-        Returns:
-            None: Updates the internal parameters to reflect the standardized activations and change the norm_activation to "inference" mode.
+            Updates the internal parameters to reflect the standardized activations
+            and changes the norm_activation to "inference" mode.
         """
         assert self.cfg.norm_activation == "dataset-wise"
         assert self.dataset_average_activation_norm is not None

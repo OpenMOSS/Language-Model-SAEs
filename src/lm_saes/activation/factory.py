@@ -293,11 +293,11 @@ class ActivationFactory:
 
         return process_activations
 
-    def build_pre_aggregation_processors(self):
+    def build_pre_aggregation_processors(self) -> list[Callable]:
         """Build processors that run before aggregation for each data source.
 
         Returns:
-            List of callables that process data from each source
+            List of callables that process data from each source.
         """
         # Split sources by type
         dataset_sources = [source for source in self.cfg.sources if isinstance(source, ActivationFactoryDatasetSource)]
@@ -313,14 +313,11 @@ class ActivationFactory:
         ]
         return pre_aggregation_processors
 
-    def build_post_aggregation_processor(self):
+    def build_post_aggregation_processor(self) -> Callable:
         """Build processor that runs after aggregation.
 
-        Args:
-            cfg: Factory configuration object
-
         Returns:
-            Callable that processes aggregated data
+            Callable that processes aggregated data.
         """
 
         def build_batchler():
@@ -362,7 +359,7 @@ class ActivationFactory:
 
         return process_activations
 
-    def build_aggregator(self):
+    def build_aggregator(self) -> Callable:
         """Build function to aggregate data from multiple sources.
 
         Returns:
@@ -397,14 +394,14 @@ class ActivationFactory:
 
         return aggregate
 
-    def process(self, **kwargs: Any):
+    def process(self, **kwargs: Any) -> Iterable:
         """Process data through the full pipeline.
 
         Args:
-            **kwargs: Arguments passed to processors (must include required args)
+            **kwargs (Any): Arguments passed to processors (must include required args).
 
         Returns:
-            Iterable of processed activation data
+            Iterable of processed activation data.
         """
         streams = [processor(**kwargs) for processor in self.pre_aggregation_processors]
         stream = self.aggregator(streams)

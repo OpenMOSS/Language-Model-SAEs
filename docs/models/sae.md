@@ -2,22 +2,22 @@
 
 Sparse Autoencoders (SAEs) are the foundational architecture for learning interpretable features from language model activations. They decompose neural network activations into sparse, interpretable features that help address the superposition problem.
 
-Given a model activation vector \(\mathbf{x} \in \mathbb{R}^{d_{\text{model}}}\), an SAE first **encodes** it into a high-dimensional sparse latent representation, then **decodes** it back to reconstruct the original activation:
+Given a model activation vector $\mathbf{x} \in \mathbb{R}^{d_{\text{model}}}$, an SAE first **encodes** it into a high-dimensional sparse latent representation, then **decodes** it back to reconstruct the original activation:
 
-\[
+$$
 \begin{aligned}
 \mathbf{z} &= \sigma(W_E \mathbf{x} + \mathbf{b}_E) \in \mathbb{R}^{d_{\text{SAE}}} \\
 \hat{\mathbf{x}} &= W_D \mathbf{z} + \mathbf{b}_D \in \mathbb{R}^{d_{\text{model}}}
 \end{aligned}
-\]
+$$
 
-where \(W_E \in \mathbb{R}^{d_{\text{SAE}} \times d_{\text{model}}}\) and \(W_D \in \mathbb{R}^{d_{\text{model}} \times d_{\text{SAE}}}\) are the encoder and decoder weight matrices, \(\mathbf{b}_E, \mathbf{b}_D\) are bias terms, and \(\sigma(\cdot)\) is a sparsity-inducing activation function (e.g., ReLU, TopK). The model is trained to minimize the reconstruction loss \(\|\mathbf{x} - \hat{\mathbf{x}}\|^2\) while keeping \(\mathbf{z}\) sparse, encouraging each dimension of \(\mathbf{z}\) to correspond to a monosemantic feature.
+where $W_E \in \mathbb{R}^{d_{\text{SAE}} \times d_{\text{model}}}$ and $W_D \in \mathbb{R}^{d_{\text{model}} \times d_{\text{SAE}}}$ are the encoder and decoder weight matrices, $\mathbf{b}_E, \mathbf{b}_D$ are bias terms, and $\sigma(\cdot)$ is a sparsity-inducing activation function (e.g., ReLU, TopK). The model is trained to minimize the reconstruction loss $\|\mathbf{x} - \hat{\mathbf{x}}\|^2$ while keeping $\mathbf{z}$ sparse, encouraging each dimension of $\mathbf{z}$ to correspond to a monosemantic feature.
 
 The architecture was introduced in foundational works including [*Sparse Autoencoders Find Highly Interpretable Features in Language Models*](https://arxiv.org/abs/2309.08600) and [*Towards Monosemanticity: Decomposing Language Models With Dictionary Learning*](https://transformer-circuits.pub/2023/monosemantic-features). For detailed architectural specifications and mathematical formulations, please refer to these papers.
 
 ## Configuration
 
-SAEs are configured using the `SAEConfig` class. All sparse dictionary models inherit common parameters from `BaseSAEConfig`. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
+SAEs are configured using the `SAEConfig` class. All sparse dictionary models inherit common parameters from `SparseDictionaryConfig`. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
 
 ### SAE-Specific Parameters
 
@@ -28,7 +28,6 @@ import torch
 sae_config = SAEConfig(
     # SAE-specific parameters
     hook_point_in="blocks.6.hook_resid_post",
-    hook_point_out="blocks.6.hook_resid_post",  # Same as hook_point_in for SAE
     use_glu_encoder=False,
     
     # Common parameters (documented in Sparse Dictionaries overview)
@@ -43,8 +42,7 @@ sae_config = SAEConfig(
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
-| `hook_point_in` | `str` | Hook point to read activations from. For SAE, this is typically the same as `hook_point_out` | Required |
-| `hook_point_out` | `str` | Hook point to write reconstructions to. For SAE, this is typically the same as `hook_point_in` | Required |
+| `hook_point_in` | `str` | Hook point to read activations from. | Required |
 | `use_glu_encoder` | `bool` | Whether to use a Gated Linear Unit (GLU) in the encoder. GLU can improve expressiveness but increases parameter count | `False` |
 
 !!! note "SAE vs Transcoder"

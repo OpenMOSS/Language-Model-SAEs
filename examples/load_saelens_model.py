@@ -1,5 +1,5 @@
 """
-Load a Sparse Autoencoder from HuggingFace (using SAELens format) and use it with lm-saes.
+Load a sparse dictionary from HuggingFace (using SAELens format) and use it with lm-saes.
 
 Requires: uv add "lm-saes[sae_lens]"
 """
@@ -7,12 +7,12 @@ Requires: uv add "lm-saes[sae_lens]"
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 
-# Load Gemma Scope 2 SAE from HuggingFace
-sae = AbstractSparseAutoEncoder.from_pretrained("gemma-scope-2-1b-pt-res-all:layer_12_width_16k_l0_small").to("cpu")
+# Load Gemma Scope 2 sparse dictionary from HuggingFace
+sae = SparseDictionary.from_pretrained("gemma-scope-2-1b-pt-res-all:layer_12_width_16k_l0_small").to("cpu")
 
-print(f"Loaded SAE: {sae.cfg}")
+print(f"Loaded sparse dictionary: {sae.cfg}")
 
 # Load Gemma 3 with TransformerLens
 model = HookedTransformer.from_pretrained("google/gemma-3-1b-pt")

@@ -7,7 +7,7 @@ import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.clt import CrossLayerTranscoder
@@ -134,7 +134,7 @@ def convert_topk_to_jumprelu(settings: ConvertTopKToJumpReLUSettings) -> None:
     )
 
     logger.info("Loading TopK SAE")
-    sae = AbstractSparseAutoEncoder.from_pretrained(
+    sae = SparseDictionary.from_pretrained(
         settings.sae.pretrained_name_or_path,
         device_mesh=device_mesh,
         fold_activation_scale=False,
