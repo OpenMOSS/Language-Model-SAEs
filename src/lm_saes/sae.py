@@ -199,18 +199,20 @@ class SparseAutoEncoder(AbstractSparseAutoEncoder):
 
             scaled_activation = training_activation * (dataset_norm / sqrt(d_model))
 
-        Args:
-            dataset_average_activation_norm (dict[str, float]):
-                A dictionary where keys represent in or out and values
-                specify the average activation norm of the dataset during inference.
+        Note:
+            The model must have `dataset_average_activation_norm` set as an attribute,
+            which is a dictionary where keys represent in or out and values
+            specify the average activation norm of the dataset during inference.
+
+            Example::
 
                 dataset_average_activation_norm = {
                     self.cfg.hook_point_in: 1.0,
                     self.cfg.hook_point_out: 1.0,
                 }
 
-        Returns:
-            None: Updates the internal parameters to reflect the standardized activations and change the norm_activation to "inference" mode.
+            Updates the internal parameters to reflect the standardized activations
+            and changes the norm_activation to "inference" mode.
         """
         assert self.cfg.norm_activation == "dataset-wise"
         assert self.dataset_average_activation_norm is not None

@@ -441,10 +441,10 @@ class CrossCoder(AbstractSparseAutoEncoder):
         """Decode the encoded tensor.
 
         Args:
-            x: Encoded tensor of shape (n_heads, d_sae).
+            feature_acts: Feature activations of shape (n_heads, d_sae).
 
         Returns:
-            Decoded tensor of shape (n_heads, d_model).
+            torch.Tensor: Decoded tensor of shape (n_heads, d_model).
         """
         return self._apply_decoding(feature_acts, no_einsum=no_einsum)
 

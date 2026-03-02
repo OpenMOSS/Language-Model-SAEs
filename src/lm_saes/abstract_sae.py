@@ -154,7 +154,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
 
         Args:
             pretrained_name_or_path (str): The path to the pretrained sparse dictionary.
-            **kwargs: Additional keyword arguments to pass to the config constructor.
+            **kwargs (Any): Additional keyword arguments to pass to the config constructor.
         """
         sae_type = auto_infer_pretrained_sae_type(pretrained_name_or_path)
         if sae_type == PretrainedSAEType.LOCAL:

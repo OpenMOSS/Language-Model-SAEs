@@ -100,7 +100,7 @@ settings = TrainSAESettings(
         eval_frequency=1000000,
         n_checkpoints=0,
         check_point_save_mode="linear",
-        exp_result_path="results",
+        exp_result_path="path/to/sae",
     ),
     model=LanguageModelConfig(
         model_name="EleutherAI/pythia-160m",

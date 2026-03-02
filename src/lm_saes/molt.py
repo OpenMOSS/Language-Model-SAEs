@@ -668,11 +668,11 @@ class MixtureOfLinearTransform(AbstractSparseAutoEncoder):
         """Decode feature activations back to model space using MOLT transforms.
 
         Args:
-            feature_acts: Feature activations from encode()
-            **kwargs: Must contain 'original_x' - the original input tensor
+            feature_acts: Feature activations from encode().
+            **kwargs (Any): Must contain 'original_x' - the original input tensor.
 
         Returns:
-            Reconstructed tensor in model space
+            torch.Tensor: Reconstructed tensor in model space.
         """
         assert "original_x" in kwargs, "MOLT decode requires 'original_x' in kwargs"
 

@@ -7,6 +7,7 @@ import numpy as np
 import pymongo
 import pymongo.database
 import pymongo.errors
+import pymongo.results
 from bson import ObjectId
 from pydantic import BaseModel, Field
 from tqdm import tqdm
@@ -577,7 +578,9 @@ class MongoClient:
         self.analysis_collection.delete_many({"sae_name": sae_name, "sae_series": sae_series})
         self.sae_collection.delete_one({"name": sae_name, "series": sae_series})
 
-    def update_feature(self, sae_name: str, feature_index: int, update_data: dict, sae_series: str | None = None):
+    def update_feature(
+        self, sae_name: str, feature_index: int, update_data: dict, sae_series: str | None = None
+    ) -> pymongo.results.UpdateResult:
         """Update a feature with additional data.
 
         Args:
@@ -587,7 +590,7 @@ class MongoClient:
             sae_series: Optional series of the SAE
 
         Returns:
-            Result of the update operation
+            Result of the update operation.
 
         Raises:
             ValueError: If the feature doesn't exist

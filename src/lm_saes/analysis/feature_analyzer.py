@@ -21,7 +21,7 @@ from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
-from .post_analysis import get_post_analysis_processor
+from .post_analysis import PostAnalysisProcessor, get_post_analysis_processor
 
 
 class FeatureAnalyzerConfig(BaseConfig):
@@ -175,14 +175,14 @@ class FeatureAnalyzer:
             mask &= tokens != token_id
         return mask
 
-    def get_post_analysis_func(self, sae_type: str):
+    def get_post_analysis_func(self, sae_type: str) -> PostAnalysisProcessor:
         """Get the post-analysis processor for the given SAE type.
 
         Args:
             sae_type: The SAE type identifier
 
         Returns:
-            The post-analysis processor instance
+            The post-analysis processor instance.
         """
         try:
             return get_post_analysis_processor(sae_type)

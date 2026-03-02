@@ -234,11 +234,11 @@ class Trainer:
         trainer state.
 
         Args:
-            device_mesh: The device mesh to load the model into
-            checkpoint_path: Path where the checkpoint was saved (without extension)
+            sae (AbstractSparseAutoEncoder): The SAE model instance.
+            checkpoint_path (str): Path where the checkpoint was saved (without extension).
 
         Returns:
-            Trainer: A new trainer instance with loaded state
+            Trainer: A new trainer instance with loaded state.
         """
         # Load trainer state first to get the config
         checkpoint_dir = Path(checkpoint_path)

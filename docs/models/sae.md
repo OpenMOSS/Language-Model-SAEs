@@ -28,7 +28,6 @@ import torch
 sae_config = SAEConfig(
     # SAE-specific parameters
     hook_point_in="blocks.6.hook_resid_post",
-    hook_point_out="blocks.6.hook_resid_post",  # Same as hook_point_in for SAE
     use_glu_encoder=False,
     
     # Common parameters (documented in Sparse Dictionaries overview)
@@ -43,8 +42,7 @@ sae_config = SAEConfig(
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
-| `hook_point_in` | `str` | Hook point to read activations from. For SAE, this is typically the same as `hook_point_out` | Required |
-| `hook_point_out` | `str` | Hook point to write reconstructions to. For SAE, this is typically the same as `hook_point_in` | Required |
+| `hook_point_in` | `str` | Hook point to read activations from. | Required |
 | `use_glu_encoder` | `bool` | Whether to use a Gated Linear Unit (GLU) in the encoder. GLU can improve expressiveness but increases parameter count | `False` |
 
 !!! note "SAE vs Transcoder"
