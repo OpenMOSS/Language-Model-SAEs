@@ -22,7 +22,7 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
 
 === "Runner"
 
-    Create the `AnalyzeSAESettings` and call `analyze_sae` with it. 
+    Create the [`AnalyzeSAESettings`][lm_saes.AnalyzeSAESettings] and call [`analyze_sae`][lm_saes.analyze_sae] with it. 
 
     ```python
     import torch
@@ -73,7 +73,7 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
 
 === "CLI"
 
-    CLI-based workflow requires a configuration file containing the settings consistent with `AnalyzeSAESettings`. 
+    CLI-based workflow requires a configuration file containing the settings consistent with [`AnalyzeSAESettings`][lm_saes.AnalyzeSAESettings]. 
 
     Create a TOML configuration file (e.g., `analyze_config.toml`) with the following content:
 
@@ -119,7 +119,7 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
 
 === "Full Script"
 
-    For more granular control, you can use the `FeatureAnalyzer` directly.
+    For more granular control, you can use the [`FeatureAnalyzer`][lm_saes.FeatureAnalyzer] directly.
 
     ```python
     import datasets
@@ -175,7 +175,7 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
     )
     ```
 
-Note that a key difference of activation generation between training and analyzing is: we want activations with their complete contexts in analyzing. These tokens are only meaningful (to human) when the surrounding contexts are present. In comparison, SAEs are unaware of the contexts of activations in training, but just treat activations at different context positions as equal. Thus, we here generate activations with `ActivationFactoryTarget.ACTIVATIONS_2D` in `ActivationFactoryConfig`. This stops our generation process breaking down the with-context activations and shuffling them.
+Note that a key difference of activation generation between training and analyzing is: we want activations with their complete contexts in analyzing. These tokens are only meaningful (to human) when the surrounding contexts are present. In comparison, SAEs are unaware of the contexts of activations in training, but just treat activations at different context positions as equal. Thus, we here generate activations with `ActivationFactoryTarget.ACTIVATIONS_2D` in [`ActivationFactoryConfig`][lm_saes.ActivationFactoryConfig]. This stops our generation process breaking down the with-context activations and shuffling them.
 
 ## Visualize Feature Analysis
 
@@ -365,7 +365,7 @@ direct_logit_attribute(settings)
 
 `Language-Model-SAEs` supports automated interpretation of features using LLMs. The interpretation are mostly generated through investigating the top activation context of each feature. While not perfect, it can help human to quickly gain a brief cognition of the feature.
 
-To run automated interpretation, you can use the `auto_interp` runner:
+To run automated interpretation, you can use the [`auto_interp`][lm_saes.auto_interp] runner:
 
 ```python
 from lm_saes import AutoInterpSettings, auto_interp, AutoInterpConfig, LanguageModelConfig, MongoDBConfig

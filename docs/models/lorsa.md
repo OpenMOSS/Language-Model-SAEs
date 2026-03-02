@@ -32,7 +32,7 @@ The architecture was introduced in [*Towards Understanding the Nature of Attenti
 
 ## Configuration
 
-Lorsa is configured using the `LorsaConfig` class. All sparse dictionary models inherit common parameters from `SparseDictionaryConfig`. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
+Lorsa is configured using the [`LorsaConfig`][lm_saes.LorsaConfig] class. All sparse dictionary models inherit common parameters from [`SparseDictionaryConfig`][lm_saes.SparseDictionaryConfig]. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
 
 ### Lorsa-Specific Parameters
 
@@ -219,8 +219,8 @@ train_lorsa(settings)
 
 ### Important Training Considerations
 
-1. **Sequence batching**: Since Lorsa operates on sequences, `batch_size` in `ActivationFactoryConfig` represents the number of sequences (not tokens). The effective token batch size is `batch_size * n_ctx`.
+1. **Sequence batching**: Since Lorsa operates on sequences, `batch_size` in [`ActivationFactoryConfig`][lm_saes.ActivationFactoryConfig] represents the number of sequences (not tokens). The effective token batch size is `batch_size * n_ctx`.
 
 2. **Memory requirements**: Lorsa stores attention patterns and requires more memory than standard SAEs. Consider using parallelism (see [distributed-guidelines](../distributed-guidelines.md)) reducing batch size.
 
-3. **Context length**: Ensure `n_ctx` in `LorsaConfig` matches the `context_size` in `ActivationFactoryConfig` during activation generation.
+3. **Context length**: Ensure `n_ctx` in [`LorsaConfig`][lm_saes.LorsaConfig] matches the `context_size` in [`ActivationFactoryConfig`][lm_saes.ActivationFactoryConfig] during activation generation.
