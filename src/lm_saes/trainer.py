@@ -21,7 +21,7 @@ from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import SparseDictionary
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.config import BaseConfig
 from lm_saes.metrics import (
     ExplainedVarianceMetric,

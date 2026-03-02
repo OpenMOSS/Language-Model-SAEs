@@ -6,7 +6,7 @@ from torch import Tensor
 from torch.types import Number
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import SparseDictionary
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.optim import compute_grad_norm
 from lm_saes.sae import SparseAutoEncoder

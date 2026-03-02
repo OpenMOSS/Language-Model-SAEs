@@ -11,7 +11,7 @@ from torch.distributed.tensor import DTensor, Partial, Shard
 from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
-from lm_saes.abstract_sae import (
+from lm_saes.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,

@@ -1,5 +1,5 @@
-from .abstract_sae import SparseDictionary, SparseDictionaryConfig
-from .abstract_sae import SparseDictionaryConfig as BaseSAEConfig  # backward compat
+from .sparse_dictionary import SparseDictionary, SparseDictionaryConfig
+from .sparse_dictionary import SparseDictionaryConfig as BaseSAEConfig  # backward compat
 from .activation import (
     ActivationFactory,
     ActivationFactoryActivationsSource,

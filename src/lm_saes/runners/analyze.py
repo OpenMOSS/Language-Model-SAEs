@@ -9,7 +9,7 @@ import torch
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
-from lm_saes.abstract_sae import SparseDictionary
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor, DirectLogitAttributorConfig
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer, FeatureAnalyzerConfig

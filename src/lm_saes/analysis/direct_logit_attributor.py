@@ -4,7 +4,7 @@ import einops
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import SparseDictionary
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.backend import LanguageModel
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
