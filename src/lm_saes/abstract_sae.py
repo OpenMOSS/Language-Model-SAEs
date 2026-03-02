@@ -610,7 +610,7 @@ class SparseDictionary(HookedRootModule, ABC):
         device_mesh: DeviceMesh | None = None,
         fold_activation_scale: bool = True,
         strict_loading: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> Self:
         """Load a pretrained sparse dictionary. This method will automatically determine whether pretrained_name_or_path is a path to a local directory or a name on HuggingFace Hub.
 

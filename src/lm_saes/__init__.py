@@ -17,7 +17,7 @@ from .analysis import (
     FeatureAnalyzer,
     FeatureAnalyzerConfig,
 )
-from .backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
+from .backend.language_model import LanguageModelConfig, TransformerLensLanguageModel, HuggingFaceLanguageModel
 from .circuit import ReplacementModel, attribute
 from .clt import CLTConfig, CrossLayerTranscoder
 from .config import DatasetConfig
@@ -79,6 +79,7 @@ __all__ = [
     "SparseAutoEncoder",
     "JumpReLU",
     "LanguageModelConfig",
+    "HuggingFaceLanguageModel",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",
     "ActivationFactoryDatasetSource",

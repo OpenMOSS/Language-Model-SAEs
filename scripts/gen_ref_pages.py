@@ -13,6 +13,7 @@ CATEGORIES: dict[str, dict[str, list[str]]] = {
     "Models": {
         "description": "Sparse dictionary model architectures and their configuration classes.",
         "items": [
+            "lm_saes.SparseDictionary",
             "lm_saes.SparseDictionaryConfig",
             "lm_saes.SAEConfig",
             "lm_saes.SparseAutoEncoder",
@@ -105,6 +106,7 @@ CATEGORIES: dict[str, dict[str, list[str]]] = {
         "items": [
             "lm_saes.LanguageModelConfig",
             "lm_saes.TransformerLensLanguageModel",
+            "lm_saes.HuggingFaceLanguageModel",
             "lm_saes.DatasetConfig",
             "lm_saes.MongoDBConfig",
             "lm_saes.MongoClient",

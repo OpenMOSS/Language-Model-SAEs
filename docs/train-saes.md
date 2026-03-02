@@ -1,10 +1,10 @@
 # Train Sparse Autoencoders
 
-`Language-Model-SAEs` provides a general way to train, analyze and visualize Sparse Autoencoders and their variants. To help you get started quickly, we've included [example scripts]() that guide you through each stage of working with SAEs. This guide begins with a foundational example and progressively introduces the core features and capabilities of the library.
+`Language-Model-SAEs` provides a general way to train, analyze and visualize Sparse Autoencoders and their variants. To help you get started quickly, we've included [example scripts](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples) that guide you through each stage of working with SAEs. This guide begins with a foundational example and progressively introduces the core features and capabilities of the library.
 
 ## Training Basic Sparse Autoencoders
 
-A [Sparse Autoencoder]() is trained to reconstruct model activations at specific position. We depend on [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) to take activations out of model forward pass, specified by hook points. `Language-Model-SAEs` provides complete abstraction on the necessary components to train Sparse Autoencoders at ease.
+A [Sparse Autoencoder](models/sae.md) is trained to reconstruct model activations at specific position. We depend on [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) to take activations out of model forward pass, specified by hook points. `Language-Model-SAEs` provides complete abstraction on the necessary components to train [Sparse Autoencoders](models/sae.md) at ease.
 
 ### Load Model & Dataset
 
@@ -22,12 +22,12 @@ model = TransformerLensLanguageModel(
 )
 ```
 
-where `TransformerLensLanguageModel` is a simple wrapper around the TransformerLens `HookedTransformer`, enhanced with:
+where [`TransformerLensLanguageModel`][lm_saes.TransformerLensLanguageModel] is a simple wrapper around the TransformerLens `HookedTransformer`, enhanced with:
 
 1. **Unified interface** for extracting activations (compatible with native HuggingFace transformers) and tracing token positions from original texts.
 2. **Distributed training support** with simple data parallelism integrated.
 
-See the [section]() below to find how to use HuggingFace transformers directly for generating activation.
+See the [section](#use-huggingface-backend) below to find how to use HuggingFace transformers directly for generating activation.
 
 !!! tip "Use Half Precision"
     Activation generation constitutes the majority of training time. We strongly recommend using half precision (`float16` or `bfloat16`) to accelerate the forward pass and reduce GPU memory usage. Here we use FP16 since Pythia models are trained in FP16.
@@ -45,9 +45,9 @@ dataset = datasets.load_dataset(
 
 ### Generate Activations
 
-Model activations often require some further transformation to ensure correct and efficient SAE training. We provide `ActivationFactory` as the core abstraction for producing activation streams. It provides a comprehensive interface to generate activations from model forward passes, filter unnecessary tokens, and reshape, re-batch, and shuffle activations.
+Model activations often require some further transformation to ensure correct and efficient SAE training. We provide [`ActivationFactory`][lm_saes.ActivationFactory] as the core abstraction for producing activation streams. It provides a comprehensive interface to generate activations from model forward passes, filter unnecessary tokens, and reshape, re-batch, and shuffle activations.
 
-We can create an `ActivationFactory` as follow:
+We can create an [`ActivationFactory`][lm_saes.ActivationFactory] as follow:
 
 ```python
 from lm_saes import (
@@ -94,7 +94,7 @@ With target set to `ActivationFactoryTarget.ACTIVATIONS_1D`, the produced activa
 
 ### Create and Initialize SAE
 
-We've successfully prepared the data we need. It's time to turn to the SAE itself! But before training, we should first define the SAE architecture and initialize it. Create an `SAEConfig` to define the SAE architecture:
+We've successfully prepared the data we need. It's time to turn to the SAE itself! But before training, we should first define the SAE architecture and initialize it. Create an [`SAEConfig`][lm_saes.SAEConfig] to define the SAE architecture:
 
 ```python
 import torch
@@ -120,9 +120,9 @@ Here're some brief explanations of the config we set:
 | `expansion_factor` | Multiplier for the latent dimension. Here, `d_sae = 768 × 8 = 6144` |
 | `act_fn` | Activation function. Modern SAEs often use `"jumprelu"` or `"batchtopk"`, but we use `"relu"` for simplicity |
 
-More options of `SAEConfig` are introduced in the [reference]().
+More options of [`SAEConfig`][lm_saes.SAEConfig] are introduced in the [reference](reference/models.md).
 
-With only SAEConfig defined, the created SAE will have nothing but empty tensors as parameters. We need to fill the empty parameters with proper initialization, which is often proved crucial for final SAE performance. The `Initializer` class handles parameter initialization. The `grid_search_init_norm` option (recommended) searches for the optimal encoder/decoder parameter scale to minimize initial MSE loss on the activation distribution.
+With only SAEConfig defined, the created SAE will have nothing but empty tensors as parameters. We need to fill the empty parameters with proper initialization, which is often proved crucial for final SAE performance. The [`Initializer`][lm_saes.Initializer] class handles parameter initialization. The `grid_search_init_norm` option (recommended) searches for the optimal encoder/decoder parameter scale to minimize initial MSE loss on the activation distribution.
 
 ```python
 from lm_saes import Initializer, InitializerConfig
@@ -136,7 +136,7 @@ sae = initializer.initialize_sae_from_config(
 
 ### Train SAE
 
-Finally, we can start training! A `Trainer` instance is responsible for holding optimizer & scheduler states.
+Finally, we can start training! A [`Trainer`][lm_saes.Trainer] instance is responsible for holding optimizer & scheduler states.
 
 ```python
 from lm_saes import Trainer, TrainerConfig
@@ -160,7 +160,7 @@ trainer = Trainer(
 | `log_frequency` | Logging interval (in steps) for console and W&B |
 | `exp_result_path` | Directory for saving results and checkpoints |
 
-More options on the optimizer/scheduler and other hyperparameters are available. See the [reference]() for more detail.
+More options on the optimizer/scheduler and other hyperparameters are available. More options on the optimizer/scheduler and other hyperparameters are available. See the [reference](reference/training.md) for more detail.
 
 Just run `trainer.fit` and pass in the initialized SAE and the activation stream, and keep eyes on the console log to see whether the training goes well!
 
@@ -176,17 +176,17 @@ sae.save_pretrained(save_path="results") # Save the trained weight after trainin
 ```
 
 !!! note "Consistent Save Path"
-    The path in `sae.cfg.save_hyperparameters` and `sae.save_pretrained` should be the same as specified in `exp_result_path` in `TrainerConfig`. Otherwise, the trained SAE may not be able to be correctly loaded.
+    The path in `sae.cfg.save_hyperparameters` and `sae.save_pretrained` should be the same as specified in `exp_result_path` in [`TrainerConfig`][lm_saes.TrainerConfig]. Otherwise, the trained SAE may not be able to be correctly loaded.
 
 ---
 
 ## Using the High-Level Runner API
 
-For a more streamlined experience, `Language-Model-SAEs` also provides a high-level `train_sae` function that bundles all configuration into a single `TrainSAESettings` object. You can programmatically create the settings object and call the `train_sae`, or you can also use a configuration-file based settings and run it with our `lm-saes` CLI:
+For a more streamlined experience, `Language-Model-SAEs` also provides a high-level [`train_sae`][lm_saes.train_sae] function that bundles all configuration into a single [`TrainSAESettings`][lm_saes.TrainSAESettings] object. You can programmatically create the settings object and call the [`train_sae`][lm_saes.train_sae], or you can also use a configuration-file based settings and run it with our `lm-saes` CLI:
 
 === "Runner"
 
-    Create the `TrainSAESettings` in Python and call `train_sae` with it. 
+    Create the [`TrainSAESettings`][lm_saes.TrainSAESettings] in Python and call [`train_sae`][lm_saes.train_sae] with it. 
 
     ```python
     import torch
@@ -259,7 +259,7 @@ For a more streamlined experience, `Language-Model-SAEs` also provides a high-le
 
 === "CLI"
 
-    CLI-based workflow requires a configuration file containing the settings consistent with `TrainSAESettings`. Common configuration file type like TOML, JSON and YAML are supported.
+    CLI-based workflow requires a configuration file containing the settings consistent with [`TrainSAESettings`][lm_saes.TrainSAESettings]. Common configuration file type like TOML, JSON and YAML are supported.
 
     Create a TOML configuration file (e.g., `train_config.toml`) with the following content:
 
@@ -485,7 +485,7 @@ Activation functions are the direct architectural design to enforce a sparse fea
 
 ReLU is the most classical activation, proposed in initial works (*[Sparse Autoencoders Find Highly Interpretable Features in Language Models](https://arxiv.org/abs/2309.08600)* and *[Towards Monosemanticity: Decomposing Language Models With Dictionary Learning](https://transformer-circuits.pub/2023/monosemantic-features)*) using SAEs to disentangle superposition. Though its performance is found inferior to other activation functions in term of explained variance and $L^0$ norms, it might be a good starting point to understand how SAE works due to its simplicity.
 
-To use ReLU activation function, just set `#!python act_fn = "relu"` in `SAEConfig`.
+To use ReLU activation function, just set `#!python act_fn = "relu"` in [`SAEConfig`][lm_saes.SAEConfig].
 
 ### JumpReLU
 
@@ -513,7 +513,7 @@ where $H(\cdot)$ is the [Heaviside step function](https://en.wikipedia.org/wiki/
 
 Since the Heaviside step function cannot be differentiated, JumpReLU uses a straight-through estimator of the gradient through the discontinuity of the nonlinearity. See [Anthropic Circuit Update - January 2025](https://transformer-circuits.pub/2025/january-update/index.html#DL) to learn how (log) JumpReLU thresholds are optimized.
 
-To use the JumpReLU activation function, set `#!python act_fn = "jumprelu"` in `SAEConfig`. You may also adjust the `jumprelu_threshold_window` to control the sensitivity of how JumpReLU thresholds update.
+To use the JumpReLU activation function, set `#!python act_fn = "jumprelu"` in [`SAEConfig`][lm_saes.SAEConfig]. You may also adjust the `jumprelu_threshold_window` to control the sensitivity of how JumpReLU thresholds update.
 
 !!! note "Dedicated Learning Rate for Log JumpReLU Thresholds"
     In our crosscoder training experiments in [Evolution of Concepts in Language Model Pre-Training](https://arxiv.org/abs/2509.17196), we find it better to apply a smaller learning rate (0.1x) to the log JumpReLU thresholds. Though this setting hardly affects the final performance on reconstruction and sparsity, it makes the training loss far more smooth. The mean feature activation becomes lower after the change.
@@ -522,11 +522,11 @@ To use the JumpReLU activation function, set `#!python act_fn = "jumprelu"` in `
 
 TopK is an activation function proposed in [Scaling and evaluating sparse autoencoders](https://arxiv.org/abs/2406.04093). It keeps only the $k$ largest elements, zeroing out the rest, thus directly enforcing strict sparsity on feature activation. To this end, it removes the need for additional sparsity penalties (which are typically basic requirements for ReLU & JumpReLU activations), and enables direct control over the sparsity quantitative ($L^0$) of feature activation.
 
-To use TopK activation function, set `#!python act_fn = "topk"` in `SAEConfig`, and set the `top_k` value to control the final sparsity of feature activation. We also provide some options in `TrainerConfig` to enable scheduling on $k$ value during training:
+To use TopK activation function, set `#!python act_fn = "topk"` in [`SAEConfig`][lm_saes.SAEConfig], and set the `top_k` value to control the final sparsity of feature activation. We also provide some options in [`TrainerConfig`][lm_saes.TrainerConfig] to enable scheduling on $k$ value during training:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `initial_k` | The starting $k$ value for scheduling. Must be greater than or equal to `top_k` set in `SAEConfig`. | `None` |
+| `initial_k` | The starting $k$ value for scheduling. Must be greater than or equal to `top_k` set in [`SAEConfig`][lm_saes.SAEConfig]. | `None` |
 | `k_warmup_steps` | Steps (int) or fraction of total steps (float) for $k$ to decay from `initial_k` to `top_k`. | `0.1` |
 | `k_cold_booting_steps` | Steps (int) or fraction of total steps (float) to keep $k$ at `initial_k` before starting the decay. | `0` |
 | `k_schedule_type` | Scheduling strategy: `"linear"` or `"exponential"`. | `"linear"` |
@@ -540,11 +540,11 @@ To use TopK activation function, set `#!python act_fn = "topk"` in `SAEConfig`, 
 
 BatchTopK is a state-of-the-art activation function proposed in [BatchTopK Sparse Autoencoders](https://arxiv.org/abs/2412.06410). It follows the idea of TopK to directly enforce sparsity, but replaces the sample-level TopK operation with a batch-level BatchTopK operation. For pre-feature-activations of shape `(batch_size, d_sae)`, it selects the top `batch_size * top_k` activations across the entire batch of `batch_size` samples. This allows for more flexible allocation of active latents.
 
-To use TopK activation function, set `#!python act_fn = "batchtopk"` in `SAEConfig`, and set the `top_k` value to control the final sparsity of feature activation. We also provide some options in `TrainerConfig` to enable scheduling on $k$ value during training:
+To use TopK activation function, set `#!python act_fn = "batchtopk"` in [`SAEConfig`][lm_saes.SAEConfig], and set the `top_k` value to control the final sparsity of feature activation. We also provide some options in [`TrainerConfig`][lm_saes.TrainerConfig] to enable scheduling on $k$ value during training:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `initial_k` | The starting $k$ value for scheduling. Must be greater than or equal to `top_k` set in `SAEConfig`. | `None` |
+| `initial_k` | The starting $k$ value for scheduling. Must be greater than or equal to `top_k` set in [`SAEConfig`][lm_saes.SAEConfig]. | `None` |
 | `k_warmup_steps` | Steps (int) or fraction of total steps (float) for $k$ to decay from `initial_k` to `top_k`. | `0.1` |
 | `k_cold_booting_steps` | Steps (int) or fraction of total steps (float) to keep $k$ at `initial_k` before starting the decay. | `0` |
 | `k_schedule_type` | Scheduling strategy: `"linear"` or `"exponential"`. | `"linear"` |
@@ -570,7 +570,7 @@ where $f(x)$ is the feature activation, $\| W_\text{dec} \|_2$ is the decoder no
 
 [^2]: See more discussion on $L^0$ approximate functions in [Comparing Measures of Sparsity](https://arxiv.org/abs/0811.4706) and [Why $\ell_1$ Is a Good Approximation to $\ell_0$: A Geometric Explanation](https://www.cs.utep.edu/vladik/2013/tr13-18.pdf).
 
-To use the $L^p$ norm, set `#!python sparsity_loss_type="power"` in `TrainerConfig`. Other parameters include:
+To use the $L^p$ norm, set `#!python sparsity_loss_type="power"` in [`TrainerConfig`][lm_saes.TrainerConfig]. Other parameters include:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -592,7 +592,7 @@ While the $\tanh$ penalty was found to be a Pareto improvement in the $L^0$/MSE 
 
 [^3]: See [Fixing Feature Suppression in SAEs](https://www.lesswrong.com/posts/3JuSjTZyMzaSeTxKk/fixing-feature-suppression-in-saes-2) for more discussion.
 
-To use the $\tanh$ penalty, set `#!python sparsity_loss_type="tanh"` in `TrainerConfig`. Other parameters include:
+To use the $\tanh$ penalty, set `#!python sparsity_loss_type="tanh"` in [`TrainerConfig`][lm_saes.TrainerConfig]. Other parameters include:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -620,7 +620,7 @@ This formulation successfully eliminates high-frequency latents with only a mode
 
     Our implementation of quadratic loss term uses $\tanh$ as differentiable $L^0$ proxies, which is different to the original proposal by GDM which directly use $L^0$ paired with straight-through estimators.
 
-To use tanh-quadratic, set `#!python sparsity_loss_type="tanh-quad"` in `TrainerConfig`. Other parameters include:
+To use tanh-quadratic, set `#!python sparsity_loss_type="tanh-quad"` in [`TrainerConfig`][lm_saes.TrainerConfig]. Other parameters include:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -643,7 +643,7 @@ where $\theta_i$ is the log-threshold and $h_i$ is the pre-activation. This loss
 
     Since this loss provides a gradient signal whenever a feature is inactive, the appropriate scale for `lp_coefficient` should be a factor of the typical feature activation density lower than other loss terms (e.g., `l1_coefficient`).
 
-To use the JumpReLU pre-act loss, set `lp_coefficient` to a positive value in `TrainerConfig`:
+To use the JumpReLU pre-act loss, set `lp_coefficient` to a positive value in [`TrainerConfig`][lm_saes.TrainerConfig]:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -663,7 +663,7 @@ $$L = L_{\text{rec}} + \alpha L_{\text{aux}}$$
 
 where $\alpha$ is a small coefficient (typically $1/32$). Since the encoder forward pass can be shared (and dominates decoder cost and encoder backwards cost), adding this auxiliary loss only increases the computational cost by about 10%.
 
-To use the Aux-K loss, set `auxk_coefficient` to a positive value in `TrainerConfig`:
+To use the Aux-K loss, set `auxk_coefficient` to a positive value in [`TrainerConfig`][lm_saes.TrainerConfig]:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -685,13 +685,13 @@ Training with cached activations is a common workflow in practice. It enables ef
 
 $$ 800 \times 10^6 \times 768 \times 2 \text{ bytes} \approx 1.2 \text{ TB} $$
 
-In this workflow, a separate task caches activations to disk at the output of `ActivationFactory`. When training, we re-configure the `ActivationFactory` to directly read from disk instead of generating activation from the language model on the fly.
+In this workflow, a separate task caches activations to disk at the output of [`ActivationFactory`][lm_saes.ActivationFactory]. When training, we re-configure the [`ActivationFactory`][lm_saes.ActivationFactory] to directly read from disk instead of generating activation from the language model on the fly.
 
 To cache activation on disk, you can:
 
 === "Runner"
 
-    Create the `GenerateActivationsSettings` in Python and call `generate_activations` with it. Configurations except `output_dir` and `total_tokens` should be consistent with on-the-fly settings [above](#using-the-high-level-runner-api). `output_dir` is where you want to place your generated activations. Ensure you have enough space at this directory. `total_tokens` should be equal or greater than the `total_training_tokens` you want to train your SAE on. 
+    Create the [`GenerateActivationsSettings`][lm_saes.GenerateActivationsSettings] in Python and call [`generate_activations`][lm_saes.generate_activations] with it. Configurations except `output_dir` and `total_tokens` should be consistent with on-the-fly settings [above](#using-the-high-level-runner-api). `output_dir` is where you want to place your generated activations. Ensure you have enough space at this directory. `total_tokens` should be equal or greater than the `total_training_tokens` you want to train your SAE on. 
 
     ```python
     from lm_saes import (
@@ -732,7 +732,7 @@ To cache activation on disk, you can:
 
 === "CLI"
 
-    CLI-based workflow requires a configuration file containing the settings consistent with `GenerateActivationsSettings`. Common configuration file type like TOML, JSON and YAML are supported.
+    CLI-based workflow requires a configuration file containing the settings consistent with [`GenerateActivationsSettings`][lm_saes.GenerateActivationsSettings]. Common configuration file type like TOML, JSON and YAML are supported.
 
     Create a TOML configuration file (e.g., `generate_config.toml`) with the following content:
 
@@ -770,7 +770,7 @@ To cache activation on disk, you can:
 
 === "Full Script"
 
-    Also, you can directly create `ActivationFactory` and `ActivationWriter` instances to generate and write activations to disk.
+    Also, you can directly create [`ActivationFactory`][lm_saes.ActivationFactory] and [`ActivationWriter`][lm_saes.ActivationWriter] instances to generate and write activations to disk.
 
     ```python
     import datasets
@@ -834,7 +834,7 @@ To cache activation on disk, you can:
 
 ### Training with Cached Activations
 
-Once you have generated and saved activations to disk, you can configure the `ActivationFactory` to read from these files instead of running the language model. This is done by replacing `ActivationFactoryDatasetSource` with `ActivationFactoryActivationsSource` in the configuration.
+Once you have generated and saved activations to disk, you can configure the [`ActivationFactory`][lm_saes.ActivationFactory] to read from these files instead of running the language model. This is done by replacing [`ActivationFactoryDatasetSource`][lm_saes.ActivationFactoryDatasetSource] with [`ActivationFactoryActivationsSource`][lm_saes.ActivationFactoryActivationsSource] in the configuration.
 
 === "Runner"
 
@@ -906,7 +906,7 @@ Once you have generated and saved activations to disk, you can configure the `Ac
 
 === "Full Script"
 
-    In a full script, you can omit the language model and dataset loading, and directly use `ActivationFactory` with cached sources:
+    In a full script, you can omit the language model and dataset loading, and directly use [`ActivationFactory`][lm_saes.ActivationFactory] with cached sources:
 
     ```python
     import torch
@@ -966,7 +966,7 @@ While TransformerLens provides a unified set of hook points across numerous Tran
 - Integrates GPU accelerate kernels, e.g. Flash Attention, for faster activation generation.
 - Reduces numerical errors. TransformerLens re-implements model logic using more semantic linear algebraic operation (primarily [Einsum](https://github.com/arogozhnikov/einops)), which will inevitably introduce subtle numerical discrepancies. Direct usage of Huggingface ensures the activation used for training sparse dictionaries is just the same as whatever you use for other purpose.
 
-To use the HuggingFace backend, you simply need to change the `backend` field in `LanguageModelConfig` to `"huggingface"`, or (in full script) load the model with `HuggingFaceLanguageModel` wrapper.
+To use the HuggingFace backend, you simply need to change the `backend` field in [`LanguageModelConfig`][lm_saes.LanguageModelConfig] to `"huggingface"`, or (in full script) load the model with [`HuggingFaceLanguageModel`][lm_saes.HuggingFaceLanguageModel] wrapper.
 
 === "Runner"
 
