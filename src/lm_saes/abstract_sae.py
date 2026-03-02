@@ -53,12 +53,12 @@ SAE_TYPE_TO_MODEL_CLASS: dict[str, Any] = {}
 
 
 def register_sae_config(name: str):
-    """Register a sparse dictionary config class, to make it possible to automatically determine the correct config class based on the type. The registered config class should inherit from `BaseSAEConfig` and have a `sae_type` field that is the same as the name. This function should be used together with `register_sae_model`.
+    """Register a sparse dictionary config class, to make it possible to automatically determine the correct config class based on the type. The registered config class should inherit from `SparseDictionaryConfig` and have a `sae_type` field that is the same as the name. This function should be used together with `register_sae_model`.
 
     Example usage:
     ```python
     @register_sae_config("custom_sae")
-    class CustomSAEConfig(BaseSAEConfig):
+    class CustomSAEConfig(SparseDictionaryConfig):
         sae_type: str = "custom_sae"
         ...
     ```
@@ -72,12 +72,12 @@ def register_sae_config(name: str):
 
 
 def register_sae_model(name):
-    """Register a sparse dictionary model class, to make it possible to automatically determine the correct model class based on the type. The registered model class should inherit from `AbstractSparseAutoEncoder`. This function should be used together with `register_sae_config`.
+    """Register a sparse dictionary model class, to make it possible to automatically determine the correct model class based on the type. The registered model class should inherit from `SparseDictionary`. This function should be used together with `register_sae_config`.
 
     Example usage:
     ```python
     @register_sae_model("custom_sae")
-    class CustomSAE(AbstractSparseAutoEncoder):
+    class CustomSAE(SparseDictionary):
         ...
     ```
     """
@@ -89,13 +89,13 @@ def register_sae_model(name):
     return _register
 
 
-class BaseSAEConfig(BaseModelConfig, ABC):
+class SparseDictionaryConfig(BaseModelConfig, ABC):
     """
-    Base class for SAE configs with common settings that are able to apply to various SAE variants. This class should not be used directly but only as a base config class for other SAE variants like SAEConfig, CrossCoderConfig, etc.
+    Base class for sparse dictionary configs with common settings that are able to apply to various sparse dictionary variants. This class should not be used directly but only as a base config class for other sparse dictionary variants like SAEConfig, CrossCoderConfig, etc.
     """
 
     sae_type: str
-    """The type of the sparse dictionary. Must be one of the registered SAE types."""
+    """The type of the sparse dictionary. Must be one of the registered sparse dictionary types."""
 
     d_model: int
     """The dimension of the input/label activation space. In common settings where activations come from a transformer, this is the dimension of the model (may also known as hidden_size)."""
@@ -172,7 +172,7 @@ class BaseSAEConfig(BaseModelConfig, ABC):
         with open(path, "r") as f:
             sae_config = json.load(f)
 
-        if cls is BaseSAEConfig:
+        if cls is SparseDictionaryConfig:
             cls = SAE_TYPE_TO_CONFIG_CLASS[sae_config["sae_type"]]
 
         return cls.model_validate({**sae_config, **kwargs})
@@ -187,22 +187,22 @@ class BaseSAEConfig(BaseModelConfig, ABC):
     @property
     @abstractmethod
     def associated_hook_points(self) -> list[str]:
-        """List of hook points used by the SAE, including all input and label hook points. This is used to retrieve useful data from the input activation source."""
+        """List of hook points used by the sparse dictionary, including all input and label hook points. This is used to retrieve useful data from the input activation source."""
         raise NotImplementedError("Subclasses must implement this method")
 
 
-class AbstractSparseAutoEncoder(HookedRootModule, ABC):
+class SparseDictionary(HookedRootModule, ABC):
     """Abstract base class for all sparse dictionary models.
 
-    This class defines the public interface for all sparse autoencoder implementations.
+    This class defines the public interface for all sparse dictionary implementations.
     Concrete implementations should inherit from this class and implement the required methods.
     """
 
     specs: type[TensorSpecs] = TensorSpecs
     """Tensor specs class for inferring dimension names from tensors. Override in subclasses for custom specs."""
 
-    def __init__(self, cfg: BaseSAEConfig, device_mesh: Optional[DeviceMesh] = None):
-        super(AbstractSparseAutoEncoder, self).__init__()
+    def __init__(self, cfg: SparseDictionaryConfig, device_mesh: Optional[DeviceMesh] = None):
+        super(SparseDictionary, self).__init__()
         self.cfg = cfg
 
         # should be set by Trainer during training
@@ -373,7 +373,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
             ],
         ],
     ]:
-        """Encode input tensor through the sparse autoencoder.
+        """Encode input tensor through the sparse dictionary.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
         raise NotImplementedError("Subclasses must implement this method")
@@ -406,7 +406,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         Float[torch.Tensor, "batch d_model"],
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
-        """Forward pass through the autoencoder.
+        """Forward pass through the sparse dictionary.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
         feature_acts = self.encode(x, **encoder_kwargs)
@@ -518,10 +518,10 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         self.load_state_dict(state_dict, strict=strict)
 
     @classmethod
-    def from_config(cls, cfg: BaseSAEConfig, device_mesh: DeviceMesh | None = None) -> Self:
-        """Construct a sparse dictionary from a config. This method is only used to automatically determine the correct registered subclass of AbstractSparseAutoEncoder based on the sae_type. Otherwise, it's consistent with directly call the constructor of the subclass."""
+    def from_config(cls, cfg: SparseDictionaryConfig, device_mesh: DeviceMesh | None = None) -> Self:
+        """Construct a sparse dictionary from a config. This method is only used to automatically determine the correct registered subclass of SparseDictionary based on the sae_type. Otherwise, it's consistent with directly call the constructor of the subclass."""
 
-        if cls is AbstractSparseAutoEncoder:
+        if cls is SparseDictionary:
             cls = SAE_TYPE_TO_MODEL_CLASS[cfg.sae_type]
 
         model = cls(cfg, device_mesh)
@@ -541,7 +541,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
     ):
         """Load a pretrained sparse dictionary from a local directory."""
 
-        cfg = BaseSAEConfig.from_pretrained(path, **kwargs)
+        cfg = SparseDictionaryConfig.from_pretrained(path, **kwargs)
         model = cls.from_config(cfg, device_mesh=device_mesh)
 
         if path.endswith(".pt") or path.endswith(".safetensors") or path.endswith(".dcp"):
@@ -615,7 +615,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         """Load a pretrained sparse dictionary. This method will automatically determine whether pretrained_name_or_path is a path to a local directory or a name on HuggingFace Hub.
 
         Args:
-            pretrained_name_or_path (str): If loading from local directory, this is the path to the local directory. If loading sparse dictionary from HuggingFace Hub, this is the format <repo_id>:<name>. If loading SAELens compatible format SAE, this is the format <release>:<sae_id>.
+            pretrained_name_or_path (str): If loading from local directory, this is the path to the local directory. If loading sparse dictionary from HuggingFace Hub, this is the format <repo_id>:<name>. If loading SAELens compatible format sparse dictionary, this is the format <release>:<sae_id>.
             device_mesh (DeviceMesh | None): The device mesh to use for the model. If None, the model will be loaded on the current device.
             fold_activation_scale (bool): Whether to fold the dataset-wise average activation norm into the weights and biases of the model. See `standardize_parameters_of_dataset_norm` method for more details.
             strict_loading (bool): Whether to strictly load the state dictionary. If False, the state dictionary will be loaded with a relaxed strictness, allowing for missing keys or extra keys.
@@ -623,17 +623,17 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
         Loading from a local directory:
         ```python
-        model = AbstractSparseAutoEncoder.from_pretrained("path/to/local/directory")
+        model = SparseDictionary.from_pretrained("path/to/local/directory")
         ```
 
         Loading from HuggingFace Hub:
         ```python
-        model = AbstractSparseAutoEncoder.from_pretrained("org/name:name")
+        model = SparseDictionary.from_pretrained("org/name:name")
         ```
 
-        Loading SAELens compatible format SAE:
+        Loading SAELens compatible format sparse dictionary:
         ```python
-        model = AbstractSparseAutoEncoder.from_pretrained("release:sae_id")
+        model = SparseDictionary.from_pretrained("release:sae_id")
         ```
         """
 
@@ -665,7 +665,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
 
             from lm_saes.sae import SparseAutoEncoder
 
-            assert cls is AbstractSparseAutoEncoder or cls is SparseAutoEncoder, (
+            assert cls is SparseDictionary or cls is SparseAutoEncoder, (
                 f"SAELens only supports vanilla SAE architecture, but got {cls.__name__}"
             )
 
@@ -869,7 +869,7 @@ class AbstractSparseAutoEncoder(HookedRootModule, ABC):
         Float[torch.Tensor, " batch"],
         dict[str, Any],
     ]:
-        """Compute the loss for the autoencoder.
+        """Compute the loss for the sparse dictionary.
         Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
         """
         x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)

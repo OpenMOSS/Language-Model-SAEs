@@ -12,8 +12,8 @@ from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
 from lm_saes.abstract_sae import (
-    AbstractSparseAutoEncoder,
-    BaseSAEConfig,
+    SparseDictionary,
+    SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
@@ -22,7 +22,7 @@ from lm_saes.utils.distributed import DimMap
 
 
 @register_sae_config("sae")
-class SAEConfig(BaseSAEConfig):
+class SAEConfig(SparseDictionaryConfig):
     sae_type: str = "sae"
     hook_point_in: str
     hook_point_out: str
@@ -34,7 +34,7 @@ class SAEConfig(BaseSAEConfig):
 
 
 @register_sae_model("sae")
-class SparseAutoEncoder(AbstractSparseAutoEncoder):
+class SparseAutoEncoder(SparseDictionary):
     def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
         super(SparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg

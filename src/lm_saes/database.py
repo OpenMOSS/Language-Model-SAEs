@@ -12,7 +12,7 @@ from bson import ObjectId
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from lm_saes.abstract_sae import BaseSAEConfig
+from lm_saes.abstract_sae import SparseDictionaryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.config import DatasetConfig
 from lm_saes.sae import SAEConfig
@@ -283,7 +283,7 @@ class MongoClient:
         if isinstance(data, ObjectId) and self.fs.exists(data):
             self.fs.delete(data)
 
-    def create_sae(self, name: str, series: str, path: str, cfg: BaseSAEConfig, model_name: str | None = None):
+    def create_sae(self, name: str, series: str, path: str, cfg: SparseDictionaryConfig, model_name: str | None = None):
         inserted_id = self.sae_collection.insert_one(
             {"name": name, "series": series, "path": path, "cfg": cfg.model_dump(), "model_name": model_name}
         ).inserted_id

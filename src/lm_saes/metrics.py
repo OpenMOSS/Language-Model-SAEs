@@ -6,7 +6,7 @@ from torch import Tensor
 from torch.types import Number
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.optim import compute_grad_norm
 from lm_saes.sae import SparseAutoEncoder
@@ -74,7 +74,7 @@ class Metric(ABC):
 
 
 class GradientNormMetric(Metric):
-    def __init__(self, sae: AbstractSparseAutoEncoder):
+    def __init__(self, sae: SparseDictionary):
         self.sae = sae
         self.gradient_norm: Record[float] = Record("max")
         self.gradient_norm_before_clipping: Record[float] = Record("max")
@@ -98,7 +98,7 @@ class GradientNormMetric(Metric):
 
 
 class FrequencyMetric(Metric):
-    def __init__(self, sae: AbstractSparseAutoEncoder):
+    def __init__(self, sae: SparseDictionary):
         self.sae = sae
         self.act_freq_scores: Record[Tensor] = Record()
         self.specs: tuple[str, ...] | None = None
@@ -145,7 +145,7 @@ class FrequencyMetric(Metric):
 
 
 class LossMetric(Metric):
-    def __init__(self, sae: AbstractSparseAutoEncoder):
+    def __init__(self, sae: SparseDictionary):
         self.sae = sae
         self.loss: Record[Tensor] = Record()
         self.l_rec: Record[Tensor] = Record()
@@ -181,7 +181,7 @@ class LossMetric(Metric):
 
 
 class MeanFeatureActMetric(Metric):
-    def __init__(self, sae: AbstractSparseAutoEncoder):
+    def __init__(self, sae: SparseDictionary):
         self.sae = sae
         self.mean_feature_act: Record[Tensor] = Record()
 
@@ -199,7 +199,7 @@ class MeanFeatureActMetric(Metric):
 
 
 class ExplainedVarianceMetric(Metric):
-    def __init__(self, sae: AbstractSparseAutoEncoder):
+    def __init__(self, sae: SparseDictionary):
         self.sae = sae
         self.explained_variance: Record[Tensor] = Record()
         self.explained_variance_legacy: Record[Tensor] = Record()
@@ -250,7 +250,7 @@ class ExplainedVarianceMetric(Metric):
 
 
 class L0Metric(Metric):
-    def __init__(self, sae: AbstractSparseAutoEncoder):
+    def __init__(self, sae: SparseDictionary):
         self.sae = sae
         self.l0: Record[Tensor] = Record()
         self.specs: tuple[str, ...] | None = None
@@ -282,7 +282,7 @@ class L0Metric(Metric):
 
 
 class L2NormErrorMetric(Metric):
-    def __init__(self, sae: AbstractSparseAutoEncoder):
+    def __init__(self, sae: SparseDictionary):
         self.sae = sae
         self.l2_norm_error: Record[Tensor] = Record()
         self.l2_norm_error_ratio: Record[Tensor] = Record()
@@ -309,7 +309,7 @@ class L2NormErrorMetric(Metric):
 
 
 class ModelSpecificMetric(Metric):
-    def __init__(self, sae: AbstractSparseAutoEncoder):
+    def __init__(self, sae: SparseDictionary):
         self.sae = sae
         self.count = 0
         self.metrics: dict[str, Record[float]] = {}

@@ -1,8 +1,8 @@
 """
-Low Rank Sparse Attention SAE Implementation
+Low Rank Sparse Attention Sparse Dictionary Implementation
 
-This module implements a Low Rank Sparse Attention layer as a Sparse Autoencoder,
-inheriting from AbstractSparseAutoEncoder and supporting head parallelization.
+This module implements a Low Rank Sparse Attention layer as a sparse dictionary,
+inheriting from SparseDictionary and supporting head parallelization.
 """
 
 import math
@@ -23,8 +23,8 @@ from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
 from lm_saes.abstract_sae import (
-    AbstractSparseAutoEncoder,
-    BaseSAEConfig,
+    SparseDictionary,
+    SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
@@ -37,7 +37,7 @@ FORKED_TL = "lmsaes" in getattr(transformer_lens, "__version__", "")
 
 
 @register_sae_config("lorsa")
-class LorsaConfig(BaseSAEConfig):
+class LorsaConfig(SparseDictionaryConfig):
     """Configuration for Low Rank Sparse Attention."""
 
     sae_type: str = "lorsa"
@@ -92,7 +92,7 @@ class LorsaConfig(BaseSAEConfig):
 
 
 @register_sae_model("lorsa")
-class LowRankSparseAttention(AbstractSparseAutoEncoder):
+class LowRankSparseAttention(SparseDictionary):
     def __init__(self, cfg: LorsaConfig, device_mesh: Optional[DeviceMesh] = None):
         super().__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg

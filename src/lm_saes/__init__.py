@@ -1,4 +1,5 @@
-from .abstract_sae import BaseSAEConfig
+from .abstract_sae import SparseDictionary, SparseDictionaryConfig
+from .abstract_sae import SparseDictionaryConfig as BaseSAEConfig  # backward compat
 from .activation import (
     ActivationFactory,
     ActivationFactoryActivationsSource,
@@ -68,7 +69,9 @@ from .utils.logging import setup_logging
 __all__ = [
     "ActivationFactory",
     "ActivationWriter",
-    "BaseSAEConfig",
+    "SparseDictionary",
+    "SparseDictionaryConfig",
+    "BaseSAEConfig",  # backward compat alias
     "CLTConfig",
     "CrossLayerTranscoder",
     "CrossCoderConfig",

@@ -16,7 +16,7 @@ docker run -d --name mongodb --restart always -p 27017:27017 mongo:latest
 
 ## Analyze a trained Sparse Autoencoder
 
-A main entrypoint of feaature analyzing is provided for basic feature statistical information, including the activation context at different magnitudes.
+A main entrypoint of feature analyzing is provided for basic feature statistical information, including the activation context at different magnitudes.
 
 To analyze a trained Sparse Autoencoder, you can run the following variants:
 
@@ -133,7 +133,7 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
         FeatureAnalyzer,
         FeatureAnalyzerConfig,
         TransformerLensLanguageModel,
-        AbstractSparseAutoEncoder,
+        SparseDictionary,
     )
 
     # Load Model & Dataset
@@ -162,7 +162,7 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
     )
 
     # Load trained SAE from disk
-    sae = AbstractSparseAutoEncoder.from_pretrained("results", device="cuda")
+    sae = SparseDictionary.from_pretrained("results", device="cuda")
 
     # Analyze it
     analyzer = FeatureAnalyzer(

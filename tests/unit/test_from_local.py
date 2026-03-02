@@ -9,7 +9,7 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes import SAEConfig, SparseAutoEncoder
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.testing import distributed_test
 
 
@@ -51,7 +51,7 @@ def temp_sae_dir():
 
 def test_from_local_single_device(temp_sae_dir):
     # Test safetensors loading
-    model = AbstractSparseAutoEncoder.from_local(temp_sae_dir)
+    model = SparseDictionary.from_local(temp_sae_dir)
     assert isinstance(model, SparseAutoEncoder)
 
     # Verify loaded parameters
@@ -75,7 +75,7 @@ def test_from_local_distributed(temp_sae_dir):
     assert os.path.exists(temp_sae_dir)
     assert os.path.exists(os.path.join(temp_sae_dir, "config.json"))
 
-    model = AbstractSparseAutoEncoder.from_local(temp_sae_dir, device_mesh=device_mesh)
+    model = SparseDictionary.from_local(temp_sae_dir, device_mesh=device_mesh)
     assert isinstance(model, SparseAutoEncoder)
 
     # Verify loaded parameters and sharding

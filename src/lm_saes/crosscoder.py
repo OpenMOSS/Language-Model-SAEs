@@ -12,8 +12,8 @@ from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
 from lm_saes.abstract_sae import (
-    AbstractSparseAutoEncoder,
-    BaseSAEConfig,
+    SparseDictionary,
+    SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
@@ -52,7 +52,7 @@ class CrossCoderSpecs(TensorSpecs):
 
 
 @register_sae_config("crosscoder")
-class CrossCoderConfig(BaseSAEConfig):
+class CrossCoderConfig(SparseDictionaryConfig):
     sae_type: str = "crosscoder"
     hook_points: list[str]
     """Hook points for each head. Crosscoder reads from these hook points (simultaneously) and writes to the same hook points."""
@@ -67,7 +67,7 @@ class CrossCoderConfig(BaseSAEConfig):
 
 
 @register_sae_model("crosscoder")
-class CrossCoder(AbstractSparseAutoEncoder):
+class CrossCoder(SparseDictionary):
     """Sparse AutoEncoder model.
 
     An autoencoder model that learns to compress the input activation tensor into a high-dimensional but sparse feature activation tensor.

@@ -22,8 +22,8 @@ from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
 from lm_saes.abstract_sae import (
-    AbstractSparseAutoEncoder,
-    BaseSAEConfig,
+    SparseDictionary,
+    SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
@@ -64,7 +64,7 @@ class CrossLayerTranscoderSpecs(TensorSpecs):
 
 
 @register_sae_config("clt")
-class CLTConfig(BaseSAEConfig):
+class CLTConfig(SparseDictionaryConfig):
     """Configuration for Cross Layer Transcoder (CLT).
 
     A CLT consists of L encoders and L(L+1)/2 decoders where each encoder at layer L
@@ -112,7 +112,7 @@ class CLTConfig(BaseSAEConfig):
 
 
 @register_sae_model("clt")
-class CrossLayerTranscoder(AbstractSparseAutoEncoder):
+class CrossLayerTranscoder(SparseDictionary):
     """Cross Layer Transcoder (CLT) implementation.
 
     A CLT has L encoders (one per layer) and L(L+1)/2 decoders arranged in an upper

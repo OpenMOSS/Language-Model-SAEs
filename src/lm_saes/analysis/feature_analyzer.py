@@ -10,7 +10,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
-from lm_saes.abstract_sae import AbstractSparseAutoEncoder
+from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseConfig
@@ -194,7 +194,7 @@ class FeatureAnalyzer:
     def analyze_chunk(
         self,
         activation_factory: ActivationFactory,
-        sae: AbstractSparseAutoEncoder,
+        sae: SparseDictionary,
         device_mesh: DeviceMesh | None = None,
         activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> list[dict[str, Any]]:
