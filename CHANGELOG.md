@@ -1,3 +1,9 @@
+## v2.0.0b20 (2026-03-02)
+
+### Refactor
+
+- rename AbstractSparseAutoEncoder and BaseSAEConfig
+
 ## v2.0.0b19 (2026-03-01)
 
 ### Fix
