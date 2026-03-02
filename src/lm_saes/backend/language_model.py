@@ -315,7 +315,6 @@ def hook_out_fn_builder(replacement_module: AbstractSparseAutoEncoder) -> Callab
 
 class TransformerLensLanguageModel(LanguageModel):
     def __init__(self, cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None):
-        self.cache_activations: dict[str, torch.Tensor] = {}
         self.cfg = cfg
         self.device_mesh = device_mesh
         if cfg.device == "cuda":
@@ -365,45 +364,12 @@ class TransformerLensLanguageModel(LanguageModel):
             else None
         )
 
-    def initialize_replacement_model(
-        self, inputs: torch.Tensor | str, replacement_modules: list[AbstractSparseAutoEncoder]
-    ):
-        tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
-        hook_in_fn_list: list[tuple[Union[str, Callable], Callable]] = [
-            (
-                hook_in,
-                partial(
-                    hook_in_fn_builder(replacement_module),
-                    replacement_module=replacement_module,
-                    cache_activations=self.cache_activations,
-                ),
-            )
-            for replacement_module in replacement_modules
-            for hook_in in replacement_module.cfg.hooks_in
-        ]
-        hook_out_fn_list: list[tuple[Union[str, Callable], Callable]] = [
-            (
-                hook_out,
-                partial(
-                    hook_out_fn_builder(replacement_module),
-                    replacement_module=replacement_module,
-                    cache_activations=self.cache_activations,
-                    update_error_cache=True,
-                ),
-            )
-            for replacement_module in replacement_modules
-            for hook_out in replacement_module.cfg.hooks_out
-        ]
-        with self.hooks(fwd_hooks=hook_in_fn_list + hook_out_fn_list):
-            logits = self.forward(tokens)
-        return logits
+    def _get_cache_activations(self, cache_activations: dict[str, torch.Tensor], suffix: str) -> list[torch.Tensor]:
+        return [v for k, v in cache_activations.items() if k.endswith(suffix)]
 
-    def get_cache_activations(self, suffix: str) -> list[torch.Tensor]:
-        return [v for k, v in self.cache_activations.items() if k.endswith(suffix)]
-
-    def _clear_cache_activation_grads(self) -> None:
+    def _clear_cache_activation_grads(self, cache_activations: dict[str, torch.Tensor]) -> None:
         """Clear gradients for all cached activations in-place."""
-        for activation in self.cache_activations.values():
+        for activation in cache_activations.values():
             if activation.grad is not None:
                 activation.grad = None
 
@@ -453,6 +419,45 @@ class TransformerLensLanguageModel(LanguageModel):
             )
             col_start += error.shape[1]
 
+        assert col_start == edge_rows.shape[1], (
+            f"col_start {col_start} must equal edge_rows.shape[1] {edge_rows.shape[1]}"
+        )
+
+    def column_id_to_info(
+        self,
+        cache_activations: dict[str, torch.Tensor],
+    ) -> list[tuple[int, int | None, str, int | None]]:
+        """Return ``(pos, layer, hook_name, dense_idx)`` for each active feature, error, and embedding."""
+        result: list[tuple[int, int | None, str, int | None]] = []
+
+        if "hook_embed" in cache_activations:
+            embed = cache_activations["hook_embed"]
+            for p in range(embed.shape[1]):
+                result.append((p, None, "hook_embed", None))
+
+        for key, acts in cache_activations.items():
+            if not key.endswith(".feature_acts.up"):
+                continue
+            hook_name = key.removesuffix(".feature_acts.up")
+            layer = int(hook_name.split(".")[1])
+            idx = acts.indices()
+            if idx.shape[0] == 3:  # (batch, pos, d_sae)
+                mask = idx[0] == 0
+                pos, dense = idx[1, mask].tolist(), idx[2, mask].tolist()
+            else:  # (pos, d_sae)
+                pos, dense = idx[0].tolist(), idx[1].tolist()
+            result += [(p, layer, hook_name, d) for p, d in zip(pos, dense)]
+
+        for key, error in cache_activations.items():
+            if not key.endswith(".error"):
+                continue
+            hook_name = key.removesuffix(".error")
+            layer = int(hook_name.split(".")[1])
+            for p in range(error.shape[1]):
+                result.append((p, layer, hook_name, None))
+
+        return result
+
     def attribute(
         self,
         inputs: torch.Tensor | str,
@@ -463,6 +468,7 @@ class TransformerLensLanguageModel(LanguageModel):
         max_feature_nodes: Optional[int] = None,
     ):
         assert self.model is not None, "model must be initialized"
+        cache_activations: dict[str, torch.Tensor] = {}
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
         n_tokens = tokens.shape[0]
         fwd_hooks_in: list[tuple[Union[str, Callable], Callable]] = [
@@ -471,7 +477,7 @@ class TransformerLensLanguageModel(LanguageModel):
                 partial(
                     hook_in_fn_builder(replacement_module),
                     replacement_module=replacement_module,
-                    cache_activations=self.cache_activations,
+                    cache_activations=cache_activations,
                 ),
             )
             for replacement_module in replacement_modules
@@ -483,7 +489,7 @@ class TransformerLensLanguageModel(LanguageModel):
                 partial(
                     hook_out_fn_builder(replacement_module),
                     replacement_module=replacement_module,
-                    cache_activations=self.cache_activations,
+                    cache_activations=cache_activations,
                     update_error_cache=True,
                 ),
             )
@@ -494,18 +500,25 @@ class TransformerLensLanguageModel(LanguageModel):
         def token_fwd_hook_fn(
             x: torch.Tensor,
             hook: Any,
+            cache_activations: dict[str, torch.Tensor],
         ):
-            self.cache_activations["hook_embed"] = x
-            self.cache_activations["hook_embed"].retain_grad()
+            cache_activations["hook_embed"] = x
+            cache_activations["hook_embed"].retain_grad()
             return x
 
-        token_fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [("hook_embed", token_fwd_hook_fn)]
+        token_fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [
+            (
+                "hook_embed",
+                partial(token_fwd_hook_fn, cache_activations=cache_activations),
+            )
+        ]
         with self.hooks(fwd_hooks=fwd_hooks_in + fwd_hooks_out + token_fwd_hooks):
             batch_logits = self.forward(einops.repeat(tokens, "n -> b n", b=batch_size))[:, -1]  # batch, d_vocab
 
-        feature_acts_down = self.get_cache_activations(".feature_acts.down")
-        feature_acts_up = self.get_cache_activations(".feature_acts.up")
-        errors = self.get_cache_activations(".error")
+        feature_acts_down = self._get_cache_activations(cache_activations, ".feature_acts.down")
+        errors = self._get_cache_activations(cache_activations, ".error")
+
+        column_id_to_info = self.column_id_to_info(cache_activations)
 
         with torch.no_grad():
             probs = torch.softmax(batch_logits[0], dim=-1)
@@ -513,8 +526,8 @@ class TransformerLensLanguageModel(LanguageModel):
             cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
             top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
         n_logits = len(top_idx)
-        num_active_features = sum(acts._nnz() // batch_size for acts in feature_acts_up)
         num_error_nodes = len(errors) * n_tokens
+        num_active_features = len(column_id_to_info) - n_tokens - num_error_nodes
         feature_nodes = min(max_feature_nodes or num_active_features, num_active_features)
         edge_matrix = torch.zeros(
             feature_nodes + n_logits, n_tokens + num_active_features + num_error_nodes
@@ -523,20 +536,54 @@ class TransformerLensLanguageModel(LanguageModel):
         for i in range(0, n_logits, batch_size):
             cur_batch_size = min(batch_size, n_logits - i)
             batch_nodes = batch_logits[:, top_idx[i : i + cur_batch_size]] - torch.mean(batch_logits[0], dim=-1)
-            self._clear_cache_activation_grads()
+            self._clear_cache_activation_grads(cache_activations)
             batch_nodes.diagonal().sum().backward(retain_graph=True)
             self._update_edge_matrix_from_cache(
                 edge_rows=edge_matrix[feature_nodes + i : feature_nodes + i + cur_batch_size, :],
-                token_embed=self.cache_activations["hook_embed"],
+                token_embed=cache_activations["hook_embed"],
                 feature_acts_down=feature_acts_down,
                 errors=errors,
             )
 
-        def normalize_edge_maxtrix(edge_matrix: torch.Tensor) -> torch.Tensor:
-            edge_matrix = edge_matrix.abs_()
-            return edge_matrix / edge_matrix.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        def get_normalize_edge_maxtrix(edge_matrix: torch.Tensor):
+            return torch.abs(edge_matrix) / torch.abs(edge_matrix).sum(dim=1, keepdim=True).clamp(min=1e-8)
 
-        feature_row_to_col = torch.zeros(feature_nodes, dtype=torch.int64, device="cpu")
+        feature_row_to_col = torch.full((feature_nodes,), -1, dtype=torch.int64, device="cpu")
+        features_attributions = einops.einsum(
+            get_normalize_edge_maxtrix(edge_matrix[feature_nodes:, :]),
+            top_p,
+            "l t, l -> t",
+        )
+        for i in range(0, feature_nodes, batch_size):
+            cur_batch = min(batch_size, feature_nodes - i)
+            already_assigned = feature_row_to_col[feature_row_to_col != -1]
+            features_attributions[already_assigned] = float("-inf")
+            _, batch_feature_ids = torch.topk(features_attributions, cur_batch)
+            feature_row_to_col[i : i + cur_batch] = batch_feature_ids
+            self._clear_cache_activation_grads(cache_activations)
+            bwd = None
+            for batch_idx, feat_id in enumerate(batch_feature_ids.tolist()):
+                info: Any = column_id_to_info[feat_id]
+                acts = cache_activations[info[2] + ".feature_acts.up"]
+                idx = acts.indices()
+                mask = (idx[0] == batch_idx) & (idx[1] == info[0]) & (idx[2] == info[3])
+                bwd = acts.values()[mask][0] if bwd is None else bwd + acts.values()[mask][0]
+            assert bwd is not None, "bwd must not be None"
+            bwd.backward(retain_graph=True)
+            self._update_edge_matrix_from_cache(
+                edge_rows=edge_matrix[i : i + cur_batch, :],
+                token_embed=cache_activations["hook_embed"],
+                feature_acts_down=feature_acts_down,
+                errors=errors,
+            )
+            features_attributions += einops.einsum(
+                get_normalize_edge_maxtrix(edge_matrix[feature_nodes:, batch_feature_ids]),
+                get_normalize_edge_maxtrix(edge_matrix[i : i + cur_batch, :]),
+                top_p,
+                "l b, b t, l -> t",
+            )
+
+        return edge_matrix, cache_activations, column_id_to_info
 
     @property
     def eos_token_id(self) -> int | None:
