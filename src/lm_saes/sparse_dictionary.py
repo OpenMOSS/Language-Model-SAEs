@@ -188,6 +188,18 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
         """List of hook points used by the sparse dictionary, including all input and label hook points. This is used to retrieve useful data from the input activation source."""
         raise NotImplementedError("Subclasses must implement this method")
 
+    @property
+    @abstractmethod
+    def hooks_in(self) -> list[str]:
+        """List of hook points used by the sparse dictionary, including all input hook points. This is used to retrieve useful data from the input activation source."""
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @property
+    @abstractmethod
+    def hooks_out(self) -> list[str]:
+        """List of hook points used by the sparse dictionary, including all output hook points. This is used to retrieve useful data from the output activation source."""
+        raise NotImplementedError("Subclasses must implement this method")
+
 
 class SparseDictionary(HookedRootModule, ABC):
     """Abstract base class for all sparse dictionary models.
