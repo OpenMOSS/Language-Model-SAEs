@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
+import { ChessBoard } from "@/components/chess/chess-board";
 
 interface RawAtlasNodeNew {
   node_id: string;
@@ -45,6 +46,16 @@ interface AtlasLink {
   weight: number;
 }
 
+interface TopActivationSample {
+  fen: string;
+  activationStrength: number;
+  activations?: number[];
+  zPatternIndices?: number[];
+  zPatternValues?: number[];
+  contextId?: number;
+  sampleIndex?: number;
+}
+
 const parseNodeId = (nodeId: string): ParsedNodeId | null => {
   const match = nodeId.match(/^L(\d+)([AM])#(\d+)$/);
   if (!match) {
@@ -61,6 +72,9 @@ const generateIframeUrl = (
   type: "lorsa" | "plt",
   feature: number,
 ): string => {
+  // This helper is no longer used to build an iframe URL.
+  // Kept for backward compatibility; actual feature details are fetched
+  // via the dictionaries backend API instead of embedding a separate page.
   const saeType = type === "lorsa" ? "lorsa" : "plt";
   const origin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
@@ -81,22 +95,206 @@ export const AtlasVisualization: React.FC = () => {
   const [strengthThreshold, setStrengthThreshold] = useState<number>(0);
   const [maxEdgeWeight, setMaxEdgeWeight] = useState<number>(0);
 
-  const [iframeUrl, setIframeUrl] = useState<string | null>(null);
-  const [iframeTitle, setIframeTitle] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [topActivations, setTopActivations] = useState<TopActivationSample[]>([]);
+  const [loadingTopActivations, setLoadingTopActivations] = useState<boolean>(false);
+  const [topActivationError, setTopActivationError] = useState<string | null>(null);
 
-  const showNodeIframe = useCallback((nodeId: string): void => {
-    const parsed = parseNodeId(nodeId);
-    if (!parsed) {
-      // eslint-disable-next-line no-console
-      console.warn("Invalid node ID format:", nodeId);
-      return;
-    }
-    const url = generateIframeUrl(parsed.layer, parsed.type, parsed.feature);
-    setIframeUrl(url);
-    setIframeTitle(
-      `Feature: ${nodeId} (Layer ${parsed.layer}, ${parsed.type}, Feature ${parsed.feature})`,
-    );
-  }, []);
+  const fetchTopActivations = useCallback(
+    async (nodeId: string): Promise<void> => {
+      const parsed = parseNodeId(nodeId);
+      if (!parsed) {
+        // eslint-disable-next-line no-console
+        console.warn("Invalid node ID format:", nodeId);
+        setTopActivations([]);
+        return;
+      }
+
+      const backendBase = import.meta.env.VITE_BACKEND_URL ?? "";
+      if (!backendBase) {
+        // eslint-disable-next-line no-console
+        console.warn("VITE_BACKEND_URL is not set; cannot fetch top activations.");
+        setTopActivations([]);
+        return;
+      }
+
+      const layerIdx = parsed.layer;
+      const featureIndex = parsed.feature;
+      const isLorsa = parsed.type === "lorsa";
+
+      // For BT4 chess SAEs, build dictionary name from analysis_name-style suffix.
+      // Default to k30_e16 combo, matching current global-weight experiments.
+      const LORSA_ANALYSIS_NAME = "BT4_lorsa_k30_e16";
+      const TC_ANALYSIS_NAME = "BT4_tc_k30_e16";
+
+      let dictionary: string;
+      if (isLorsa) {
+        const suffix = LORSA_ANALYSIS_NAME.replace("BT4_lorsa", "").replace(/^_/, "");
+        dictionary = suffix
+          ? `BT4_lorsa_L${layerIdx}A_${suffix}`
+          : `BT4_lorsa_L${layerIdx}A`;
+      } else {
+        const suffix = TC_ANALYSIS_NAME.replace("BT4_tc", "").replace(/^_/, "");
+        dictionary = suffix
+          ? `BT4_tc_L${layerIdx}M_${suffix}`
+          : `BT4_tc_L${layerIdx}M`;
+      }
+
+      setLoadingTopActivations(true);
+      setTopActivationError(null);
+      try {
+        const response = await fetch(
+          `${backendBase}/dictionaries/${encodeURIComponent(
+            dictionary,
+          )}/features/${featureIndex}`,
+          {
+            method: "GET",
+            headers: {
+              Accept: "application/x-msgpack",
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`HTTP ${response.status}: ${text}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const msgpackModule = await import("@msgpack/msgpack");
+        const decoded = msgpackModule.decode(new Uint8Array(arrayBuffer)) as any;
+
+        const camelcaseKeysModule = await import("camelcase-keys");
+        const camelcaseKeys = camelcaseKeysModule.default;
+
+        const camelData = camelcaseKeys(decoded as Record<string, unknown>, {
+          deep: true,
+          stopPaths: ["sample_groups.samples.context"],
+        }) as any;
+
+        const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
+        const allSamples: any[] = [];
+
+        for (const group of sampleGroups) {
+          if (group.samples && Array.isArray(group.samples)) {
+            allSamples.push(...group.samples);
+          }
+        }
+
+        const chessSamples: TopActivationSample[] = [];
+
+        for (const sample of allSamples) {
+          if (!sample.text) continue;
+          const lines = String(sample.text).split("\n");
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.includes("/")) continue;
+
+            const parts = trimmed.split(/\s+/);
+            if (parts.length < 6) continue;
+
+            const [boardPart, activeColor] = parts;
+            const boardRows = boardPart.split("/");
+            if (boardRows.length !== 8 || !/^[wb]$/.test(activeColor)) {
+              continue;
+            }
+
+            let isValidBoard = true;
+            let totalSquares = 0;
+
+            for (const row of boardRows) {
+              if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
+                isValidBoard = false;
+                break;
+              }
+              let rowSquares = 0;
+              for (const ch of row) {
+                if (/\d/.test(ch)) {
+                  rowSquares += Number.parseInt(ch, 10);
+                } else {
+                  rowSquares += 1;
+                }
+              }
+              totalSquares += rowSquares;
+            }
+
+            if (!isValidBoard || totalSquares !== 64) {
+              continue;
+            }
+
+            let activationsArray: number[] | undefined;
+            let maxActivation = 0;
+
+            if (
+              Array.isArray(sample.featureActsIndices) &&
+              Array.isArray(sample.featureActsValues)
+            ) {
+              activationsArray = new Array(64).fill(0);
+              for (
+                let i = 0;
+                i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length);
+                i += 1
+              ) {
+                const idx = sample.featureActsIndices[i];
+                const value = sample.featureActsValues[i];
+                if (idx >= 0 && idx < 64) {
+                  activationsArray[idx] = value;
+                  if (Math.abs(value) > Math.abs(maxActivation)) {
+                    maxActivation = value;
+                  }
+                }
+              }
+            }
+
+            chessSamples.push({
+              fen: trimmed,
+              activationStrength: maxActivation,
+              activations: activationsArray,
+              zPatternIndices: sample.zPatternIndices,
+              zPatternValues: sample.zPatternValues,
+              contextId: sample.contextIdx ?? sample.context_idx,
+              sampleIndex: sample.sampleIndex ?? 0,
+            });
+
+            break;
+          }
+        }
+
+        const topSamples = chessSamples
+          .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
+          .slice(0, 4);
+
+        setTopActivations(topSamples);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error("Failed to fetch top activation data for atlas node:", error);
+        setTopActivations([]);
+        setTopActivationError(
+          error instanceof Error ? error.message : "Failed to fetch top activations",
+        );
+      } finally {
+        setLoadingTopActivations(false);
+      }
+    },
+    [],
+  );
+
+  const showNodeDetails = useCallback(
+    (nodeId: string): void => {
+      const parsed = parseNodeId(nodeId);
+      if (!parsed) {
+        // eslint-disable-next-line no-console
+        console.warn("Invalid node ID format:", nodeId);
+        return;
+      }
+      setSelectedNodeId(nodeId);
+      setTopActivations([]);
+      setTopActivationError(null);
+      fetchTopActivations(nodeId);
+    },
+    [fetchTopActivations],
+  );
 
   const loadAtlasFile = useCallback(async (filePath: string): Promise<void> => {
     if (!filePath) {
@@ -125,8 +323,9 @@ export const AtlasVisualization: React.FC = () => {
       setSliderValue(0);
       setStrengthThreshold(0);
       setMaxEdgeWeight(0);
-      setIframeUrl(null);
-      setIframeTitle(null);
+      setSelectedNodeId(null);
+      setTopActivations([]);
+      setTopActivationError(null);
       setStatus("Graph loaded successfully!");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -315,7 +514,7 @@ export const AtlasVisualization: React.FC = () => {
           }),
       )
       .on("click", (_event: any, d: AtlasNode) => {
-        showNodeIframe(d.id);
+        showNodeDetails(d.id);
       });
 
     node
@@ -521,27 +720,81 @@ export const AtlasVisualization: React.FC = () => {
         <div className="w-[420px] min-w-[420px] sticky top-6">
           <div
             className={`border rounded bg-background p-3 ${
-              iframeUrl ? "block" : "hidden"
+              selectedNodeId ? "block" : "hidden"
             }`}
           >
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-base font-semibold">
-                {iframeTitle ?? "Feature Details"}
+                {selectedNodeId ? `Feature: ${selectedNodeId}` : "Feature Details"}
               </h3>
               <button
                 type="button"
-                onClick={() => setIframeUrl(null)}
+                onClick={() => {
+                  setSelectedNodeId(null);
+                  setTopActivations([]);
+                  setTopActivationError(null);
+                }}
                 className="text-xs text-muted-foreground hover:underline"
               >
                 Close
               </button>
             </div>
-            <iframe
-              title="feature-details"
-              src={iframeUrl ?? ""}
-              className="w-full border-0 rounded"
-              style={{ height: "calc(100vh - 220px)", minHeight: 800 }}
-            />
+            {loadingTopActivations ? (
+              <div className="flex items-center justify-center py-4">
+                <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
+                  <span>Loading top activation samples...</span>
+                </div>
+              </div>
+            ) : topActivationError ? (
+              <div className="text-sm text-red-600">
+                Failed to load top activations: {topActivationError}
+              </div>
+            ) : topActivations.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                No activation samples containing chessboard were found for this feature.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Showing top {topActivations.length} activation samples (by max activation).
+                </p>
+                <div className="grid grid-cols-1 gap-3">
+                  {topActivations.map((sample, index) => (
+                    <div
+                      key={`${sample.contextId ?? 0}-${sample.sampleIndex ?? index}`}
+                      className="bg-background border rounded p-2"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-muted-foreground">
+                          Sample #{index + 1} • Max act:{" "}
+                          {sample.activationStrength.toFixed(3)}
+                        </span>
+                        {sample.contextId !== undefined && (
+                          <span className="text-xs text-muted-foreground">
+                            Context {sample.contextId}
+                          </span>
+                        )}
+                      </div>
+                      <ChessBoard
+                        fen={sample.fen}
+                        size="small"
+                        showCoordinates
+                        activations={sample.activations}
+                        zPatternIndices={sample.zPatternIndices}
+                        zPatternValues={sample.zPatternValues}
+                        sampleIndex={sample.sampleIndex}
+                        analysisName="Atlas Feature"
+                        flip_activation={Boolean(
+                          sample.fen && sample.fen.split(" ")[1] === "b",
+                        )}
+                        autoFlipWhenBlack
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
