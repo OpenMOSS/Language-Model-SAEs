@@ -14,8 +14,8 @@ from lm_saes.config import DatasetConfig
 from lm_saes.database import MongoClient, MongoDBConfig
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.sparse_dictionary import SparseDictionary
+from lm_saes.utils.distributed import is_primary_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.topk_to_jumprelu_conversion import topk_to_jumprelu_conversion
 
 from .utils import PretrainedSAE, load_config

@@ -22,9 +22,8 @@ from lm_saes.molt import MOLTConfig
 from lm_saes.resource_loaders import load_dataset, load_model
 from lm_saes.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
 from lm_saes.trainer import Trainer, TrainerConfig, WandbConfig
-from lm_saes.utils.distributed import mesh_rank
+from lm_saes.utils.distributed import is_primary_rank, mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from lm_saes.utils.misc import is_primary_rank
 
 from .utils import PretrainedSAE, load_config
 

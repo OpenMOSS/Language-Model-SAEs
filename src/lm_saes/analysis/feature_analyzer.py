@@ -16,9 +16,8 @@ from lm_saes.config import BaseConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap, masked_fill, to_local
+from lm_saes.utils.distributed import DimMap, is_primary_rank, masked_fill, to_local
 from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.misc import is_primary_rank
 from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
 from .post_analysis import PostAnalysisProcessor, get_post_analysis_processor

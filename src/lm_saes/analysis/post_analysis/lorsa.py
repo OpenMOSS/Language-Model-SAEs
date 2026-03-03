@@ -34,9 +34,9 @@ from lm_saes.activation.factory import ActivationFactory
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.utils.discrete import KeyedDiscreteMapper
+from lm_saes.utils.distributed import is_primary_rank
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.misc import is_primary_rank
 
 from .base import PostAnalysisProcessor, register_post_analysis_processor
 
