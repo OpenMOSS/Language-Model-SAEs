@@ -11,21 +11,21 @@ import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 import { ChessBoard } from '@/components/chess/chess-board';
 import { CircuitInterpretationCard } from '@/components/circuits/circuit-interpretation-card';
 
-interface GlobalWeightFeature {
+interface VirtualWeightFeature {
   name: string;
   weight: number;
   clerp?: string;
   rank?: number;
 }
 
-interface GlobalWeightResult {
+interface VirtualWeightResult {
   feature_type: string;
   layer_idx: number;
   feature_idx: number;
   activation_type?: string;
   feature_name: string;
-  features_in: GlobalWeightFeature[];
-  features_out: GlobalWeightFeature[];
+  features_in: VirtualWeightFeature[];
+  features_out: VirtualWeightFeature[];
 }
 
 const LOCAL_STORAGE_KEY = "bt4_sae_combo_id";
@@ -52,7 +52,7 @@ export const GlobalWeightPage: React.FC = () => {
   
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
-  const [result, setResult] = useState<GlobalWeightResult | null>(null);
+  const [result, setResult] = useState<VirtualWeightResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const [selectedFeatureName, setSelectedFeatureName] = useState<string | null>(null);
@@ -175,7 +175,7 @@ export const GlobalWeightPage: React.FC = () => {
       if (status.isLoading) {
         throw new Error('Model loading timeout, please try again later');
       }
-      setLoadingMessage('Model loaded, preparing to calculate global weights...');
+      setLoadingMessage('Model loaded, preparing to calculate virtual weights...');
       return; // Loading completed
     }
 
@@ -201,7 +201,7 @@ export const GlobalWeightPage: React.FC = () => {
     
     // If it returns already_loaded, it means it has been loaded
     if (preloadData.status === 'already_loaded') {
-      setLoadingMessage('Model loaded, preparing to calculate global weights...');
+      setLoadingMessage('Model loaded, preparing to calculate virtual weights...');
       return;
     }
 
@@ -222,7 +222,7 @@ export const GlobalWeightPage: React.FC = () => {
         if (!status.isLoading) {
           // Wait again to ensure it is loaded
           await new Promise(resolve => setTimeout(resolve, 1000));
-          setLoadingMessage('Model loaded, preparing to calculate global weights...');
+          setLoadingMessage('Model loaded, preparing to calculate virtual weights...');
           return;
         }
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -231,7 +231,7 @@ export const GlobalWeightPage: React.FC = () => {
     }
   };
 
-  const fetchGlobalWeight = async () => {
+  const fetchVirtualWeight = async () => {
     setLoading(true);
     setLoadingMessage(null);
     setError(null);
@@ -263,7 +263,7 @@ export const GlobalWeightPage: React.FC = () => {
 
       params.append('sae_combo_id', currentSaeComboId);
       
-      let response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${params.toString()}`);
+      let response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/virtual_weight?${params.toString()}`);
       
       // If it returns 503 error (model not loaded), automatically try to preload
       if (response.status === 503) {
@@ -271,13 +271,13 @@ export const GlobalWeightPage: React.FC = () => {
         console.log('Detected model not loaded, starting automatic preload...', errorText);
         
         try {
-          setLoadingMessage('Model not loaded, starting automatic load...');
+          setLoadingMessage('Model not loaded, starting automatic load for virtual weights...');
           await preloadModels(currentSaeComboId);
-          console.log('Preload completed, retrying to fetch global weights...');
-          setLoadingMessage('Calculating global weights...');
+          console.log('Preload completed, retrying to fetch virtual weights...');
+          setLoadingMessage('Calculating virtual weights...');
           
           // Retry request
-          response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/global_weight?${params.toString()}`);
+          response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/virtual_weight?${params.toString()}`);
         } catch (preloadErr: any) {
           throw new Error(`Automatic preload failed: ${preloadErr.message}`);
         }
@@ -287,7 +287,7 @@ export const GlobalWeightPage: React.FC = () => {
         throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       }
       
-      const data = await response.json() as GlobalWeightResult;
+      const data = await response.json() as VirtualWeightResult;
       setResult(data);
       
       // Batch fetch clerp and calculate ranks for all features
@@ -313,8 +313,8 @@ export const GlobalWeightPage: React.FC = () => {
       setSaeComboId(currentSaeComboId);
       setSearchParams(newParams);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch global weights');
-      console.error('Error fetching global weight:', err);
+      setError(err.message || 'Failed to fetch virtual weights');
+      console.error('Error fetching virtual weight:', err);
     } finally {
       setLoading(false);
       setLoadingMessage(null);
@@ -324,7 +324,7 @@ export const GlobalWeightPage: React.FC = () => {
   useEffect(() => {
     // If there are parameters in the URL, automatically load
     if (searchParams.get('layer_idx') && searchParams.get('feature_idx')) {
-      fetchGlobalWeight();
+      fetchVirtualWeight();
     }
   }, []); // Only execute once when the component is mounted
 
@@ -674,8 +674,8 @@ export const GlobalWeightPage: React.FC = () => {
 
   // Batch fetch interpretations and calculate ranks
   const fetchBatchClerpsAndRanks = useCallback(async (
-    featuresIn: GlobalWeightFeature[],
-    featuresOut: GlobalWeightFeature[]
+    featuresIn: VirtualWeightFeature[],
+    featuresOut: VirtualWeightFeature[]
   ) => {
     setLoadingClerps(true);
     try {
@@ -1150,7 +1150,7 @@ export const GlobalWeightPage: React.FC = () => {
   // Search for features in Features In and Features Out and get their ranks and weights
   const searchFeature = useCallback(() => {
     if (!result) {
-      alert('Please calculate global weights first');
+      alert('Please calculate virtual weights first');
       return;
     }
 
@@ -1323,14 +1323,14 @@ export const GlobalWeightPage: React.FC = () => {
             </div>
 
             <div className="mt-4 space-y-2">
-              <Button onClick={fetchGlobalWeight} disabled={loading}>
+              <Button onClick={fetchVirtualWeight} disabled={loading}>
                 {loading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     {loadingMessage || 'Calculating...'}
                   </>
                 ) : (
-                  'Calculate Global Weight'
+                  'Calculate Virtual Weight'
                 )}
               </Button>
               {loadingMessage && loadingMessage !== 'Calculating...' && (
