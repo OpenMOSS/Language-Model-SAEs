@@ -1907,7 +1907,7 @@ export const GlobalWeightPage: React.FC = () => {
                     </Button>
                   </div>
                   <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded border-l-4 border-blue-200">
-                    <div className="font-medium mb-1">💡 Usage Instructions:</div>
+                    <div className="font-medium mb-1">Usage Instructions:</div>
                     <ul className="list-disc list-inside space-y-1 text-blue-700">
                       <li>After editing the interpretation content, click "Save to MongoDB" to synchronize the changes to the database</li>
                       <li>Click "Sync from MongoDB" to read the latest interpretation content from the database</li>
@@ -1924,7 +1924,7 @@ export const GlobalWeightPage: React.FC = () => {
           <CardHeader>
             <CardTitle>Atlas Visualization</CardTitle>
             <p className="text-sm text-muted-foreground">
-              以图结构查看 Atlas，并点击节点在右侧打开对应 Feature 的 embed 页面。
+              Visualize the atlas of the selected feature.
             </p>
           </CardHeader>
           <CardContent>

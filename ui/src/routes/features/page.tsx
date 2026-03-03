@@ -2,8 +2,15 @@ import { AppNavbar } from "@/components/app/navbar";
 import { SectionNavigator } from "@/components/app/section-navigator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
@@ -53,6 +60,7 @@ export const FeaturesPage = () => {
   const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
   const [selectedSubsample, setSelectedSubsample] = useState<string | "all">("all");
+  const [interpretationDraft, setInterpretationDraft] = useState<string>("");
 
   // Debounce the input value to avoid excessive updates
   useDebounce(
@@ -116,7 +124,7 @@ export const FeaturesPage = () => {
       
       setFeatureIndex(feature.featureIndex);
       setSelectedAnalysis(feature.analysisName);
-        setCurrentFeature(feature);
+      setCurrentFeature(feature);
       setSearchParams({
         dictionary,
         featureIndex: feature.featureIndex.toString(),
@@ -131,6 +139,18 @@ export const FeaturesPage = () => {
       }
     }
   );
+
+  useEffect(() => {
+    if (currentFeature) {
+      const text: string =
+        typeof currentFeature.interpretation?.text === "string"
+          ? currentFeature.interpretation.text
+          : "";
+      setInterpretationDraft(text);
+    } else {
+      setInterpretationDraft("");
+    }
+  }, [currentFeature?.featureIndex, currentFeature?.dictionaryName]);
 
 
   useMount(async () => {
@@ -302,9 +322,40 @@ export const FeaturesPage = () => {
           <CustomFenInput
             dictionary={selectedDictionary}
             featureIndex={featureIndex}
-            disabled={dictionariesState.loading || selectedDictionary === null || featureLoading}
+            disabled={
+              dictionariesState.loading ||
+              selectedDictionary === null ||
+              featureLoading
+            }
           />
         </div>
+
+        {/* Interpretation editor for current feature */}
+        {currentFeature && (
+          <div className="container w-full max-w-6xl mx-auto mb-8">
+            <Card>
+              <CardHeader>
+                <CardTitle>Feature Interpretation</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm font-medium">
+                    Feature #{featureIndex} Interpretation
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Characters: {interpretationDraft.length}
+                  </span>
+                </div>
+                <textarea
+                  value={interpretationDraft}
+                  onChange={(e) => setInterpretationDraft(e.target.value)}
+                  className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 font-mono text-sm bg-white"
+                  placeholder="Enter or edit interpretation for this feature..."
+                />
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {featureLoading && !loadingRandomFeature && (
           <div>

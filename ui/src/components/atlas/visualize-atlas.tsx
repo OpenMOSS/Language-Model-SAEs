@@ -99,6 +99,7 @@ export const AtlasVisualization: React.FC = () => {
   const [topActivations, setTopActivations] = useState<TopActivationSample[]>([]);
   const [loadingTopActivations, setLoadingTopActivations] = useState<boolean>(false);
   const [topActivationError, setTopActivationError] = useState<string | null>(null);
+  const [nodeInterpretations, setNodeInterpretations] = useState<Record<string, string>>({});
 
   const fetchTopActivations = useCallback(
     async (nodeId: string): Promise<void> => {
@@ -173,6 +174,10 @@ export const AtlasVisualization: React.FC = () => {
         }) as any;
 
         const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
+        const interpretationText: string =
+          typeof camelData?.interpretation?.text === "string"
+            ? camelData.interpretation.text
+            : "";
         const allSamples: any[] = [];
 
         for (const group of sampleGroups) {
@@ -266,6 +271,12 @@ export const AtlasVisualization: React.FC = () => {
           .slice(0, 4);
 
         setTopActivations(topSamples);
+        if (interpretationText) {
+          setNodeInterpretations((prev) => ({
+            ...prev,
+            [nodeId]: interpretationText,
+          }));
+        }
       } catch (error) {
         // eslint-disable-next-line no-console
         console.error("Failed to fetch top activation data for atlas node:", error);
@@ -326,6 +337,7 @@ export const AtlasVisualization: React.FC = () => {
       setSelectedNodeId(null);
       setTopActivations([]);
       setTopActivationError(null);
+      setNodeInterpretations({});
       setStatus("Graph loaded successfully!");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -370,6 +382,10 @@ export const AtlasVisualization: React.FC = () => {
       } else {
         const key = Object.keys(node)[0];
         nodeId = key;
+        const maybeInterp = (node as RawAtlasNodeOld)[key];
+        if (typeof maybeInterp === "string") {
+          autointerp = maybeInterp;
+        }
       }
       return {
         id: nodeId,
@@ -465,20 +481,47 @@ export const AtlasVisualization: React.FC = () => {
       .append("line")
       .attr("class", "link")
       .attr("stroke", "#999")
-      .attr("stroke-opacity", 0.6)
-      .attr("stroke-width", (d: AtlasLink) => Math.sqrt(Math.abs(d.weight)) * 2);
+      .attr("stroke-opacity", (d: AtlasLink) => {
+        const absW = Math.abs(d.weight);
+        const maxW = maxEdgeWeight || absW || 1;
+        const norm = Math.min(1, absW / maxW);
+        const baseOpacity = 0.1 + Math.sqrt(norm) * 0.7; // 0.1 ~ 0.8
+        if (!selectedNodeId) {
+          return baseOpacity;
+        }
+        const isIncident =
+          d.source.id === selectedNodeId || d.target.id === selectedNodeId;
+        return isIncident ? baseOpacity : 0.03;
+      })
+      .attr("stroke-width", (d: AtlasLink) => {
+        const absW = Math.abs(d.weight);
+        const maxW = maxEdgeWeight || absW || 1;
+        const norm = Math.min(1, absW / maxW);
+        const minWidth = 0.8;
+        const maxWidth = 4.0; // 上限，避免太粗挡住其他边
+        return minWidth + norm * (maxWidth - minWidth);
+      });
 
     const linkLabels = g
       .append("g")
       .attr("class", "link-labels")
       .selectAll("text")
-      .data(processedLinks.filter((d: AtlasLink) => Math.abs(d.weight) > 0.1))
+      .data(processedLinks.filter((d: AtlasLink) => Math.abs(d.weight) > 500))
       .enter()
       .append("text")
       .attr("class", "link-label")
       .attr("font-size", 10)
       .attr("fill", "#666")
-      .text((d: AtlasLink) => d.weight.toFixed(2));
+      .attr("text-anchor", "middle")
+      .attr("dy", -2)
+      .style("pointer-events", "none")
+      .style("opacity", (d: AtlasLink) => {
+        if (!selectedNodeId) return 0.7;
+        const isIncident =
+          d.source.id === selectedNodeId || d.target.id === selectedNodeId;
+        return isIncident ? 0.8 : 0.05;
+      })
+      .text((d: AtlasLink) => d.weight.toFixed(1));
 
     const node = g
       .append("g")
@@ -537,21 +580,22 @@ export const AtlasVisualization: React.FC = () => {
 
     nodeLabels.each((d: AtlasNode, i: number, nodes: any[]) => {
       const text = d3.select(nodes[i]);
-      const autointerp = d.autointerp ?? "";
-      if (autointerp) {
-        text
-          .append("tspan")
-          .attr("x", 12)
-          .attr("dy", "0em")
-          .text(autointerp);
-        text
-          .append("tspan")
-          .attr("x", 12)
-          .attr("dy", "1.2em")
-          .text(d.id);
-      } else {
-        text.text(d.id);
-      }
+      const interpFromState = nodeInterpretations[d.id];
+      const rawInterp = interpFromState ?? d.autointerp ?? "";
+      const interpToShow =
+        typeof rawInterp === "string" && rawInterp.trim().length > 0 ? rawInterp : "[Nul]";
+
+      text
+        .append("tspan")
+        .attr("x", 12)
+        .attr("dy", "0em")
+        .text(interpToShow);
+
+      text
+        .append("tspan")
+        .attr("x", 12)
+        .attr("dy", "1.2em")
+        .text(d.id);
     });
 
     simulation.on("tick", () => {
@@ -576,7 +620,7 @@ export const AtlasVisualization: React.FC = () => {
         (d: AtlasNode) => `translate(${d.x ?? 0},${d.y ?? 0})`,
       );
     });
-  }, [graphData, strengthThreshold, showNodeDetails]);
+  }, [graphData, strengthThreshold, showNodeDetails, nodeInterpretations, selectedNodeId, maxEdgeWeight]);
 
   useEffect(() => {
     loadAtlasFile(selectedAtlas);
@@ -627,10 +671,11 @@ export const AtlasVisualization: React.FC = () => {
       setSliderValue(0);
       setStrengthThreshold(0);
       setMaxEdgeWeight(0);
-      setIframeUrl(null);
-      setIframeTitle(null);
+      setSelectedNodeId(null);
+      setTopActivations([]);
+      setTopActivationError(null);
+      setNodeInterpretations({});
       setStatus(`Loaded local file: ${file.name}`);
-      // 清空 input，方便重复选择同一个文件时也能触发 change
       event.target.value = "";
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -640,13 +685,6 @@ export const AtlasVisualization: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold">Atlas Graph Visualization</h2>
-        <p className="text-sm text-muted-foreground">
-          Explore atlas graphs of features and inspect individual feature
-          details.
-        </p>
-      </div>
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
