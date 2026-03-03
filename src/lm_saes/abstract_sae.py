@@ -35,13 +35,10 @@ from lm_saes.activation_functions import JumpReLU
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
-from lm_saes.utils.distributed import DimMap, distributed_topk, item, mesh_dim_size
+from lm_saes.utils.distributed import DimMap, distributed_topk, is_primary_rank, item, mesh_dim_size
 from lm_saes.utils.distributed.utils import execute_and_broadcast
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
-from lm_saes.utils.misc import (
-    is_primary_rank,
-)
 from lm_saes.utils.tensor_specs import TensorSpecs, apply_token_mask
 from lm_saes.utils.timer import timer
 

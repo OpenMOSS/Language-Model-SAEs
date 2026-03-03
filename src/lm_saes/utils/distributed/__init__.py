@@ -4,6 +4,7 @@ from .utils import (
     all_gather_dict,
     all_gather_list,
     get_process_group,
+    is_primary_rank,
     mesh_dim_rank,
     mesh_dim_size,
     mesh_rank,
@@ -12,6 +13,7 @@ from .utils import (
 
 __all__ = [
     "DimMap",
+    "is_primary_rank",
     "distributed_topk",
     "item",
     "masked_fill",
