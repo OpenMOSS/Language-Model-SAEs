@@ -86,14 +86,16 @@ class HuggingFaceDatasetLoader(BaseActivationProcessor[Dataset, Iterable[dict[st
 
         if self.with_info:
             flattened = map(
-                lambda x: x[1]
-                | {
-                    "meta": {
-                        "context_idx": x[0],
-                        **({"dataset_name": dataset_name} if dataset_name else {}),
-                        **(metadata if metadata else {}),
+                lambda x: (
+                    x[1]
+                    | {
+                        "meta": {
+                            "context_idx": x[0],
+                            **({"dataset_name": dataset_name} if dataset_name else {}),
+                            **(metadata if metadata else {}),
+                        }
                     }
-                },
+                ),
                 enumerate(flattened),
             )
 

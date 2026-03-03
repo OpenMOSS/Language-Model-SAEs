@@ -219,7 +219,13 @@ def get_samples(
 ):
     """Get all samples for a feature."""
     samples = cached_extract_samples(
-        name, sae_series, feature_index, sampling_name, start, None if length is None else start + length, visible_range=visible_range
+        name,
+        sae_series,
+        feature_index,
+        sampling_name,
+        start,
+        None if length is None else start + length,
+        visible_range=visible_range,
     )
     return Response(
         content=msgpack.packb(make_serializable(samples)),

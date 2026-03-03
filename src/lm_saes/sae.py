@@ -11,13 +11,13 @@ from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
+from lm_saes.activation_functions import JumpReLU
 from lm_saes.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
-from lm_saes.activation_functions import JumpReLU
 from lm_saes.utils.distributed import DimMap
 
 

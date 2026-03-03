@@ -6,10 +6,10 @@ from torch import Tensor
 from torch.types import Number
 from transformer_lens import HookedTransformer
 
-from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.optim import compute_grad_norm
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.tensor_specs import apply_token_mask, reduce

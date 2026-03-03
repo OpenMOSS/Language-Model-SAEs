@@ -4,7 +4,6 @@ import einops
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.backend import LanguageModel
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.clt import CrossLayerTranscoder
@@ -12,6 +11,7 @@ from lm_saes.config import BaseConfig
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.sae import SparseAutoEncoder
+from lm_saes.sparse_dictionary import SparseDictionary
 
 
 class DirectLogitAttributorConfig(BaseConfig):
