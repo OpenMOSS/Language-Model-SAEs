@@ -1,3 +1,5 @@
+from collections import defaultdict
+from contextlib import contextmanager
 from typing import Dict, List, Union, Callable, Tuple, ContextManager
 from functools import partial
 import torch
@@ -9,8 +11,6 @@ from lm_saes.config import LanguageModelConfig
 from lm_saes.resource_loaders import load_model
 from lm_saes.lorsa import LowRankSparseAttention
 import re
-
-
 class ReplacementMLP(nn.Module):
     """Wrapper for a TransformerLens MLP layer that adds in extra hooks"""
 
@@ -124,13 +124,20 @@ class ReplacementModel(HookedTransformer):
         cls,
         model_cfg: LanguageModelConfig,
         transcoders: Dict[int, SparseAutoEncoder],
+        lorsas: List[LowRankSparseAttention],
         mlp_input_hook: str = "resid_mid_after_ln",
         mlp_output_hook: str = "hook_mlp_out",
+        attn_input_hook: str = "hook_attn_in",
+        attn_output_hook: str = "hook_attn_out",
         **kwargs,
     ) -> "ReplacementModel":
         
-        if model_cfg.model_name.endswith('.pt'):
-            model_data = torch.load(model_cfg.model_name, map_location='cpu')
+        print("in replacement model:")
+        # f-string debug syntax: use `{var=}` (no spaces before `}`)
+        print(f"{mlp_input_hook=}, {mlp_output_hook=}, {attn_input_hook=}, {attn_output_hook=}")
+        
+        if model_cfg.model_name.endswith(".pt"):
+            model_data = torch.load(model_cfg.model_name, map_location="cpu")
             from .utils.convert_leela_weights import convert_leela_weights
             model = convert_leela_weights(model_data, model_cfg)
         else:
@@ -146,7 +153,13 @@ class ReplacementModel(HookedTransformer):
             )
 
         return cls.from_pretrained_model(
-            model, transcoders, mlp_input_hook, mlp_output_hook
+            model,
+            transcoders,
+            lorsas,
+            mlp_input_hook,
+            mlp_output_hook,
+            attn_input_hook,
+            attn_output_hook,
         )
 
     @classmethod
@@ -182,10 +195,49 @@ class ReplacementModel(HookedTransformer):
             transcoders, lorsas, mlp_input_hook, mlp_output_hook, attn_input_hook, attn_output_hook
         )
         
-        # 确保整个模型在正确的设备上
         replacement_model.to(replacement_model.cfg.device)
         
         return replacement_model
+
+    @classmethod
+    def from_pretrained(  # type: ignore[override]
+        cls,
+        model_cfg: LanguageModelConfig,
+        transcoders: Dict[int, SparseAutoEncoder],
+        lorsas: List[LowRankSparseAttention],
+        mlp_input_hook: str = "mlp.hook_in",
+        mlp_output_hook: str = "mlp.hook_out",
+        attn_input_hook: str = "attn.hook_in",
+        attn_output_hook: str = "attn.hook_out",
+        use_lorsa: bool = True,
+        **kwargs,
+    ) -> "ReplacementModel":
+        """Create a ReplacementModel from the name of HookedTransformer and dict of transcoders
+
+        Args:
+            model_name (str): the name of the pretrained HookedTransformer that this
+                ReplacmentModel will inherit from
+            transcoders: (str): Either a predefined transcoder set name, or a config file
+                defining where to load them from
+            device (torch.device, Optional): the device onto which to load the transcoders
+                and HookedTransformer.
+
+        Returns:
+            ReplacementModel: The loaded ReplacementModel
+        """
+
+        return cls.from_pretrained_and_transcoders(
+            model_cfg,
+            transcoders,
+            lorsas,
+            mlp_input_hook=mlp_input_hook,
+            mlp_output_hook=mlp_output_hook,
+            attn_input_hook=attn_input_hook,
+            attn_output_hook=attn_output_hook,
+            use_lorsa=use_lorsa,
+            **kwargs,
+        )
+
 
     def _configure_replacement_model(
         self,
@@ -221,9 +273,8 @@ class ReplacementModel(HookedTransformer):
 
         for block in self.blocks:
             block.mlp = ReplacementMLP(block.mlp)
-            block.attn = ReplacementAttention(block.mha) # TODO 这里还需要改下原来的Attention模块
+            block.attn = ReplacementAttention(block.mha)
         
-        # 包装LC0模型的policy_head（如果存在）
         if hasattr(self, 'policy_head') and self.policy_head is not None:
             self.policy_head = ReplacementPolicyHead(self.policy_head)
             
@@ -231,16 +282,12 @@ class ReplacementModel(HookedTransformer):
         self.setup()
 
     def _configure_gradient_flow(self):
-        """配置梯度流 - 基于原始replacement_model.py"""
-
-        # 为每一层配置skip connection
         for layer in range(self.cfg.n_layers):
             self._configure_skip_connection(self.blocks[layer], layer)
 
         def stop_gradient(acts, hook):
             return acts.detach()
 
-        # 为LayerNorm添加gradient停止hooks（如果存在）
         for block in self.blocks:
             if hasattr(block.ln1, 'hook_scale'):
                 block.ln1.hook_scale.add_hook(stop_gradient, is_permanent=True)
@@ -255,7 +302,6 @@ class ReplacementModel(HookedTransformer):
             self.policy_head.old_policy_head.mish.hook_weight.add_hook(
                 stop_gradient, is_permanent=True
             )
-        # 用lorsa的话好像不需要搞这个
         # for block in self.blocks:
         #     if hasattr(block, 'hook_attn_pattern'):
         #         block.hook_attn_pattern.add_hook(
@@ -266,7 +312,7 @@ class ReplacementModel(HookedTransformer):
             param.requires_grad = False
         
         for name, bias in self._get_requires_grad_bias_params():
-            bias.requires_grad_(True)  # 推荐用下划线版本，原地修改
+            bias.requires_grad_(True)
 
         def enable_gradient(acts, hook):            
             if acts.is_leaf:
