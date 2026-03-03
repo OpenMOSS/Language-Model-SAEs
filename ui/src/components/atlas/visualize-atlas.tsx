@@ -576,7 +576,7 @@ export const AtlasVisualization: React.FC = () => {
         (d: AtlasNode) => `translate(${d.x ?? 0},${d.y ?? 0})`,
       );
     });
-  }, [graphData, strengthThreshold, showNodeIframe]);
+  }, [graphData, strengthThreshold, showNodeDetails]);
 
   useEffect(() => {
     loadAtlasFile(selectedAtlas);
