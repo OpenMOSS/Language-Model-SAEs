@@ -28,7 +28,7 @@ from transformers import (
 from lm_saes.backend.run_with_cache_until import run_with_cache_until
 from lm_saes.config import BaseModelConfig
 from lm_saes.lorsa import LowRankSparseAttention
-from lm_saes.sae import AbstractSparseAutoEncoder, SparseAutoEncoder
+from lm_saes.sae import SparseAutoEncoder, SparseDictionary
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import ensure_tokenized, item, pad_and_truncate_tokens
@@ -237,13 +237,13 @@ class LanguageModel(ABC):
         pass
 
 
-def hook_in_fn_builder(replacement_module: AbstractSparseAutoEncoder) -> Callable:
+def hook_in_fn_builder(replacement_module: SparseDictionary) -> Callable:
     if isinstance(replacement_module, SparseAutoEncoder):
 
         def hook_in_fn(
             x: torch.Tensor,
             hook: str,
-            replacement_module: AbstractSparseAutoEncoder,
+            replacement_module: SparseDictionary,
             cache_activations: dict[str, torch.Tensor],
         ):
             assert hook in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
@@ -284,11 +284,11 @@ def hook_in_fn_builder(replacement_module: AbstractSparseAutoEncoder) -> Callabl
         raise ValueError(f"Unsupported replacement module type: {type(replacement_module)}")
 
 
-def hook_out_fn_builder(replacement_module: AbstractSparseAutoEncoder) -> Callable:
+def hook_out_fn_builder(replacement_module: SparseDictionary) -> Callable:
     def hook_out_fn(
         x: torch.Tensor,
         hook: str,
-        replacement_module: AbstractSparseAutoEncoder,
+        replacement_module: SparseDictionary,
         cache_activations: dict[str, torch.Tensor],
         update_error_cache: bool = False,
     ):
@@ -588,7 +588,7 @@ class TransformerLensLanguageModel(LanguageModel):
     def attribute(
         self,
         inputs: torch.Tensor | str,
-        replacement_modules: list[AbstractSparseAutoEncoder],
+        replacement_modules: list[SparseDictionary],
         max_n_logits: int = 10,
         desired_logit_prob: float = 0.95,
         batch_size: int = 512,
