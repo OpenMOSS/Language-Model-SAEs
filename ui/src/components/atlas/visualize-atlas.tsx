@@ -541,6 +541,19 @@ export const AtlasVisualization: React.FC = () => {
       })
       .filter((l): l is AtlasLink => l !== null);
 
+    const highlightedNodeIds = new Set<string>();
+    if (selectedNodeId) {
+      highlightedNodeIds.add(selectedNodeId);
+      processedLinks.forEach((link) => {
+        if (link.source.id === selectedNodeId) {
+          highlightedNodeIds.add(link.target.id);
+        }
+        if (link.target.id === selectedNodeId) {
+          highlightedNodeIds.add(link.source.id);
+        }
+      });
+    }
+
     if (simulationRef.current) {
       simulationRef.current.stop();
     }
@@ -646,6 +659,12 @@ export const AtlasVisualization: React.FC = () => {
       )
       .on("click", (_event: any, d: AtlasNode) => {
         showNodeDetails(d.id);
+      })
+      .style("opacity", (d: AtlasNode) => {
+        if (!selectedNodeId) {
+          return 1;
+        }
+        return highlightedNodeIds.has(d.id) ? 1 : 0.1;
       });
 
     node
@@ -670,20 +689,28 @@ export const AtlasVisualization: React.FC = () => {
       const text = d3.select(nodes[i]);
       const interpFromState = nodeInterpretations[d.id];
       const rawInterp = interpFromState ?? d.autointerp ?? "";
-      const interpToShow =
-        typeof rawInterp === "string" && rawInterp.trim().length > 0 ? rawInterp : "[Nul]";
+      const trimmedInterp =
+        typeof rawInterp === "string" ? rawInterp.trim() : "";
 
-      text
-        .append("tspan")
-        .attr("x", 12)
-        .attr("dy", "0em")
-        .text(interpToShow);
+      if (trimmedInterp.length > 0) {
+        text
+          .append("tspan")
+          .attr("x", 12)
+          .attr("dy", "0em")
+          .text(trimmedInterp);
 
-      text
-        .append("tspan")
-        .attr("x", 12)
-        .attr("dy", "1.2em")
-        .text(d.id);
+        text
+          .append("tspan")
+          .attr("x", 12)
+          .attr("dy", "1.2em")
+          .text(d.id);
+      } else {
+        text
+          .append("tspan")
+          .attr("x", 12)
+          .attr("dy", "0em")
+          .text(d.id);
+      }
     });
 
     simulation.on("tick", () => {
