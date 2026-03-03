@@ -10,6 +10,7 @@ import { Loader2, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 import { ChessBoard } from '@/components/chess/chess-board';
 import { CircuitInterpretationCard } from '@/components/circuits/circuit-interpretation-card';
+import { AtlasVisualization } from '@/components/atlas/visualize-atlas';
 
 interface VirtualWeightFeature {
   name: string;
@@ -1918,6 +1919,18 @@ export const GlobalWeightPage: React.FC = () => {
             </CardContent>
           </Card>
         )}
+
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Atlas Visualization</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              以图结构查看 Atlas，并点击节点在右侧打开对应 Feature 的 embed 页面。
+            </p>
+          </CardHeader>
+          <CardContent>
+            <AtlasVisualization />
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

@@ -15,6 +15,7 @@ import torch
 from datasets import Dataset
 from fastapi import FastAPI, Response, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -102,6 +103,11 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 app = FastAPI()
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CIRCUITS_DIR = REPO_ROOT / "circuits"
+if CIRCUITS_DIR.exists():
+    app.mount("/circuits", StaticFiles(directory=str(CIRCUITS_DIR)), name="circuits")
 
 SEARCH_TRACE_OUTPUT_DIR = Path("search_trace_outputs")
 
@@ -4538,26 +4544,17 @@ def _decode_fen(fen: str) -> str:
         decoded = new_decoded
     return decoded
 
-try:
-    from .global_weight import (
-        load_max_activations,
-        tc_global_weight_in,
-        lorsa_global_weight_in,
-        tc_global_weight_out,
-        lorsa_global_weight_out,
-    )
-except ImportError:
-    from global_weight import (
-        load_max_activations,
-        tc_global_weight_in,
-        lorsa_global_weight_in,
-        tc_global_weight_out,
-        lorsa_global_weight_out,
-    )
+from .virtual_weight import (
+    load_max_activations,
+    tc_virtual_weight_in,
+    lorsa_virtual_weight_in,
+    tc_virtual_weight_out,
+    lorsa_virtual_weight_out,
+)
 
 
-@app.get("/global_weight")
-def get_global_weight(
+@app.get("/virtual_weight")
+def get_virtual_weight(
     model_name: str = "lc0/BT4-1024x15x32h",
     sae_combo_id: str | None = None,
     feature_type: str = "tc",  # "tc" or "lorsa"
@@ -4569,7 +4566,7 @@ def get_global_weight(
     features_out_layer_filter: str | None = None,  # layer filter (e.g. "4,5,8-9")
 ):
     """
-    get global weight of features (input and output)
+    get virtual weight of features (input and output)
 
     Args:
         model_name: model name
@@ -4582,7 +4579,7 @@ def get_global_weight(
         features_in_layer_filter: input feature layer filter (e.g. "4,5,8-9" means only include layers 4, 5, 8, 9)
         features_out_layer_filter: output feature layer filter (e.g. "4,5,8-9" means only include layers 4, 5, 8, 9)
     Returns:
-        dictionary containing input and output global weights
+        dictionary containing input and output virtual weights
     """
     def parse_layer_filter(filter_str: str | None) -> list[int] | None:
         """
@@ -4650,7 +4647,7 @@ def get_global_weight(
                 f"cache key: {cache_key}, "
                 f"current server's combo ID: {CURRENT_BT4_SAE_COMBO_ID}"
             )
-            print(f"⚠️ /global_weight request failed: {error_detail}")
+            print(f"⚠️ /virtual_weight request failed: {error_detail}")
             print(f"   original model_name parameter: {model_name!r}")
             print(f"   decoded model_name: {decoded_model_name!r}")
             # print current cache key list to help debug
@@ -4697,11 +4694,11 @@ def get_global_weight(
                 )
             
             # compute TC global weight
-            features_in = tc_global_weight_in(
+            features_in = tc_virtual_weight_in(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
                 tc_acts, lorsa_acts, k=k, layer_filter=features_in_layer_filter_parsed
             )
-            features_out = tc_global_weight_out(
+            features_out = tc_virtual_weight_out(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
                 tc_acts, lorsa_acts, k=k, layer_filter=features_out_layer_filter_parsed
             )
@@ -4713,11 +4710,11 @@ def get_global_weight(
                 )
             
             # compute Lorsa global weight
-            features_in = lorsa_global_weight_in(
+            features_in = lorsa_virtual_weight_in(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
                 tc_acts, lorsa_acts, k=k, layer_filter=features_in_layer_filter_parsed
             )
-            features_out = lorsa_global_weight_out(
+            features_out = lorsa_virtual_weight_out(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
                 tc_acts, lorsa_acts, k=k, layer_filter=features_out_layer_filter_parsed
             )

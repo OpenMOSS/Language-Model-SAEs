@@ -1,4 +1,4 @@
-"""Global weight calculation functions for feature analysis."""
+"""Virtual weight calculation functions for feature analysis."""
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -133,14 +133,14 @@ def construct_topk(feature_list: List[Tuple[str, float]], k: int) -> List[Tuple[
     return sorted_features[:k]
 
 
-def construct_name(global_weights: torch.Tensor, prefix: str, k: int) -> List[Tuple[str, float]]:
-    """construct feature name list"""
-    n_features = global_weights.shape[0]
-    feature_list = [(prefix.format(i), global_weights[i].item()) for i in range(n_features)]
+def construct_name(virtual_weights: torch.Tensor, prefix: str, k: int) -> List[Tuple[str, float]]:
+    """construct feature name list from virtual weights"""
+    n_features = virtual_weights.shape[0]
+    feature_list = [(prefix.format(i), virtual_weights[i].item()) for i in range(n_features)]
     return construct_topk(feature_list, k)
 
 
-def tc_global_weight_in(
+def tc_virtual_weight_in(
     transcoders: Dict[int, SparseAutoEncoder],
     lorsas: List[LowRankSparseAttention],
     layer_idx: int,
@@ -150,9 +150,9 @@ def tc_global_weight_in(
     k: int = 100,
     layer_filter: List[int] | None = None,
 ) -> List[Tuple[str, float]]:
-    """calculate the input global weight of TC feature"""
+    """calculate the input virtual weight of a TC feature"""
     if layer_filter is not None:
-        print(f"🔍 tc_global_weight_in: layer_filter={layer_filter}")
+        print(f"🔍 tc_virtual_weight_in: layer_filter={layer_filter}")
     # get encoder vector
     f_enc = transcoders[layer_idx].W_E[:, feature_idx]  # [d_model]
 
@@ -163,7 +163,7 @@ def tc_global_weight_in(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # debug information
-            print(f"tc_global_weight_in: process TC layer {i} (filter: {layer_filter})")
+            print(f"tc_virtual_weight_in: process TC layer {i} (filter: {layer_filter})")
         # get decoder matrix (with activations weight)
         f_dec = transcoders[i].W_D * tc_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
@@ -176,7 +176,7 @@ def tc_global_weight_in(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # debug information
-            print(f"tc_global_weight_in: process Lorsa layer {i} (filter: {layer_filter})")
+            print(f"tc_virtual_weight_in: process Lorsa layer {i} (filter: {layer_filter})")
         # get decoder matrix (with activations weight)
         f_dec = lorsas[i].W_O * lorsa_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
@@ -187,7 +187,7 @@ def tc_global_weight_in(
     return feature_list_tc + feature_list_lorsa
 
 
-def lorsa_global_weight_in(
+def lorsa_virtual_weight_in(
     transcoders: Dict[int, SparseAutoEncoder],
     lorsas: List[LowRankSparseAttention],
     layer_idx: int,
@@ -197,9 +197,9 @@ def lorsa_global_weight_in(
     k: int = 100,
     layer_filter: List[int] | None = None,
 ) -> List[Tuple[str, float]]:
-    """calculate the input global weight of Lorsa feature"""
+    """calculate the input virtual weight of a Lorsa feature"""
     if layer_filter is not None:
-        print(f"🔍 lorsa_global_weight_in: layer_filter={layer_filter}")
+        print(f"🔍 lorsa_virtual_weight_in: layer_filter={layer_filter}")
     # get encoder vector
     f_enc = lorsas[layer_idx].W_V[feature_idx, :]  # [d_model]
 
@@ -210,7 +210,7 @@ def lorsa_global_weight_in(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # debug information
-            print(f"lorsa_global_weight_in: process TC layer {i} (filter: {layer_filter})")
+            print(f"lorsa_virtual_weight_in: process TC layer {i} (filter: {layer_filter})")
         f_dec = transcoders[i].W_D * tc_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
@@ -222,7 +222,7 @@ def lorsa_global_weight_in(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # debug information
-            print(f"lorsa_global_weight_in: process Lorsa layer {i} (filter: {layer_filter})")
+            print(f"lorsa_virtual_weight_in: process Lorsa layer {i} (filter: {layer_filter})")
         f_dec = lorsas[i].W_O * lorsa_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
@@ -232,7 +232,7 @@ def lorsa_global_weight_in(
     return feature_list_tc + feature_list_lorsa
 
 
-def tc_global_weight_out(
+def tc_virtual_weight_out(
     transcoders: Dict[int, SparseAutoEncoder],
     lorsas: List[LowRankSparseAttention],
     layer_idx: int,
@@ -242,9 +242,9 @@ def tc_global_weight_out(
     k: int = 100,
     layer_filter: List[int] | None = None,
 ) -> List[Tuple[str, float]]:
-    """calculate the output global weight of TC feature"""
+    """calculate the output virtual weight of a TC feature"""
     if layer_filter is not None:
-        print(f"🔍 tc_global_weight_out: layer_filter={layer_filter}")
+        print(f"🔍 tc_virtual_weight_out: layer_filter={layer_filter}")
     # get decoder vector (with activations weight)
     f_dec = transcoders[layer_idx].W_D[feature_idx, :] * tc_activations[layer_idx, feature_idx]  # [d_model]
 
@@ -254,7 +254,7 @@ def tc_global_weight_out(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # debug information
-            print(f"tc_global_weight_out: process TC layer {i} (filter: {layer_filter})")
+            print(f"tc_virtual_weight_out: process TC layer {i} (filter: {layer_filter})")
         f_enc = transcoders[i].W_D * tc_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
@@ -265,7 +265,7 @@ def tc_global_weight_out(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # debug information
-            print(f"tc_global_weight_out: process Lorsa layer {i} (filter: {layer_filter})")
+            print(f"tc_virtual_weight_out: process Lorsa layer {i} (filter: {layer_filter})")
         f_enc = lorsas[i].W_V  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
@@ -275,7 +275,7 @@ def tc_global_weight_out(
     return feature_list_tc + feature_list_lorsa
 
 
-def lorsa_global_weight_out(
+def lorsa_virtual_weight_out(
     transcoders: Dict[int, SparseAutoEncoder],
     lorsas: List[LowRankSparseAttention],
     layer_idx: int,
@@ -285,9 +285,9 @@ def lorsa_global_weight_out(
     k: int = 100,
     layer_filter: List[int] | None = None,
 ) -> List[Tuple[str, float]]:
-    """calculate the output global weight of Lorsa feature"""
+    """calculate the output virtual weight of a Lorsa feature"""
     if layer_filter is not None:
-        print(f"🔍 lorsa_global_weight_out: layer_filter={layer_filter}")
+        print(f"🔍 lorsa_virtual_weight_out: layer_filter={layer_filter}")
     # get decoder vector (with activations weight)
     f_dec = lorsas[layer_idx].W_O[feature_idx, :] * lorsa_activations[layer_idx, feature_idx]  # [d_model]
 
@@ -298,7 +298,7 @@ def lorsa_global_weight_out(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # debug information
-            print(f"lorsa_global_weight_out: process TC layer {i} (filter: {layer_filter})")
+            print(f"lorsa_virtual_weight_out: process TC layer {i} (filter: {layer_filter})")
         f_enc = transcoders[i].W_D * tc_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
@@ -310,7 +310,7 @@ def lorsa_global_weight_out(
         if layer_filter is not None and i not in layer_filter:
             continue
         if layer_filter is not None:  # debug information
-            print(f"lorsa_global_weight_out: process Lorsa layer {i} (filter: {layer_filter})")
+            print(f"lorsa_virtual_weight_out: process Lorsa layer {i} (filter: {layer_filter})")
         f_enc = lorsas[i].W_V  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
         feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
