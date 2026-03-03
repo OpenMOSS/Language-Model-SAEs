@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -6,7 +8,7 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from functools import partial
 from itertools import accumulate
-from typing import Any, Callable, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union, cast
 
 import einops
 import torch
@@ -16,7 +18,9 @@ from huggingface_hub import hf_hub_download
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
+from tqdm import tqdm
 from transformer_lens import HookedTransformer
+from transformer_lens.hook_points import HookPoint
 from transformers import (
     AutoModelForCausalLM,
     AutoProcessor,
@@ -27,12 +31,14 @@ from transformers import (
 
 from lm_saes.backend.run_with_cache_until import run_with_cache_until
 from lm_saes.config import BaseModelConfig
-from lm_saes.lorsa import LowRankSparseAttention
-from lm_saes.sae import SparseAutoEncoder, SparseDictionary
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import ensure_tokenized, item, pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
+
+if TYPE_CHECKING:
+    from lm_saes.lorsa import LowRankSparseAttention
+    from lm_saes.sae import SparseDictionary
 
 
 def to_tokens(tokenizer, text, max_length, device="cpu", prepend_bos=True):
@@ -238,19 +244,23 @@ class LanguageModel(ABC):
 
 
 def hook_in_fn_builder(replacement_module: SparseDictionary) -> Callable:
+    from lm_saes.lorsa import LowRankSparseAttention
+    from lm_saes.sae import SparseAutoEncoder
+
     if isinstance(replacement_module, SparseAutoEncoder):
 
         def hook_in_fn(
             x: torch.Tensor,
-            hook: str,
+            hook: HookPoint,
             replacement_module: SparseDictionary,
             cache_activations: dict[str, torch.Tensor],
         ):
-            assert hook in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
-            cache_activations[hook + ".x"] = x
-            cache_activations[hook + ".feature_acts.up"] = replacement_module.encode(x)
-            cache_activations[hook + ".feature_acts.down"] = cache_activations[hook + ".feature_acts.up"].detach()
-            cache_activations[hook + ".feature_acts.down"].requires_grad_(True)
+            assert hook.name in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
+            cache_activations[hook.name + ".x"] = x
+            cache_activations[hook.name + ".feature_acts.up"] = replacement_module.encode(x)
+            cache_activations[hook.name + ".feature_acts.down"] = (
+                cache_activations[hook.name + ".feature_acts.up"].detach().requires_grad_(True)
+            )
             return x.detach()
 
         return hook_in_fn
@@ -259,22 +269,24 @@ def hook_in_fn_builder(replacement_module: SparseDictionary) -> Callable:
 
         def hook_in_fn(
             x: torch.Tensor,
-            hook: str,
+            hook: HookPoint,
             replacement_module: LowRankSparseAttention,
             cache_activations: dict[str, torch.Tensor],
         ):
-            assert hook in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
-            cache_activations[hook + ".x"] = x
+            assert hook.name in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
+            cache_activations[hook.name + ".x"] = x
             encode_result = replacement_module.encode(
                 x,
                 return_hidden_pre=False,
                 return_attention_pattern=True,
                 return_attention_score=True,
             )
-            cache_activations[hook + ".attn_pattern"] = encode_result[1].detach()
-            cache_activations[hook + ".feature_acts.up"] = encode_result[0]  # batch, seq_len, d_sae
-            cache_activations[hook + ".feature_acts.down"] = cache_activations[hook + ".feature_acts.up"].detach()
-            cache_activations[hook + ".feature_acts.down"].requires_grad_(True)
+            cache_activations[hook.name + ".attn_pattern"] = encode_result[1].detach()
+            cache_activations[hook.name + ".feature_acts.up"] = encode_result[0]  # batch, seq_len, d_sae
+            cache_activations[hook.name + ".feature_acts.down"] = (
+                cache_activations[hook.name + ".feature_acts.up"].detach().requires_grad_(True)
+            )
+
             return x.detach()
 
         return hook_in_fn
@@ -287,25 +299,24 @@ def hook_in_fn_builder(replacement_module: SparseDictionary) -> Callable:
 def hook_out_fn_builder(replacement_module: SparseDictionary) -> Callable:
     def hook_out_fn(
         x: torch.Tensor,
-        hook: str,
+        hook: HookPoint,
         replacement_module: SparseDictionary,
         cache_activations: dict[str, torch.Tensor],
         update_error_cache: bool = False,
     ):
-        assert hook in replacement_module.cfg.hooks_out, "Hook point must be in hook points out"
+        assert hook.name in replacement_module.cfg.hooks_out, "Hook point must be in hook points out"
         hook_in = replacement_module.cfg.hooks_in[0]  # TODO: handle multiple hook points in for CLT
         reconstructed = replacement_module.decode(cache_activations[hook_in + ".feature_acts.down"])
-        cache_activations[hook + ".reconstructed"] = reconstructed
-        assert hook + ".error" in cache_activations or update_error_cache, (
+        cache_activations[hook.name + ".reconstructed"] = reconstructed
+        assert hook.name + ".error" in cache_activations or update_error_cache, (
             "There must be an error cache for the hook point"
         )
         if update_error_cache:
-            error = x - reconstructed
-            cache_activations[hook + ".error"] = error
+            error = (x - reconstructed).detach().requires_grad_(True)
+            cache_activations[hook.name + ".error"] = error
         else:
-            error = cache_activations[hook + ".error"]
-        error = error.detach()
-        error.requires_grad_(True)
+            error = cache_activations[hook.name + ".error"]
+
         return reconstructed + error
 
     return hook_out_fn
@@ -326,6 +337,23 @@ class EdgeMatrix(torch.Tensor):
     n_active_features: int
     n_error: int
     max_features: int
+
+    _wrap_enabled: bool = True
+
+    @classmethod
+    @contextmanager
+    def no_wrap(cls):
+        """Context manager that disables automatic wrapping in ``__torch_dispatch__``.
+
+        Any torch operation on an ``EdgeMatrix`` inside this context will return
+        a plain ``torch.Tensor`` instead of being re-wrapped.
+        """
+        prev = cls._wrap_enabled
+        cls._wrap_enabled = False
+        try:
+            yield
+        finally:
+            cls._wrap_enabled = prev
 
     @classmethod
     def _wrap(
@@ -390,6 +418,9 @@ class EdgeMatrix(torch.Tensor):
             return x.matrix if isinstance(x, EdgeMatrix) else x
 
         out = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
+
+        if not cls._wrap_enabled:
+            return out
 
         def wrap(x: Any) -> Any:
             if isinstance(x, torch.Tensor) and not isinstance(x, EdgeMatrix) and source is not None:
@@ -509,25 +540,36 @@ def update_edge_matrix_rows(edge_matrix: EdgeMatrix) -> None:
 
     for feature_acts_down in _get_cache_activations(edge_matrix.cache_activations, ".feature_acts.down"):
         assert feature_acts_down.grad is not None, "feature_acts_down must have a gradient"
-        attribution = feature_acts_down[:cur_batch_size] * feature_acts_down.grad[:cur_batch_size]  # [b, pos, d_sae]
-        active_mask = feature_acts_down[0] > 0  # [pos, d_sae]
-        pos_ids, feat_ids = active_mask.nonzero(as_tuple=True)
-        n_active = pos_ids.shape[0]
-        edge_matrix[:, column_start : column_start + n_active] = (
-            attribution[:, pos_ids, feat_ids].detach().cpu()  # [b, n_active]
-        )
+        if feature_acts_down.grad is not None:
+            attribution = (
+                feature_acts_down[:cur_batch_size] * feature_acts_down.grad[:cur_batch_size]
+            )  # [b, pos, d_sae]
+            active_mask = feature_acts_down[0] > 0  # [pos, d_sae]
+            pos_ids, feat_ids = active_mask.nonzero(as_tuple=True)
+            n_active = pos_ids.shape[0]
+            edge_matrix[:, column_start : column_start + n_active] = (
+                attribution[:, pos_ids, feat_ids].detach().cpu()  # [b, n_active]
+            )
+        else:
+            n_active = item((feature_acts_down[0] > 0).sum())
+            edge_matrix[:, column_start : column_start + n_active] = (
+                torch.zeros_like(edge_matrix[:, column_start : column_start + n_active]).detach().cpu()
+            )
         column_start += n_active
 
     for error in _get_cache_activations(edge_matrix.cache_activations, ".error"):
-        assert error.grad is not None, "error must have a gradient"
         edge_matrix[:, column_start : column_start + error.shape[1]] = (
-            einops.einsum(
-                error[:cur_batch_size],
-                error.grad[:cur_batch_size],
-                "b pos ..., b pos ... -> b pos",
+            (
+                einops.einsum(
+                    error[:cur_batch_size],
+                    error.grad[:cur_batch_size],
+                    "b pos ..., b pos ... -> b pos",
+                )
+                .detach()
+                .cpu()
             )
-            .detach()
-            .cpu()
+            if error.grad is not None
+            else torch.zeros_like(edge_matrix[:, column_start : column_start + error.shape[1]]).detach().cpu()
         )
         column_start += error.shape[1]
 
@@ -663,17 +705,20 @@ class TransformerLensLanguageModel(LanguageModel):
         def get_normalize_edge_matrix(matrix: torch.Tensor):
             return torch.abs(matrix) / torch.abs(matrix).sum(dim=1, keepdim=True).clamp(min=1e-8)
 
-        features_attributions = einops.einsum(
-            get_normalize_edge_matrix(
-                edge_matrix[
-                    : edge_matrix.n_logits, edge_matrix.n_tokens : edge_matrix.n_tokens + edge_matrix.n_active_features
-                ]
-            ),
-            top_p,
-            "logits features, logits -> features",
-        )
+        with EdgeMatrix.no_wrap():
+            features_attributions = einops.einsum(
+                get_normalize_edge_matrix(
+                    edge_matrix[
+                        : edge_matrix.n_logits,
+                        edge_matrix.n_tokens : edge_matrix.n_tokens + edge_matrix.n_active_features,
+                    ]
+                ).to(self.device),
+                top_p,
+                "logits features, logits -> features",
+            )
         visited_features: torch.Tensor | None = None
-        for i in range(0, edge_matrix.max_features, batch_size):
+
+        for i in tqdm(range(0, edge_matrix.max_features, batch_size)):
             cur_batch = min(batch_size, edge_matrix.max_features - i)
             if visited_features is not None:
                 features_attributions[visited_features] = float("-inf")
@@ -689,17 +734,18 @@ class TransformerLensLanguageModel(LanguageModel):
             visited_features = (
                 batch_feature_ids if visited_features is None else torch.cat([visited_features, batch_feature_ids])
             )
-            features_attributions += einops.einsum(
-                get_normalize_edge_matrix(edge_matrix[: edge_matrix.n_logits, batch_column_ids]),
-                get_normalize_edge_matrix(
-                    edge_matrix[
-                        i + edge_matrix.n_logits : i + cur_batch + edge_matrix.n_logits,
-                        edge_matrix.n_tokens : edge_matrix.n_tokens + edge_matrix.n_active_features,
-                    ]
-                ),
-                top_p,
-                "logits batch_features, batch_features features, logits -> features",
-            )
+            with EdgeMatrix.no_wrap():
+                features_attributions += einops.einsum(
+                    get_normalize_edge_matrix(edge_matrix[: edge_matrix.n_logits, batch_column_ids]).to(self.device),
+                    get_normalize_edge_matrix(
+                        edge_matrix[
+                            i + edge_matrix.n_logits : i + cur_batch + edge_matrix.n_logits,
+                            edge_matrix.n_tokens : edge_matrix.n_tokens + edge_matrix.n_active_features,
+                        ]
+                    ).to(self.device),
+                    top_p,
+                    "logits batch_features, batch_features features, logits -> features",
+                )
 
         return edge_matrix
 
