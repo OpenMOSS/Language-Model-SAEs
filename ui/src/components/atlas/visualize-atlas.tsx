@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
 import { ChessBoard } from "@/components/chess/chess-board";
+import { FeatureSchema } from "@/types/feature";
 
 interface RawAtlasNodeNew {
   node_id: string;
@@ -173,11 +174,13 @@ export const AtlasVisualization: React.FC = () => {
           stopPaths: ["sample_groups.samples.context"],
         }) as any;
 
-        const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
+        const feature = FeatureSchema.parse(camelData);
         const interpretationText: string =
-          typeof camelData?.interpretation?.text === "string"
-            ? camelData.interpretation.text
+          typeof feature.interpretation?.text === "string"
+            ? feature.interpretation.text
             : "";
+
+        const sampleGroups = feature.sampleGroups || [];
         const allSamples: any[] = [];
 
         for (const group of sampleGroups) {
@@ -498,7 +501,7 @@ export const AtlasVisualization: React.FC = () => {
         const maxW = maxEdgeWeight || absW || 1;
         const norm = Math.min(1, absW / maxW);
         const minWidth = 0.8;
-        const maxWidth = 4.0; // 上限，避免太粗挡住其他边
+        const maxWidth = 4.0;
         return minWidth + norm * (maxWidth - minWidth);
       });
 

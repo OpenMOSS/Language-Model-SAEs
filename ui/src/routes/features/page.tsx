@@ -19,7 +19,16 @@ import { useSearchParams } from "react-router-dom";
 import { useAsyncFn, useMount, useDebounce } from "react-use";
 import { z } from "zod";
 
-const FeatureCard = lazy(() => import("@/components/feature/feature-card").then(module => ({ default: module.FeatureCard })));
+const FeatureCard = lazy(() =>
+  import("@/components/feature/feature-card").then((module) => ({
+    default: module.FeatureCard,
+  })),
+);
+const FeatureInterpretation = lazy(() =>
+  import("@/components/feature/interpret").then((module) => ({
+    default: module.FeatureInterpretation,
+  })),
+);
 import { ChessBoard } from "@/components/chess/chess-board";
 import { CustomFenInput } from "@/components/feature/custom-fen-input";
 
@@ -60,7 +69,6 @@ export const FeaturesPage = () => {
   const [inputValue, setInputValue] = useState<string>("0");
   const [loadingRandomFeature, setLoadingRandomFeature] = useState<boolean>(false);
   const [selectedSubsample, setSelectedSubsample] = useState<string | "all">("all");
-  const [interpretationDraft, setInterpretationDraft] = useState<string>("");
 
   // Debounce the input value to avoid excessive updates
   useDebounce(
@@ -139,19 +147,6 @@ export const FeaturesPage = () => {
       }
     }
   );
-
-  useEffect(() => {
-    if (currentFeature) {
-      const text: string =
-        typeof currentFeature.interpretation?.text === "string"
-          ? currentFeature.interpretation.text
-          : "";
-      setInterpretationDraft(text);
-    } else {
-      setInterpretationDraft("");
-    }
-  }, [currentFeature?.featureIndex, currentFeature?.dictionaryName]);
-
 
   useMount(async () => {
     await fetchDictionaries();
@@ -330,28 +325,17 @@ export const FeaturesPage = () => {
           />
         </div>
 
-        {/* Interpretation editor for current feature */}
+        {/* Interpretation editor for current feature (with backend submit) */}
         {currentFeature && (
           <div className="container w-full max-w-6xl mx-auto mb-8">
             <Card>
               <CardHeader>
-                <CardTitle>Feature Interpretation</CardTitle>
+                <CardTitle>Interpretation</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm font-medium">
-                    Feature #{featureIndex} Interpretation
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Characters: {interpretationDraft.length}
-                  </span>
-                </div>
-                <textarea
-                  value={interpretationDraft}
-                  onChange={(e) => setInterpretationDraft(e.target.value)}
-                  className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 font-mono text-sm bg-white"
-                  placeholder="Enter or edit interpretation for this feature..."
-                />
+                <Suspense fallback={<div>Loading Interpretation...</div>}>
+                  <FeatureInterpretation feature={currentFeature} />
+                </Suspense>
               </CardContent>
             </Card>
           </div>
