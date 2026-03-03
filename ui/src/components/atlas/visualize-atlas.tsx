@@ -101,6 +101,20 @@ export const AtlasVisualization: React.FC = () => {
   const [loadingTopActivations, setLoadingTopActivations] = useState<boolean>(false);
   const [topActivationError, setTopActivationError] = useState<string | null>(null);
   const [nodeInterpretations, setNodeInterpretations] = useState<Record<string, string>>({});
+  const [refreshingInterpretations, setRefreshingInterpretations] = useState<boolean>(false);
+
+  const buildDictionaryName = (layerIdx: number, isLorsa: boolean): string => {
+    const LORSA_ANALYSIS_NAME = "BT4_lorsa_k30_e16";
+    const TC_ANALYSIS_NAME = "BT4_tc_k30_e16";
+
+    if (isLorsa) {
+      const suffix = LORSA_ANALYSIS_NAME.replace("BT4_lorsa", "").replace(/^_/, "");
+      return suffix ? `BT4_lorsa_L${layerIdx}A_${suffix}` : `BT4_lorsa_L${layerIdx}A`;
+    }
+
+    const suffix = TC_ANALYSIS_NAME.replace("BT4_tc", "").replace(/^_/, "");
+    return suffix ? `BT4_tc_L${layerIdx}M_${suffix}` : `BT4_tc_L${layerIdx}M`;
+  };
 
   const fetchTopActivations = useCallback(
     async (nodeId: string): Promise<void> => {
@@ -123,24 +137,7 @@ export const AtlasVisualization: React.FC = () => {
       const layerIdx = parsed.layer;
       const featureIndex = parsed.feature;
       const isLorsa = parsed.type === "lorsa";
-
-      // For BT4 chess SAEs, build dictionary name from analysis_name-style suffix.
-      // Default to k30_e16 combo, matching current global-weight experiments.
-      const LORSA_ANALYSIS_NAME = "BT4_lorsa_k30_e16";
-      const TC_ANALYSIS_NAME = "BT4_tc_k30_e16";
-
-      let dictionary: string;
-      if (isLorsa) {
-        const suffix = LORSA_ANALYSIS_NAME.replace("BT4_lorsa", "").replace(/^_/, "");
-        dictionary = suffix
-          ? `BT4_lorsa_L${layerIdx}A_${suffix}`
-          : `BT4_lorsa_L${layerIdx}A`;
-      } else {
-        const suffix = TC_ANALYSIS_NAME.replace("BT4_tc", "").replace(/^_/, "");
-        dictionary = suffix
-          ? `BT4_tc_L${layerIdx}M_${suffix}`
-          : `BT4_tc_L${layerIdx}M`;
-      }
+      const dictionary = buildDictionaryName(layerIdx, isLorsa);
 
       setLoadingTopActivations(true);
       setTopActivationError(null);
@@ -347,6 +344,93 @@ export const AtlasVisualization: React.FC = () => {
       setStatus(`Error: ${message}`);
     }
   }, []);
+
+  const refreshAllInterpretations = useCallback(async (): Promise<void> => {
+    if (!graphData) return;
+
+    const backendBase = import.meta.env.VITE_BACKEND_URL ?? "";
+    if (!backendBase) {
+      // eslint-disable-next-line no-console
+      console.warn("VITE_BACKEND_URL is not set; cannot refresh interpretations.");
+      return;
+    }
+
+    setRefreshingInterpretations(true);
+    try {
+      const updates: Record<string, string> = {};
+
+      for (const rawNode of graphData.nodes) {
+        let nodeId: string;
+        if ("node_id" in rawNode) {
+          nodeId = rawNode.node_id;
+        } else {
+          const key = Object.keys(rawNode)[0];
+          nodeId = key;
+        }
+
+        const parsed = parseNodeId(nodeId);
+        if (!parsed) {
+          continue;
+        }
+
+        const layerIdx = parsed.layer;
+        const featureIndex = parsed.feature;
+        const isLorsa = parsed.type === "lorsa";
+        const dictionary = buildDictionaryName(layerIdx, isLorsa);
+
+        try {
+          const response = await fetch(
+            `${backendBase}/dictionaries/${encodeURIComponent(
+              dictionary,
+            )}/features/${featureIndex}`,
+            {
+              method: "GET",
+              headers: {
+                Accept: "application/x-msgpack",
+              },
+            },
+          );
+
+          if (!response.ok) {
+            continue;
+          }
+
+          const arrayBuffer = await response.arrayBuffer();
+          const msgpackModule = await import("@msgpack/msgpack");
+          const decoded = msgpackModule.decode(new Uint8Array(arrayBuffer)) as any;
+
+          const camelcaseKeysModule = await import("camelcase-keys");
+          const camelcaseKeys = camelcaseKeysModule.default;
+
+          const camelData = camelcaseKeys(decoded as Record<string, unknown>, {
+            deep: true,
+            stopPaths: ["sample_groups.samples.context"],
+          }) as any;
+
+          const feature = FeatureSchema.parse(camelData);
+          const interpretationText: string =
+            typeof feature.interpretation?.text === "string"
+              ? feature.interpretation.text
+              : "";
+
+          if (interpretationText && interpretationText.trim().length > 0) {
+            updates[nodeId] = interpretationText;
+          }
+        } catch {
+          // ignore errors for individual nodes
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        setNodeInterpretations((prev) => ({
+          ...prev,
+          ...updates,
+        }));
+      }
+    } finally {
+      setRefreshingInterpretations(false);
+    }
+  }, [graphData]);
 
   const visualizeGraph = useCallback((): void => {
     if (!graphData || !graphData.nodes || !graphData.links || !svgRef.current) {
@@ -742,6 +826,14 @@ export const AtlasVisualization: React.FC = () => {
             className="px-3 py-2 text-sm rounded bg-primary text-primary-foreground hover:opacity-90"
           >
             Apply Filter
+          </button>
+          <button
+            type="button"
+            onClick={refreshAllInterpretations}
+            disabled={refreshingInterpretations || !graphData}
+            className="px-3 py-2 text-sm rounded border border-muted text-muted-foreground hover:bg-muted disabled:opacity-50"
+          >
+            {refreshingInterpretations ? "Refreshing Interpretations..." : "Refresh Interpretations"}
           </button>
         </div>
       </div>
