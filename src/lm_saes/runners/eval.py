@@ -8,7 +8,6 @@ import wandb
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.circuit.replacement_model import ReplacementModel
@@ -16,6 +15,7 @@ from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.crosscoder import CrossCoder
 from lm_saes.evaluator import EvalConfig, Evaluator, GraphEval, GraphEvalConfig
 from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.trainer import WandbConfig
 from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging

@@ -10,11 +10,11 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
-from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseConfig
 from lm_saes.crosscoder import CrossCoder
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap, masked_fill, to_local
 from lm_saes.utils.distributed.ops import item

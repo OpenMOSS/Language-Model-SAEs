@@ -1,5 +1,3 @@
-from .sparse_dictionary import SparseDictionary, SparseDictionaryConfig
-from .sparse_dictionary import SparseDictionaryConfig as BaseSAEConfig  # backward compat
 from .activation import (
     ActivationFactory,
     ActivationFactoryActivationsSource,
@@ -17,7 +15,7 @@ from .analysis import (
     FeatureAnalyzer,
     FeatureAnalyzerConfig,
 )
-from .backend.language_model import LanguageModelConfig, TransformerLensLanguageModel, HuggingFaceLanguageModel
+from .backend.language_model import HuggingFaceLanguageModel, LanguageModelConfig, TransformerLensLanguageModel
 from .circuit import ReplacementModel, attribute
 from .clt import CLTConfig, CrossLayerTranscoder
 from .config import DatasetConfig
@@ -63,6 +61,8 @@ from .runners import (
     train_sae,
 )
 from .sae import SAEConfig, SparseAutoEncoder
+from .sparse_dictionary import SparseDictionary, SparseDictionaryConfig
+from .sparse_dictionary import SparseDictionaryConfig as BaseSAEConfig  # backward compat
 from .trainer import Trainer, TrainerConfig, WandbConfig
 from .utils.logging import setup_logging
 

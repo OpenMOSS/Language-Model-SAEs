@@ -30,9 +30,9 @@ from einops import repeat
 from torch.distributed.device_mesh import DeviceMesh
 from tqdm import tqdm
 
-from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger

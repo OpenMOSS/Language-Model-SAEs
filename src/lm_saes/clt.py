@@ -21,13 +21,13 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
+from lm_saes.activation_functions import JumpReLU
 from lm_saes.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
-from lm_saes.activation_functions import JumpReLU
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger

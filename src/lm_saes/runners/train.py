@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.clt import CLTConfig
@@ -21,6 +20,7 @@ from lm_saes.initializer import Initializer, InitializerConfig
 from lm_saes.lorsa import LorsaConfig
 from lm_saes.molt import MOLTConfig
 from lm_saes.resource_loaders import load_dataset, load_model
+from lm_saes.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
 from lm_saes.trainer import Trainer, TrainerConfig, WandbConfig
 from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging

@@ -154,7 +154,5 @@ def test_tiny_training_metrics_regression(tmp_path: Path, monkeypatch: pytest.Mo
                 )
 
     assert not failures, (
-        "Tiny SAE training regression detected metric drift.\n"
-        f"result_path: {result_path}\n"
-        + "\n".join(failures)
+        f"Tiny SAE training regression detected metric drift.\nresult_path: {result_path}\n" + "\n".join(failures)
     )
