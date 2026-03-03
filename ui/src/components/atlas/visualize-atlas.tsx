@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
+import { Link } from "react-router-dom";
 import { ChessBoard } from "@/components/chess/chess-board";
 import { FeatureSchema } from "@/types/feature";
 
@@ -860,17 +861,42 @@ export const AtlasVisualization: React.FC = () => {
               <h3 className="text-base font-semibold">
                 {selectedNodeId ? `Feature: ${selectedNodeId}` : "Feature Details"}
               </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedNodeId(null);
-                  setTopActivations([]);
-                  setTopActivationError(null);
-                }}
-                className="text-xs text-muted-foreground hover:underline"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedNodeId &&
+                  (() => {
+                    const parsed = parseNodeId(selectedNodeId);
+                    if (!parsed) {
+                      return null;
+                    }
+                    const layerIdx = parsed.layer;
+                    const featureIndex = parsed.feature;
+                    const isLorsa = parsed.type === "lorsa";
+                    const dictionary = buildDictionaryName(layerIdx, isLorsa);
+                    const nodeTypeDisplay = isLorsa ? "LORSA" : "SAE";
+                    return (
+                      <Link
+                        to={`/features?dictionary=${encodeURIComponent(
+                          dictionary,
+                        )}&featureIndex=${featureIndex}`}
+                        className="inline-flex items-center px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90"
+                        title={`Go to L${layerIdx} ${nodeTypeDisplay} Feature #${featureIndex}`}
+                      >
+                        View in Feature Page
+                      </Link>
+                    );
+                  })()}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedNodeId(null);
+                    setTopActivations([]);
+                    setTopActivationError(null);
+                  }}
+                  className="text-xs text-muted-foreground hover:underline"
+                >
+                  Close
+                </button>
+              </div>
             </div>
             {loadingTopActivations ? (
               <div className="flex items-center justify-center py-4">
