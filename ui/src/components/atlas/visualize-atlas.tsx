@@ -845,6 +845,24 @@ export const AtlasVisualization: React.FC = () => {
             onChange={handleSliderChange}
             className="w-[300px]"
           />
+          <input
+            type="number"
+            min={0}
+            max={maxEdgeWeight || 0}
+            value={Number.isFinite(sliderValue) ? sliderValue : 0}
+            step={0.1}
+            onChange={(event) => {
+              const raw = Number.parseFloat(event.target.value);
+              const max = maxEdgeWeight || 0;
+              if (!Number.isFinite(raw)) {
+                setSliderValue(0);
+                return;
+              }
+              const clamped = Math.max(0, Math.min(raw, max));
+              setSliderValue(clamped);
+            }}
+            className="w-20 px-2 py-1 border rounded text-sm"
+          />
           <span className="text-sm tabular-nums text-muted-foreground min-w-[60px]">
             {sliderValue.toFixed(1)}
           </span>
