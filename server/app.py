@@ -12,6 +12,11 @@ import msgpack
 import numpy as np
 import plotly.graph_objects as go
 import torch
+try:
+    import umap  # type: ignore
+except ImportError:
+    umap = None
+    print("WARNING: umap-learn not found, UMAP endpoints will be disabled")
 from datasets import Dataset
 from fastapi import FastAPI, Response, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse, FileResponse
@@ -185,6 +190,48 @@ def get_sae(name: str) -> SparseAutoEncoder:
     sae = SparseAutoEncoder.from_config(cfg)
     sae.eval()
     return sae
+
+
+@lru_cache(maxsize=16)
+def get_sae_decoder_weights_umap(name: str) -> dict[str, Any]:
+    """Compute and cache a 2D UMAP embedding over SAE decoder weights.
+
+    Args:
+        name: Name of the SAE/dictionary.
+
+    Returns:
+        A dictionary with keys:
+            - ``embedding``: np.ndarray of shape [n_features, 2]
+            - ``feature_ids``: list of feature indices [0, 1, ..., n_features-1]
+
+    Raises:
+        RuntimeError: If ``umap-learn`` is not installed.
+        AssertionError: If the SAE cannot be loaded.
+    """
+    if umap is None:
+        raise RuntimeError("umap-learn is not installed; please install it to use the UMAP endpoint.")
+
+    sae = get_sae(name)
+    decoder_weights = sae.W_D
+
+    # Handle potential distributed tensor case.
+    if isinstance(decoder_weights, torch.distributed.tensor.DTensor):
+        decoder_weights_local = decoder_weights.to_local()
+    else:
+        decoder_weights_local = decoder_weights
+
+    decoder_weights_np = decoder_weights_local.detach().cpu().numpy()
+
+    reducer = umap.UMAP(
+        n_neighbors=30,
+        min_dist=0.0,
+        metric="cosine",
+        random_state=42,
+    )
+    embedding = reducer.fit_transform(decoder_weights_np)
+
+    feature_ids: list[int] = list(range(decoder_weights_np.shape[0]))
+    return {"embedding": embedding, "feature_ids": feature_ids}
 
 
 ###############################################################################
@@ -541,6 +588,44 @@ async def oom_error_handler(request, exc):
 @app.get("/dictionaries")
 def list_dictionaries():
     return client.list_saes(sae_series=sae_series, has_analyses=True)
+
+
+@app.get("/dictionaries/{name}/decoder-weights-umap")
+def get_dictionary_decoder_weights_umap(name: str) -> dict[str, Any]:
+    """Get a 2D UMAP embedding over SAE decoder weights for a dictionary.
+
+    This wraps :func:`get_sae_decoder_weights_umap` and converts the result
+    into JSON-serializable types for the frontend.
+
+    Args:
+        name: Name of the SAE / dictionary.
+
+    Returns:
+        A dictionary with keys:
+
+        - ``embedding``: List of [x, y] coordinates for each feature.
+        - ``feature_ids``: List of feature indices aligned with ``embedding``.
+    """
+    try:
+        umap_data = get_sae_decoder_weights_umap(name)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        )
+
+    embedding = umap_data.get("embedding")
+    feature_ids = umap_data.get("feature_ids")
+
+    if isinstance(embedding, np.ndarray):
+        embedding_serializable = embedding.tolist()
+    else:
+        embedding_serializable = embedding
+
+    return {
+        "embedding": embedding_serializable,
+        "feature_ids": feature_ids,
+    }
 
 
 ###############################################################################

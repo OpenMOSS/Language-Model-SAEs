@@ -256,8 +256,8 @@ class ForwardOnlyReplacementModel(ReplacementModel):
             transcoder_decoders -= transcoder_decoders.mean(dim=1, keepdim=True)
 
         # DEBUGGING
-        print(f'{interested_features}')
-        print(f'{lorsa_encoders.shape = }, {lorsa_decoders.shape = }, {transcoder_encoders.shape = }, {transcoder_decoders.shape = }')
+        # print(f'{interested_features}')
+        # print(f'{lorsa_encoders.shape = }, {lorsa_decoders.shape = }, {transcoder_encoders.shape = }, {transcoder_decoders.shape = }')
         
         interested_encoders = torch.where(
             interested_features.is_lorsa[:, None],

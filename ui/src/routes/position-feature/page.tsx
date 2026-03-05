@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { AppNavbar } from "@/components/app/navbar";
 import { PosFeatureCard } from "@/components/feature/pos-feature-card";
+import { PositionFeatureUmapCard } from "@/components/feature/position-umap-card";
 import { SaeComboLoader } from "@/components/common/SaeComboLoader";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -325,11 +326,25 @@ export const PositionFeaturePage = () => {
             <PosFeatureCard
               fen={fen}
               layer={layer}
-              positions={positionsInput}  // Pass the raw string so the component can parse range syntax internally
+              positions={positionsInput} // Pass the raw string so the component can parse range syntax internally
               componentType={componentType}
               modelName="lc0/BT4-1024x15x32h"
               saeComboId={saeComboId}
               onFeatureSelect={setSelectedFeature}
+            />
+          </div>
+        )}
+
+        {/* Position Feature UMAP Card */}
+        {fen && positions.length > 0 && (
+          <div className="mb-6">
+            <PositionFeatureUmapCard
+              fen={fen}
+              layer={layer}
+              componentType={componentType}
+              position={positions[0]}
+              modelName="lc0/BT4-1024x15x32h"
+              saeComboId={saeComboId}
             />
           </div>
         )}
