@@ -1239,7 +1239,6 @@ def analyze_fen_for_feature(name: str, feature_index: int, request: dict):
                         f"Please check whether the FEN string is valid. FEN: {fen}"
                     ),
                 )
-            print(f'{cache.keys() = }')
             try:
                 all_hooks = list(cache.keys())
             except Exception as e:
