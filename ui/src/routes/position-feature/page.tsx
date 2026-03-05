@@ -12,9 +12,9 @@ import { ChessBoard } from "@/components/chess/chess-board";
 const LOCAL_STORAGE_KEY = "bt4_sae_combo_id";
 
 export const PositionFeaturePage = () => {
-  const [fen, setFen] = useState<string>("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-  const [layer, setLayer] = useState<number>(0);
-  const [positionsInput, setPositionsInput] = useState<string>("0");
+  const [fen, setFen] = useState<string>("2k5/4Q3/3P4/8/6p1/4p3/q1pbK3/1R6 b - - 0 32");
+  const [layer, setLayer] = useState<number>(2);
+  const [positionsInput, setPositionsInput] = useState<string>("48");
   const [positions, setPositions] = useState<number[]>([0]);
   const [componentType, setComponentType] = useState<"attn" | "mlp">("attn");
   const [saeComboId, setSaeComboId] = useState<string | undefined>(undefined);
