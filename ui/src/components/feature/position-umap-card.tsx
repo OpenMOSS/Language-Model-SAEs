@@ -467,7 +467,7 @@ export const PositionFeatureUmapCard = ({
           )}
 
           {umapPoints.length > 0 && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="space-y-6">
               <div>
                 <div className="mb-2 text-sm text-gray-600">
                   UMAP over all SAE decoder features (blue dots are features activated at position {position}, gray are
@@ -495,7 +495,7 @@ export const PositionFeatureUmapCard = ({
                         fill={fill}
                         stroke={stroke}
                         strokeWidth={strokeWidth}
-                        className="cursor-pointer transition-transform hover:scale-110"
+                        className="cursor-pointer"
                         onClick={() => {
                           setSelectedPoint(p);
                           void loadFeatureDetail(p.featureIndex);
@@ -545,7 +545,7 @@ export const PositionFeatureUmapCard = ({
                     </div>
                   ) : (
                     <div className="text-sm text-gray-500">
-                      Click any point in the UMAP on the left to view its top activation and interpretation here.
+                      Click any point in the UMAP above to view its top activation and interpretation here.
                     </div>
                   )}
                 </div>
@@ -557,76 +557,84 @@ export const PositionFeatureUmapCard = ({
                   </div>
                 )}
 
-                {topActivation && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-sm">
-                        Top activation sample — Feature #{selectedPoint?.featureIndex}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-xs text-gray-600 mb-2">
-                        Maximum activation value: {topActivation.activationStrength.toFixed(3)}
-                      </div>
-                      <div className="flex justify-center">
-                        <div className="origin-center" style={{ transform: "scale(0.8)" }}>
-                          <ChessBoard
-                            fen={topActivation.fen}
-                            size="small"
-                            showCoordinates={true}
-                            activations={topActivation.activations}
-                            zPatternIndices={topActivation.zPatternIndices}
-                            zPatternValues={topActivation.zPatternValues}
-                            sampleIndex={topActivation.sampleIndex}
-                            analysisName={
-                              topActivation.contextId != null ? `Context ${topActivation.contextId}` : undefined
-                            }
-                            flip_activation={topActivation.fen.includes(" b ")}
-                            autoFlipWhenBlack={true}
-                          />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+                  <div>
+                    {topActivation && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-sm">
+                            Top activation sample — Feature #{selectedPoint?.featureIndex}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-xs text-gray-600 mb-2">
+                            Maximum activation value: {topActivation.activationStrength.toFixed(3)}
+                          </div>
+                          <div className="flex justify-center">
+                            <div className="origin-center" style={{ transform: "scale(0.8)" }}>
+                              <ChessBoard
+                                fen={topActivation.fen}
+                                size="small"
+                                showCoordinates={true}
+                                activations={topActivation.activations}
+                                zPatternIndices={topActivation.zPatternIndices}
+                                zPatternValues={topActivation.zPatternValues}
+                                sampleIndex={topActivation.sampleIndex}
+                                analysisName={
+                                  topActivation.contextId != null ? `Context ${topActivation.contextId}` : undefined
+                                }
+                                flip_activation={topActivation.fen.includes(" b ")}
+                                autoFlipWhenBlack={true}
+                              />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
 
-                {currentFenActivation && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-sm">
-                        Current FEN — Feature #{selectedPoint?.featureIndex} (64 positions activated)
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-xs text-gray-600 mb-2">
-                        FEN:{" "}
-                        <code className="bg-gray-100 px-2 py-1 rounded break-all">
-                          {currentFenActivation.fen}
-                        </code>
-                      </div>
-                      <div className="flex justify-center">
-                        <div className="origin-center" style={{ transform: "scale(0.8)" }}>
-                          <ChessBoard
-                            fen={currentFenActivation.fen}
-                            size="small"
-                            showCoordinates={true}
-                            activations={currentFenActivation.activations}
-                            zPatternIndices={currentFenActivation.zPatternIndices}
-                            zPatternValues={currentFenActivation.zPatternValues}
-                            autoFlipWhenBlack={true}
-                            flip_activation={currentFenActivation.fen.includes(" b ")}
-                            showSelfPlay={true}
-                            analysisName={`Current FEN | pos ${position}`}
-                          />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
+                  <div>
+                    {currentFenActivation && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-sm">
+                            Current FEN — Feature #{selectedPoint?.featureIndex} (64 positions activated)
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-xs text-gray-600 mb-2">
+                            FEN:{" "}
+                            <code className="bg-gray-100 px-2 py-1 rounded break-all">
+                              {currentFenActivation.fen}
+                            </code>
+                          </div>
+                          <div className="flex justify-center">
+                            <div className="origin-center" style={{ transform: "scale(0.8)" }}>
+                              <ChessBoard
+                                fen={currentFenActivation.fen}
+                                size="small"
+                                showCoordinates={true}
+                                activations={currentFenActivation.activations}
+                                zPatternIndices={currentFenActivation.zPatternIndices}
+                                zPatternValues={currentFenActivation.zPatternValues}
+                                autoFlipWhenBlack={true}
+                                flip_activation={currentFenActivation.fen.includes(" b ")}
+                                showSelfPlay={true}
+                                analysisName={`Current FEN | pos ${position}`}
+                              />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
 
-                {detailFeature && (
-                  <FeatureInterpretationCard feature={detailFeature} title="Interpretation" />
-                )}
+                  <div>
+                    {detailFeature && (
+                      <FeatureInterpretationCard feature={detailFeature} title="Interpretation" />
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
