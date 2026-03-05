@@ -85,7 +85,7 @@ def get_activated_features_at_position(
         
         # build result list
         attn_features = []
-        for idx, val in zip(nonzero_indices.cpu().numpy(), nonzero_values.cpu().numpy()):
+        for idx, val in zip(nonzero_indices.cpu().detach().numpy(), nonzero_values.cpu().detach().numpy()):
             attn_features.append({
                 "feature_index": int(idx),
                 "activation_value": float(val)

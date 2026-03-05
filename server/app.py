@@ -59,6 +59,8 @@ import tempfile
 import os
 import time
 
+from .umap_utils import compute_decoder_weights_umap_for_name, get_sae_decoder_weights_umap
+
 import random
 import chess
 
@@ -190,48 +192,6 @@ def get_sae(name: str) -> SparseAutoEncoder:
     sae = SparseAutoEncoder.from_config(cfg)
     sae.eval()
     return sae
-
-
-@lru_cache(maxsize=16)
-def get_sae_decoder_weights_umap(name: str) -> dict[str, Any]:
-    """Compute and cache a 2D UMAP embedding over SAE decoder weights.
-
-    Args:
-        name: Name of the SAE/dictionary.
-
-    Returns:
-        A dictionary with keys:
-            - ``embedding``: np.ndarray of shape [n_features, 2]
-            - ``feature_ids``: list of feature indices [0, 1, ..., n_features-1]
-
-    Raises:
-        RuntimeError: If ``umap-learn`` is not installed.
-        AssertionError: If the SAE cannot be loaded.
-    """
-    if umap is None:
-        raise RuntimeError("umap-learn is not installed; please install it to use the UMAP endpoint.")
-
-    sae = get_sae(name)
-    decoder_weights = sae.W_D
-
-    # Handle potential distributed tensor case.
-    if isinstance(decoder_weights, torch.distributed.tensor.DTensor):
-        decoder_weights_local = decoder_weights.to_local()
-    else:
-        decoder_weights_local = decoder_weights
-
-    decoder_weights_np = decoder_weights_local.detach().cpu().numpy()
-
-    reducer = umap.UMAP(
-        n_neighbors=30,
-        min_dist=0.0,
-        metric="cosine",
-        random_state=42,
-    )
-    embedding = reducer.fit_transform(decoder_weights_np)
-
-    feature_ids: list[int] = list(range(decoder_weights_np.shape[0]))
-    return {"embedding": embedding, "feature_ids": feature_ids}
 
 
 ###############################################################################
@@ -594,25 +554,87 @@ def list_dictionaries():
 def get_dictionary_decoder_weights_umap(name: str) -> dict[str, Any]:
     """Get a 2D UMAP embedding over SAE decoder weights for a dictionary.
 
-    This wraps :func:`get_sae_decoder_weights_umap` and converts the result
-    into JSON-serializable types for the frontend.
-
-    Args:
-        name: Name of the SAE / dictionary.
-
-    Returns:
-        A dictionary with keys:
-
-        - ``embedding``: List of [x, y] coordinates for each feature.
-        - ``feature_ids``: List of feature indices aligned with ``embedding``.
+    For BT4 chess SAEs (Lorsa / Transcoder), this uses the same combo-based
+    loading logic as ``analyze_fen_for_feature`` so that we correctly handle
+    both ``W_D`` (Transcoder) and ``W_O`` (Lorsa) decoders. For other
+    dictionaries, it falls back to the generic Mongo-backed ``get_sae`` path.
     """
+    import re
+
     try:
-        umap_data = get_sae_decoder_weights_umap(name)
+        is_bt4_name = name.startswith("BT4_")
+        if is_bt4_name:
+            layer_match = re.search(r"L(\d+)", name)
+            if not layer_match:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot extract layer index from SAE name {name}",
+                )
+            layer = int(layer_match.group(1))
+
+            is_lorsa_name = "lorsa" in name.lower()
+            is_tc_name = "tc" in name.lower() or "transcoder" in name.lower()
+
+            combo_id: str | None = None
+            combo_match = re.search(r"k(\d+)_e(\d+)", name)
+            if combo_match:
+                k_val = combo_match.group(1)
+                e_val = combo_match.group(2)
+                combo_id = f"k_{k_val}_e_{e_val}"
+            else:
+                for test_combo_id, test_combo_cfg in BT4_SAE_COMBOS.items():
+                    if is_lorsa_name:
+                        template = test_combo_cfg.get("lorsa_sae_name_template", "")
+                    else:
+                        template = test_combo_cfg.get("tc_sae_name_template", "")
+
+                    if template:
+                        template_with_layer = template.format(layer=layer)
+                        if template_with_layer in name or name.startswith(
+                            template_with_layer.split("{")[0]
+                        ):
+                            combo_id = test_combo_id
+                            break
+
+                if combo_id is None:
+                    combo_id = BT4_DEFAULT_SAE_COMBO
+
+            combo_cfg = get_bt4_sae_combo(combo_id)
+
+            if is_lorsa_name:
+                base_path = combo_cfg["lorsa_base_path"]
+                sae_path = f"{base_path}/L{layer}"
+                if not os.path.exists(sae_path):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Lorsa not found at {sae_path} for layer {layer}",
+                    )
+                sae = get_cached_sae(sae_path, is_lorsa=True, device=device)
+            elif is_tc_name:
+                base_path = combo_cfg["tc_base_path"]
+                sae_path = f"{base_path}/L{layer}"
+                if not os.path.exists(sae_path):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Transcoder not found at {sae_path} for layer {layer}",
+                    )
+                sae = get_cached_sae(sae_path, is_lorsa=False, device=device)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Unable to determine SAE type; name should contain 'lorsa' or 'tc'/'transcoder'",
+                )
+
+            umap_data = get_sae_decoder_weights_umap(sae)
+        else:
+            # Generic path for non-BT4 dictionaries via Mongo-backed configs.
+            umap_data = compute_decoder_weights_umap_for_name(name, get_sae)
     except RuntimeError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=str(exc),
-        )
+        raise HTTPException(status_code=503, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
     embedding = umap_data.get("embedding")
     feature_ids = umap_data.get("feature_ids")

@@ -310,14 +310,10 @@ export const PositionFeatureUmapCard = ({
     [getDictionaryName]
   );
 
-  const { scaledPoints, minX, maxX, minY, maxY } = useMemo(() => {
+  const { scaledPoints } = useMemo(() => {
     if (umapPoints.length === 0) {
       return {
         scaledPoints: [] as (UmapPoint & { sx: number; sy: number })[],
-        minX: 0,
-        maxX: 0,
-        minY: 0,
-        maxY: 0,
       };
     }
 
@@ -333,13 +329,21 @@ export const PositionFeatureUmapCard = ({
       if (p.y > localMaxY) localMaxY = p.y;
     }
 
-    const padding = 20;
-    const width = 400 - padding * 2;
-    const height = 400 - padding * 2;
+    // Use a slightly larger canvas to visually spread points out more.
+    const padding = 32;
+    const width = 480 - padding * 2;
+    const height = 480 - padding * 2;
     const dx = localMaxX - localMinX || 1;
     const dy = localMaxY - localMinY || 1;
 
-    const sp = umapPoints.map((p) => ({
+    // Draw inactive points first, then active ones so that active features
+    // always appear visually on top of the layer.
+    const orderedPoints = [...umapPoints].sort((a, b) => {
+      if (a.isActive === b.isActive) return 0;
+      return a.isActive ? 1 : -1;
+    });
+
+    const sp = orderedPoints.map((p) => ({
       ...p,
       sx: padding + ((p.x - localMinX) / dx) * width,
       sy: padding + ((localMaxY - p.y) / dy) * height,
@@ -347,10 +351,6 @@ export const PositionFeatureUmapCard = ({
 
     return {
       scaledPoints: sp,
-      minX: localMinX,
-      maxX: localMaxX,
-      minY: localMinY,
-      maxY: localMaxY,
     };
   }, [umapPoints]);
 
@@ -415,18 +415,18 @@ export const PositionFeatureUmapCard = ({
                   inactive). Click a dot to inspect its top activation and interpretation.
                 </div>
                 <svg
-                  viewBox="0 0 400 400"
-                  className="w-full h-80 border rounded bg-white"
+                  viewBox="0 0 480 480"
+                  className="w-full h-96 border rounded bg-white"
                   role="img"
                   aria-label="UMAP embedding of features"
                 >
-                  <rect x={0} y={0} width={400} height={400} fill="#ffffff" />
+                  <rect x={0} y={0} width={480} height={480} fill="#ffffff" />
                   {scaledPoints.map((p) => {
                     const isSelected = selectedPoint?.featureIndex === p.featureIndex;
-                    const fill = p.isActive ? "#2563EB" : "rgba(148, 163, 184, 0.6)";
-                    const radius = p.isActive ? 4 : 3;
-                    const stroke = isSelected ? "#F97316" : p.isActive ? "#1D4ED8" : "rgba(148, 163, 184, 0.9)";
-                    const strokeWidth = isSelected ? 2 : 1;
+                    const fill = p.isActive ? "#2563EB" : "rgba(148, 163, 184, 0.4)";
+                    const radius = p.isActive ? 3 : 2;
+                    const stroke = isSelected ? "#F97316" : p.isActive ? "#1D4ED8" : "rgba(148, 163, 184, 0.8)";
+                    const strokeWidth = isSelected ? 2 : p.isActive ? 1.5 : 1;
                     return (
                       <circle
                         key={p.featureIndex}
