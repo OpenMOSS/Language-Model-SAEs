@@ -15,7 +15,7 @@ export const PositionFeaturePage = () => {
   const [fen, setFen] = useState<string>("2k5/4Q3/3P4/8/6p1/4p3/q1pbK3/1R6 b - - 0 32");
   const [layer, setLayer] = useState<number>(2);
   const [positionsInput, setPositionsInput] = useState<string>("48");
-  const [positions, setPositions] = useState<number[]>([0]);
+  const [positions, setPositions] = useState<number[]>([48]);
   const [componentType, setComponentType] = useState<"attn" | "mlp">("attn");
   const [saeComboId, setSaeComboId] = useState<string | undefined>(undefined);
   const [selectedFeature, setSelectedFeature] = useState<{ featureIndex: number; position: number } | null>(null);
