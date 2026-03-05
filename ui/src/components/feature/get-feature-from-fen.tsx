@@ -109,6 +109,9 @@ export const GetFeatureFromFen = ({
   const [featureTopActivations, setFeatureTopActivations] = useState<Map<number, TopActivationSample | null>>(new Map());
   const [loadingFeatureTopActivations, setLoadingFeatureTopActivations] = useState<Set<number>>(new Set());
   const [interpretationModalFeature, setInterpretationModalFeature] = useState<Feature | null>(null);
+  /** Full feature data (including interpretation) per feature index; populated when loading top activation or opening interpretation. */
+  const [featureFullData, setFeatureFullData] = useState<Map<number, Feature>>(new Map());
+  const [refreshingInterpretations, setRefreshingInterpretations] = useState(false);
 
   const [featuresState, fetchFeatures] = useAsyncFn(async () => {
     if (!fen || position < 0 || position > 63) {
@@ -405,6 +408,17 @@ export const GetFeatureFromFen = ({
           newMap.set(featureIndex, firstTopActivation);
           return newMap;
         });
+
+        try {
+          const fullFeature = FeatureSchema.parse(camelData) as Feature;
+          setFeatureFullData((prev) => {
+            const m = new Map(prev);
+            m.set(featureIndex, fullFeature);
+            return m;
+          });
+        } catch (_) {
+          // ignore parse error for full feature; top activation still shown
+        }
       } catch (error) {
         console.error(`Failed to fetch top activation for feature #${featureIndex}:`, error);
         setFeatureTopActivations((prev) => {
@@ -443,14 +457,26 @@ export const GetFeatureFromFen = ({
 
   const openInterpretationModal = useCallback(
     async (featureIndex: number) => {
+      const cached = featureFullData.get(featureIndex);
+      if (cached) {
+        setInterpretationModalFeature(cached);
+        return;
+      }
       try {
         const feature = await fetchFullFeature(featureIndex);
-        if (feature) setInterpretationModalFeature(feature);
+        if (feature) {
+          setInterpretationModalFeature(feature);
+          setFeatureFullData((prev) => {
+            const m = new Map(prev);
+            m.set(featureIndex, feature);
+            return m;
+          });
+        }
       } catch (e) {
         console.error("Failed to load feature for interpretation:", e);
       }
     },
-    [fetchFullFeature]
+    [fetchFullFeature, featureFullData]
   );
 
   useEffect(() => {
@@ -467,6 +493,30 @@ export const GetFeatureFromFen = ({
   }, [selectedFeatureIndex, showTopActivations, showFenActivations, fetchTopActivationsForFeature, fetchFenActivationForSelectedFeature]);
 
   const features = featuresState.value || [];
+
+  const refreshAllInterpretations = useCallback(async () => {
+    if (features.length === 0) return;
+    setRefreshingInterpretations(true);
+    try {
+      for (const f of features) {
+        try {
+          const feature = await fetchFullFeature(f.feature_index);
+          if (feature) {
+            setFeatureFullData((prev) => {
+              const m = new Map(prev);
+              m.set(f.feature_index, feature);
+              return m;
+            });
+          }
+        } catch (_) {
+          // skip failed feature
+        }
+        await new Promise((r) => setTimeout(r, 80));
+      }
+    } finally {
+      setRefreshingInterpretations(false);
+    }
+  }, [features, fetchFullFeature]);
 
   const content = (
     <div className="space-y-4">
@@ -616,33 +666,47 @@ export const GetFeatureFromFen = ({
 
           {features.length > 0 && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <h3 className="font-semibold">
                   Top Activations preview
                 </h3>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    for (const feature of features) {
-                      if (!featureTopActivations.has(feature.feature_index) && 
-                          !loadingFeatureTopActivations.has(feature.feature_index)) {
-                        await fetchFirstTopActivationForFeature(feature.feature_index);
-                        await new Promise(resolve => setTimeout(resolve, 100));
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      for (const feature of features) {
+                        if (!featureTopActivations.has(feature.feature_index) &&
+                            !loadingFeatureTopActivations.has(feature.feature_index)) {
+                          await fetchFirstTopActivationForFeature(feature.feature_index);
+                          await new Promise((resolve) => setTimeout(resolve, 100));
+                        }
                       }
-                    }
-                  }}
-                  disabled={loadingFeatureTopActivations.size > 0}
-                >
-                  {loadingFeatureTopActivations.size > 0 ? (
-                    <>
+                    }}
+                    disabled={loadingFeatureTopActivations.size > 0}
+                  >
+                    {loadingFeatureTopActivations.size > 0 ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        Loading...
+                      </>
+                    ) : (
+                      `Load all features' top activation (${features.length} features)`
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={refreshAllInterpretations}
+                    disabled={refreshingInterpretations || features.length === 0}
+                    title="Re-fetch and refresh interpretation for all features"
+                  >
+                    {refreshingInterpretations ? (
                       <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      Loading...
-                    </>
-                  ) : (
-                    `Load all features' top activation (${features.length} features)`
-                  )}
-                </Button>
+                    ) : null}
+                    Refresh interpretations
+                  </Button>
+                </div>
               </div>
               <div className="w-full max-w-full min-w-0 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                 {features.map((feature) => (
@@ -721,7 +785,7 @@ export const GetFeatureFromFen = ({
                         </Button>
                       )}
                     </div>
-                    <div className="text-center flex flex-col gap-1">
+                    <div className="text-center flex flex-col gap-1 w-full min-w-0">
                       <Link
                         to={`/features?dictionary=${encodeURIComponent(getDictionaryName())}&featureIndex=${feature.feature_index}`}
                         onClick={(e) => e.stopPropagation()}
@@ -731,22 +795,51 @@ export const GetFeatureFromFen = ({
                       >
                         View details
                       </Link>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs h-auto py-0.5"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openInterpretationModal(feature.feature_index);
-                        }}
-                        disabled={fetchFullFeatureState.loading}
-                      >
-                        {fetchFullFeatureState.loading ? (
-                          <Loader2 className="w-3 h-3 animate-spin inline" />
-                        ) : (
-                          "Interpretation"
-                        )}
-                      </Button>
+                      {featureFullData.get(feature.feature_index) ? (
+                        <>
+                          <div
+                            className="text-left text-xs text-gray-700 mt-1 px-1 py-1.5 rounded bg-white border max-h-20 overflow-y-auto"
+                            title={featureFullData.get(feature.feature_index)?.interpretation?.text ?? ""}
+                          >
+                            {featureFullData.get(feature.feature_index)?.interpretation?.text ? (
+                              <span className="line-clamp-3">
+                                {featureFullData.get(feature.feature_index)!.interpretation!.text}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 italic">No interpretation</span>
+                            )}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs h-auto py-0.5"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openInterpretationModal(feature.feature_index);
+                            }}
+                            disabled={fetchFullFeatureState.loading}
+                          >
+                            Edit interpretation
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs h-auto py-0.5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openInterpretationModal(feature.feature_index);
+                          }}
+                          disabled={fetchFullFeatureState.loading}
+                        >
+                          {fetchFullFeatureState.loading ? (
+                            <Loader2 className="w-3 h-3 animate-spin inline" />
+                          ) : (
+                            "Interpretation"
+                          )}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -759,7 +852,26 @@ export const GetFeatureFromFen = ({
 
           <Dialog
             open={!!interpretationModalFeature}
-            onOpenChange={(open) => !open && setInterpretationModalFeature(null)}
+            onOpenChange={async (open) => {
+              if (!open) {
+                const idx = interpretationModalFeature?.featureIndex;
+                setInterpretationModalFeature(null);
+                if (idx != null) {
+                  try {
+                    const updated = await fetchFullFeature(idx);
+                    if (updated) {
+                      setFeatureFullData((prev) => {
+                        const m = new Map(prev);
+                        m.set(idx, updated);
+                        return m;
+                      });
+                    }
+                  } catch (_) {
+                    // ignore
+                  }
+                }
+              }
+            }}
           >
             <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
