@@ -10,7 +10,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FeatureSchema } from "@/types/feature";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
@@ -24,9 +23,9 @@ const FeatureCard = lazy(() =>
     default: module.FeatureCard,
   })),
 );
-const FeatureInterpretation = lazy(() =>
+const FeatureInterpretationCard = lazy(() =>
   import("@/components/feature/interpret").then((module) => ({
-    default: module.FeatureInterpretation,
+    default: module.FeatureInterpretationCard,
   })),
 );
 import { ChessBoard } from "@/components/chess/chess-board";
@@ -328,16 +327,9 @@ export const FeaturesPage = () => {
         {/* Interpretation editor for current feature (with backend submit) */}
         {currentFeature && (
           <div className="container w-full max-w-6xl mx-auto mb-8">
-            <Card>
-              <CardHeader>
-                <CardTitle>Interpretation</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Suspense fallback={<div>Loading Interpretation...</div>}>
-                  <FeatureInterpretation feature={currentFeature} />
-                </Suspense>
-              </CardContent>
-            </Card>
+            <Suspense fallback={<div>Loading Interpretation...</div>}>
+              <FeatureInterpretationCard feature={currentFeature} />
+            </Suspense>
           </div>
         )}
 

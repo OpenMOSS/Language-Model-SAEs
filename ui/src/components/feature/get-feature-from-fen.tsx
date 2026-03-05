@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,6 +7,17 @@ import { ChessBoard } from "@/components/chess/chess-board";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { decode } from "@msgpack/msgpack";
+import camelcaseKeys from "camelcase-keys";
+import { FeatureSchema } from "@/types/feature";
+import type { Feature } from "@/types/feature";
+import { FeatureInterpretationCard } from "@/components/feature/interpret";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface ActivatedFeature {
   feature_index: number;
@@ -97,6 +108,7 @@ export const GetFeatureFromFen = ({
   const [loadingTopActivations, setLoadingTopActivations] = useState(false);
   const [featureTopActivations, setFeatureTopActivations] = useState<Map<number, TopActivationSample | null>>(new Map());
   const [loadingFeatureTopActivations, setLoadingFeatureTopActivations] = useState<Set<number>>(new Set());
+  const [interpretationModalFeature, setInterpretationModalFeature] = useState<Feature | null>(null);
 
   const [featuresState, fetchFeatures] = useAsyncFn(async () => {
     if (!fen || position < 0 || position > 63) {
@@ -411,6 +423,36 @@ export const GetFeatureFromFen = ({
     [getDictionaryName, parseTopActivationData, featureTopActivations, loadingFeatureTopActivations]
   );
 
+  const [fetchFullFeatureState, fetchFullFeature] = useAsyncFn(
+    async (featureIndex: number): Promise<Feature | null> => {
+      const dictionary = getDictionaryName();
+      const res = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionary}/features/${featureIndex}`,
+        { method: "GET", headers: { Accept: "application/x-msgpack" } }
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const decoded = decode(new Uint8Array(await res.arrayBuffer())) as Record<string, unknown>;
+      const camel = camelcaseKeys(decoded, {
+        deep: true,
+        stopPaths: ["sample_groups.samples.context"],
+      });
+      return FeatureSchema.parse(camel) as Feature;
+    },
+    [getDictionaryName]
+  );
+
+  const openInterpretationModal = useCallback(
+    async (featureIndex: number) => {
+      try {
+        const feature = await fetchFullFeature(featureIndex);
+        if (feature) setInterpretationModalFeature(feature);
+      } catch (e) {
+        console.error("Failed to load feature for interpretation:", e);
+      }
+    },
+    [fetchFullFeature]
+  );
+
   useEffect(() => {
     if (selectedFeatureIndex !== null) {
       if (showTopActivations) {
@@ -679,7 +721,7 @@ export const GetFeatureFromFen = ({
                         </Button>
                       )}
                     </div>
-                    <div className="text-center">
+                    <div className="text-center flex flex-col gap-1">
                       <Link
                         to={`/features?dictionary=${encodeURIComponent(getDictionaryName())}&featureIndex=${feature.feature_index}`}
                         onClick={(e) => e.stopPropagation()}
@@ -689,6 +731,22 @@ export const GetFeatureFromFen = ({
                       >
                         View details
                       </Link>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs h-auto py-0.5"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openInterpretationModal(feature.feature_index);
+                        }}
+                        disabled={fetchFullFeatureState.loading}
+                      >
+                        {fetchFullFeatureState.loading ? (
+                          <Loader2 className="w-3 h-3 animate-spin inline" />
+                        ) : (
+                          "Interpretation"
+                        )}
+                      </Button>
                     </div>
                   </div>
                 ))}
@@ -698,6 +756,25 @@ export const GetFeatureFromFen = ({
               </p>
             </div>
           )}
+
+          <Dialog
+            open={!!interpretationModalFeature}
+            onOpenChange={(open) => !open && setInterpretationModalFeature(null)}
+          >
+            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>
+                  Interpretation {interpretationModalFeature != null ? `— Feature #${interpretationModalFeature.featureIndex}` : ""}
+                </DialogTitle>
+              </DialogHeader>
+              <Suspense fallback={<div>Loading...</div>}>
+                <FeatureInterpretationCard
+                  feature={interpretationModalFeature}
+                  title=""
+                />
+              </Suspense>
+            </DialogContent>
+          </Dialog>
 
           {selectedFeatureIndex !== null && (showTopActivations || showFenActivations) && (
             <Tabs defaultValue="fen-activations" className="w-full">

@@ -1,11 +1,12 @@
 import { Feature, Interpretation, InterpretationSchema } from "@/types/feature";
-import { useState, useCallback } from "react";
+import { useState, useCallback, Suspense } from "react";
 import { Button } from "../ui/button";
 import { Ban, Check, Info, ChevronDown, ChevronRight, Copy, CheckCircle2 } from "lucide-react";
 import { useAsyncFn } from "react-use";
 import { Textarea } from "../ui/textarea";
 import camelcaseKeys from "camelcase-keys";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 
 const FeatureCustomInterpretionArea = ({
   feature,
@@ -434,5 +435,35 @@ const CopyButton = ({ text }: { text: string }) => {
     >
       {copied ? <CheckCircle2 size={16} className="text-green-500" /> : <Copy size={16} />}
     </button>
+  );
+};
+
+/**
+ * Reusable card that displays and allows editing a feature's interpretation.
+ * Can be used on the features page or inside modals (e.g. get-feature-from-fen).
+ */
+export const FeatureInterpretationCard = ({
+  feature,
+  title = "Interpretation",
+}: {
+  feature: Feature | null;
+  title?: string;
+}) => {
+  if (!feature) {
+    return null;
+  }
+  return (
+    <Card>
+      {title !== "" && (
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+        </CardHeader>
+      )}
+      <CardContent className={title === "" ? "pt-6" : undefined}>
+        <Suspense fallback={<div>Loading Interpretation...</div>}>
+          <FeatureInterpretation feature={feature} />
+        </Suspense>
+      </CardContent>
+    </Card>
   );
 };
