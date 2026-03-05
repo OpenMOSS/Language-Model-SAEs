@@ -41,6 +41,13 @@ interface UmapPoint {
   isActive: boolean;
 }
 
+interface FenActivationData {
+  fen: string;
+  activations?: number[];
+  zPatternIndices?: number[][];
+  zPatternValues?: number[];
+}
+
 interface PositionFeatureUmapCardProps {
   fen: string;
   layer: number;
@@ -165,6 +172,7 @@ export const PositionFeatureUmapCard = ({
   const [detailFeature, setDetailFeature] = useState<Feature | null>(null);
   const [topActivation, setTopActivation] = useState<TopActivationSample | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [currentFenActivation, setCurrentFenActivation] = useState<FenActivationData | null>(null);
 
   const getDictionaryName = useCallback((): string => {
     const suffix = componentType === "attn" ? "A" : "M";
@@ -271,23 +279,40 @@ export const PositionFeatureUmapCard = ({
       setLoadingDetail(true);
       setDetailFeature(null);
       setTopActivation(null);
+      setCurrentFenActivation(null);
       try {
         const dictionary = getDictionaryName();
-        const res = await fetch(
+        const [featureRes, fenRes] = await Promise.all([
+          fetch(
           `${BACKEND_URL}/dictionaries/${encodeURIComponent(dictionary)}/features/${featureIndex}`,
           {
             method: "GET",
             headers: {
               Accept: "application/x-msgpack",
             },
-          }
-        );
+          },
+        ),
+          fetch(
+            `${BACKEND_URL}/dictionaries/${encodeURIComponent(dictionary)}/features/${featureIndex}/analyze_fen`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({ fen: fen.trim() }),
+            }
+          ),
+        ]);
 
-        if (!res.ok) {
-          throw new Error(await res.text());
+        if (!featureRes.ok) {
+          throw new Error(await featureRes.text());
+        }
+        if (!fenRes.ok) {
+          throw new Error(await fenRes.text());
         }
 
-        const arrayBuffer = await res.arrayBuffer();
+        const arrayBuffer = await featureRes.arrayBuffer();
         const decoded = decode(new Uint8Array(arrayBuffer)) as Record<string, unknown>;
         const camel = camelcaseKeys(decoded, {
           deep: true,
@@ -299,15 +324,49 @@ export const PositionFeatureUmapCard = ({
 
         const chessSamples = parseTopActivationData(camel);
         setTopActivation(chessSamples.length > 0 ? chessSamples[0] : null);
+
+        // Parse current-FEN activations (64 positions) and z-pattern using the same
+        // format as in CustomFenInput.
+        const fenData = await fenRes.json();
+
+        let activations: number[] | undefined = undefined;
+        if (fenData.feature_acts_indices && fenData.feature_acts_values) {
+          activations = new Array(64).fill(0);
+          const indices: number[] = fenData.feature_acts_indices;
+          const values: number[] = fenData.feature_acts_values;
+          for (let i = 0; i < Math.min(indices.length, values.length); i++) {
+            const index = indices[i];
+            const value = values[i];
+            if (index >= 0 && index < 64) {
+              activations[index] = value;
+            }
+          }
+        }
+
+        let zPatternIndices: number[][] | undefined = undefined;
+        let zPatternValues: number[] | undefined = undefined;
+        if (fenData.z_pattern_indices && fenData.z_pattern_values) {
+          const zpIdxRaw = fenData.z_pattern_indices;
+          zPatternIndices = Array.isArray(zpIdxRaw) && Array.isArray(zpIdxRaw[0]) ? zpIdxRaw : [zpIdxRaw];
+          zPatternValues = fenData.z_pattern_values;
+        }
+
+        setCurrentFenActivation({
+          fen: fen.trim(),
+          activations,
+          zPatternIndices,
+          zPatternValues,
+        });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setDetailFeature(null);
         setTopActivation(null);
+        setCurrentFenActivation(null);
       } finally {
         setLoadingDetail(false);
       }
     },
-    [getDictionaryName]
+    [fen, getDictionaryName]
   );
 
   const { scaledPoints } = useMemo(() => {
@@ -524,6 +583,40 @@ export const PositionFeatureUmapCard = ({
                             }
                             flip_activation={topActivation.fen.includes(" b ")}
                             autoFlipWhenBlack={true}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {currentFenActivation && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm">
+                        Current FEN — Feature #{selectedPoint?.featureIndex} (64 positions activated)
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-xs text-gray-600 mb-2">
+                        FEN:{" "}
+                        <code className="bg-gray-100 px-2 py-1 rounded break-all">
+                          {currentFenActivation.fen}
+                        </code>
+                      </div>
+                      <div className="flex justify-center">
+                        <div className="origin-center" style={{ transform: "scale(0.8)" }}>
+                          <ChessBoard
+                            fen={currentFenActivation.fen}
+                            size="small"
+                            showCoordinates={true}
+                            activations={currentFenActivation.activations}
+                            zPatternIndices={currentFenActivation.zPatternIndices}
+                            zPatternValues={currentFenActivation.zPatternValues}
+                            autoFlipWhenBlack={true}
+                            flip_activation={currentFenActivation.fen.includes(" b ")}
+                            showSelfPlay={true}
+                            analysisName={`Current FEN | pos ${position}`}
                           />
                         </div>
                       </div>
