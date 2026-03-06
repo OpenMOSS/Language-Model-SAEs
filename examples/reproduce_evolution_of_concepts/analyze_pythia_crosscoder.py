@@ -10,8 +10,8 @@ from lm_saes import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryTarget,
-    AnalyzeCrossCoderSettings,
-    CrossCoderConfig,
+    AnalyzeCrosscoderSettings,
+    CrosscoderConfig,
     FeatureAnalyzerConfig,
     MongoDBConfig,
     analyze_crosscoder,
@@ -94,8 +94,8 @@ if __name__ == "__main__":
     head_per_device = len(steps) // world_size
     layer = int(re.search(r"L(\d+)R", args.name).group(1))
     print(f"Analyzing {args.name} at layer {layer}")
-    settings = AnalyzeCrossCoderSettings(
-        sae=CrossCoderConfig.from_pretrained(
+    settings = AnalyzeCrosscoderSettings(
+        sae=CrosscoderConfig.from_pretrained(
             os.path.expanduser(f"~/results/{args.name}"),
             device="cuda",
             dtype=torch.float16,

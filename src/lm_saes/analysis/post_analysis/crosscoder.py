@@ -1,6 +1,6 @@
-"""Post-analysis processor for CrossCoder SAE.
+"""Post-analysis processor for Crosscoder SAE.
 
-This module provides post-processing functionality specific to CrossCoder SAEs,
+This module provides post-processing functionality specific to Crosscoder SAEs,
 including handling of decoder norms, similarity matrices, and inner product matrices.
 """
 
@@ -11,18 +11,18 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 
 from lm_saes.activation.factory import ActivationFactory
-from lm_saes.crosscoder import CrossCoder
-from lm_saes.sparse_dictionary import SparseDictionary
+from lm_saes.models.crosscoder import Crosscoder
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
 
 from .base import PostAnalysisProcessor, register_post_analysis_processor
 
 
-class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
-    """Post-analysis processor for CrossCoder SAE.
+class CrosscoderPostAnalysisProcessor(PostAnalysisProcessor):
+    """Post-analysis processor for Crosscoder SAE.
 
-    This processor handles CrossCoder-specific analysis results including:
+    This processor handles Crosscoder-specific analysis results including:
     - Decoder norms
     - Decoder similarity matrices
     - Decoder inner product matrices
@@ -40,7 +40,7 @@ class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
         activation_factory: ActivationFactory | None = None,
         activation_factory_process_kwargs: dict[str, Any] = {},
     ) -> tuple[dict[str, dict[str, torch.Tensor]], list[dict[str, Any]]]:
-        """Format the analysis results into the final per-feature format for CrossCoder.
+        """Format the analysis results into the final per-feature format for Crosscoder.
 
         Args:
             sae: The sparse autoencoder model
@@ -54,7 +54,7 @@ class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
         Returns:
             List of dictionaries containing per-feature analysis results
         """
-        assert isinstance(sae, CrossCoder), "CrossCoderPostAnalysisProcessor only supports CrossCoder SAE"
+        assert isinstance(sae, Crosscoder), "CrosscoderPostAnalysisProcessor only supports Crosscoder SAE"
         decoder_norms = sae.decoder_norm()
         if isinstance(decoder_norms, DTensor):
             assert device_mesh is not None, "Device mesh is required for DTensor decoder norms"
@@ -127,5 +127,5 @@ class CrossCoderPostAnalysisProcessor(PostAnalysisProcessor):
         ]
 
 
-# Register the processor for CrossCoder SAE type
-register_post_analysis_processor("crosscoder", CrossCoderPostAnalysisProcessor)
+# Register the processor for Crosscoder SAE type
+register_post_analysis_processor("crosscoder", CrosscoderPostAnalysisProcessor)

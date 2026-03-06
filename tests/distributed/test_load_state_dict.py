@@ -6,8 +6,8 @@ from torch.nn import Module
 
 from lm_saes import (
     CLTConfig,
-    CrossCoder,
-    CrossCoderConfig,
+    Crosscoder,
+    CrosscoderConfig,
     CrossLayerTranscoder,
     LorsaConfig,
     LowRankSparseAttention,
@@ -67,13 +67,13 @@ def test_crosscoder_load():
     device = "cuda" if torch.cuda.is_available() and dist.get_backend() == "nccl" else "cpu"
     device_mesh = init_device_mesh(device, (world_size,), mesh_dim_names=("model",))
 
-    cc_cfg = CrossCoderConfig(
+    cc_cfg = CrosscoderConfig(
         d_model=8,
         expansion_factor=2,
         hook_points=["head_0", "head_1"],
         device=device,
     )
-    cc = CrossCoder(cc_cfg, device_mesh=device_mesh)
+    cc = Crosscoder(cc_cfg, device_mesh=device_mesh)
     run_load_test(cc, device_mesh, sharded=True)
 
 

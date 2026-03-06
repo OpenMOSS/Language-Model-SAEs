@@ -6,7 +6,7 @@ from pytest_mock import MockerFixture
 from lm_saes import FeatureAnalyzerConfig, SAEConfig
 from lm_saes.activation.factory import ActivationFactory
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer
-from lm_saes.sae import SparseAutoEncoder
+from lm_saes.models.sae import SparseAutoEncoder
 
 
 @pytest.fixture

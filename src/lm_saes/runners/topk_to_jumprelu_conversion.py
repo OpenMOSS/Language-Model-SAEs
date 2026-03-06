@@ -9,11 +9,11 @@ from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import DatasetConfig
 from lm_saes.database import MongoClient, MongoDBConfig
+from lm_saes.models.clt import CrossLayerTranscoder
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.utils.distributed import is_primary_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from lm_saes.utils.topk_to_jumprelu_conversion import topk_to_jumprelu_conversion

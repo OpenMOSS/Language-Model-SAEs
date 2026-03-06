@@ -3,16 +3,16 @@ import math
 import pytest
 import torch
 
-from lm_saes import CrossCoderConfig
-from lm_saes.crosscoder import CrossCoder
+from lm_saes import CrosscoderConfig
+from lm_saes.models.crosscoder import Crosscoder
 
 
 @pytest.fixture
-def config() -> CrossCoderConfig:
+def config() -> CrosscoderConfig:
     d_model = 2
     expansion_factor = 2  # Using integer expansion factor
     # Note: d_sae will be calculated as d_model * expansion_factor = 4
-    return CrossCoderConfig(
+    return CrosscoderConfig(
         hook_points=["head0", "head1"],
         d_model=d_model,
         expansion_factor=expansion_factor,
@@ -28,9 +28,9 @@ def config() -> CrossCoderConfig:
 
 
 @pytest.fixture
-def crosscoder(config: CrossCoderConfig) -> CrossCoder:
-    """Create a CrossCoder with predefined weights for testing."""
-    model = CrossCoder(config)
+def crosscoder(config: CrosscoderConfig) -> Crosscoder:
+    """Create a Crosscoder with predefined weights for testing."""
+    model = Crosscoder(config)
 
     # Initialize encoder weights with known values
     model.W_E.data = torch.tensor(
@@ -95,9 +95,9 @@ def crosscoder(config: CrossCoderConfig) -> CrossCoder:
     return model
 
 
-def test_init_parameters(config: CrossCoderConfig):
+def test_init_parameters(config: CrosscoderConfig):
     """Test that parameters are initialized correctly."""
-    model = CrossCoder(config)
+    model = Crosscoder(config)
     model.init_parameters(encoder_uniform_bound=0.1, decoder_uniform_bound=0.1, init_log_jumprelu_threshold_value=0.0)
 
     # Check shapes
@@ -117,7 +117,7 @@ def test_init_parameters(config: CrossCoderConfig):
     assert torch.all(model.b_D == 0.0)
 
 
-def test_encode(crosscoder: CrossCoder):
+def test_encode(crosscoder: Crosscoder):
     """Test encoding with known inputs."""
     # Create a batch with 1 sample
     x = torch.tensor(
@@ -163,7 +163,7 @@ def test_encode(crosscoder: CrossCoder):
     assert torch.all(feature_acts > 0)
 
 
-def test_decode(crosscoder: CrossCoder):
+def test_decode(crosscoder: Crosscoder):
     """Test decoding with known feature activations."""
     # Create sample feature activations
     feature_acts = torch.tensor(
@@ -200,7 +200,7 @@ def test_decode(crosscoder: CrossCoder):
     assert torch.allclose(decoded, expected_decoded, atol=1e-6)
 
 
-def test_forward(crosscoder: CrossCoder):
+def test_forward(crosscoder: Crosscoder):
     """Test forward pass (encode + decode)."""
     # Input tensor
     x = torch.tensor(
@@ -227,7 +227,7 @@ def test_forward(crosscoder: CrossCoder):
     assert torch.allclose(output, expected_output, atol=1e-6)
 
 
-def test_encoder_decoder_norm(crosscoder: CrossCoder):
+def test_encoder_decoder_norm(crosscoder: Crosscoder):
     """Test encoder and decoder norm calculations."""
     # Manually calculate the encoder norm
     # √(W_E[0,0,0]² + W_E[0,1,0]²) = √(1² + 0²) = 1
@@ -274,7 +274,7 @@ def test_encoder_decoder_norm(crosscoder: CrossCoder):
     assert torch.allclose(decoder_norm, expected_decoder_norm, atol=1e-3)
 
 
-def test_decoder_bias_norm(crosscoder: CrossCoder):
+def test_decoder_bias_norm(crosscoder: Crosscoder):
     """Test decoder bias norm calculation."""
     # Expected bias norm per head: ||b_D||
     # Head 0: √(0.1² + 0.2²) = √0.05 = 0.224
@@ -293,7 +293,7 @@ def test_decoder_bias_norm(crosscoder: CrossCoder):
     assert torch.allclose(bias_norm, expected_bias_norm, atol=1e-3)
 
 
-def test_set_decoder_to_fixed_norm(crosscoder: CrossCoder):
+def test_set_decoder_to_fixed_norm(crosscoder: Crosscoder):
     """Test setting decoder to fixed norm."""
     # Save original decoder weights
     original_W_D = crosscoder.W_D.clone()
@@ -317,7 +317,7 @@ def test_set_decoder_to_fixed_norm(crosscoder: CrossCoder):
     assert torch.all(decoder_norm <= 0.1 + 1e-5)
 
 
-def test_set_encoder_to_fixed_norm(crosscoder: CrossCoder):
+def test_set_encoder_to_fixed_norm(crosscoder: Crosscoder):
     """Test setting encoder to fixed norm."""
     # Set to fixed norm of 2.0
     crosscoder.set_encoder_to_fixed_norm(2.0)
@@ -327,7 +327,7 @@ def test_set_encoder_to_fixed_norm(crosscoder: CrossCoder):
     assert torch.allclose(encoder_norm, 2.0 * torch.ones_like(encoder_norm), atol=1e-5)
 
 
-def test_init_encoder_with_decoder_transpose(crosscoder: CrossCoder):
+def test_init_encoder_with_decoder_transpose(crosscoder: Crosscoder):
     """Test initializing encoder with decoder transpose."""
     # Save original weights
     original_W_D = crosscoder.W_D.clone()
@@ -341,7 +341,7 @@ def test_init_encoder_with_decoder_transpose(crosscoder: CrossCoder):
         assert torch.allclose(crosscoder.W_E[h], expected_W_E, atol=1e-5)
 
 
-def test_prepare_input(crosscoder: CrossCoder):
+def test_prepare_input(crosscoder: Crosscoder):
     """Test prepare_input method."""
     # Create a batch with hook points
     batch = {
@@ -369,7 +369,7 @@ def test_prepare_input(crosscoder: CrossCoder):
     assert decoder_kwargs == {}
 
 
-def test_prepare_label(crosscoder: CrossCoder):
+def test_prepare_label(crosscoder: Crosscoder):
     """Test prepare_label method."""
     # Create a batch with hook points
     batch = {
@@ -377,7 +377,7 @@ def test_prepare_label(crosscoder: CrossCoder):
         "head1": torch.tensor([[2.0, 1.0]], device=crosscoder.cfg.device, dtype=crosscoder.cfg.dtype),
     }
 
-    # Expected label is the same as input for CrossCoder
+    # Expected label is the same as input for Crosscoder
     expected_label = torch.tensor(
         [
             [
@@ -395,7 +395,7 @@ def test_prepare_label(crosscoder: CrossCoder):
     assert torch.allclose(label, expected_label, atol=1e-5)
 
 
-def test_compute_loss(crosscoder: CrossCoder):
+def test_compute_loss(crosscoder: Crosscoder):
     """Test compute_loss with reconstruction loss."""
     # Create a batch
     batch = {
@@ -443,7 +443,7 @@ def test_compute_loss(crosscoder: CrossCoder):
     assert loss_with_sparsity >= loss
 
 
-def test_standardize_parameters_of_dataset_norm(crosscoder: CrossCoder):
+def test_standardize_parameters_of_dataset_norm(crosscoder: Crosscoder):
     """Test standardizing parameters for dataset norm."""
     # Set norm_activation to dataset-wise
     crosscoder.cfg.norm_activation = "dataset-wise"
@@ -475,8 +475,8 @@ def test_standardize_parameters_of_dataset_norm(crosscoder: CrossCoder):
     assert torch.allclose(crosscoder.b_D[1], expected_b_D_head1, atol=1e-5)
 
 
-def test_torch_compile(crosscoder: CrossCoder):
-    """Test that CrossCoder works with torch.compile."""
+def test_torch_compile(crosscoder: Crosscoder):
+    """Test that Crosscoder works with torch.compile."""
     # Always use eager backend to ensure compatibility with CPU
     backend = "eager"
 
@@ -547,7 +547,7 @@ def test_torch_compile(crosscoder: CrossCoder):
             raise e
 
 
-def test_decoder_inner_product_matrices(crosscoder: CrossCoder):
+def test_decoder_inner_product_matrices(crosscoder: Crosscoder):
     """Test calculation of decoder inner product matrices."""
     # Get the inner product matrices
     inner_product_matrices = crosscoder.decoder_inner_product_matrices()
@@ -587,7 +587,7 @@ def test_decoder_inner_product_matrices(crosscoder: CrossCoder):
     assert torch.allclose(inner_product_matrices[1], expected_feature1, atol=1e-6)
 
 
-def test_decoder_similarity_matrices(crosscoder: CrossCoder):
+def test_decoder_similarity_matrices(crosscoder: Crosscoder):
     """Test calculation of decoder similarity matrices."""
     # Get the similarity matrices
     similarity_matrices = crosscoder.decoder_similarity_matrices()

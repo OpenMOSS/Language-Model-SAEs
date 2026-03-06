@@ -12,15 +12,15 @@ from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.clt import CLTConfig
 from lm_saes.config import DatasetConfig
-from lm_saes.crosscoder import CrossCoderConfig
 from lm_saes.database import MongoClient, MongoDBConfig
 from lm_saes.initializer import Initializer, InitializerConfig
-from lm_saes.lorsa import LorsaConfig
-from lm_saes.molt import MOLTConfig
+from lm_saes.models.clt import CLTConfig
+from lm_saes.models.crosscoder import CrosscoderConfig
+from lm_saes.models.lorsa import LorsaConfig
+from lm_saes.models.molt import MOLTConfig
+from lm_saes.models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
 from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
 from lm_saes.trainer import Trainer, TrainerConfig, WandbConfig
 from lm_saes.utils.distributed import is_primary_rank, mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
@@ -243,11 +243,11 @@ def train_sae(settings: TrainSAESettings) -> None:
     logger.info("SAE training completed successfully")
 
 
-class TrainCrossCoderSettings(BaseSettings):
-    """Settings for training a CrossCoder. The main difference to TrainSAESettings is that the activation factory is a list of ActivationFactoryConfig, one for each head."""
+class TrainCrosscoderSettings(BaseSettings):
+    """Settings for training a Crosscoder. The main difference to TrainSAESettings is that the activation factory is a list of ActivationFactoryConfig, one for each head."""
 
-    sae: CrossCoderConfig | PretrainedSAE
-    """Configuration for the CrossCoder model architecture and parameters, or the path to a pretrained CrossCoder."""
+    sae: CrosscoderConfig | PretrainedSAE
+    """Configuration for the Crosscoder model architecture and parameters, or the path to a pretrained Crosscoder."""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -292,8 +292,8 @@ class TrainCrossCoderSettings(BaseSettings):
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
 
-def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
-    """Train a CrossCoder.
+def train_crosscoder(settings: TrainCrosscoderSettings) -> None:
+    """Train a Crosscoder.
 
     Args:
         settings: Configuration settings for SAE training
@@ -301,14 +301,14 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     # Set up logging
     setup_logging(level="INFO")
 
-    assert isinstance(settings.sae, CrossCoderConfig), "CrossCoderConfig is required for training a CrossCoder"
+    assert isinstance(settings.sae, CrosscoderConfig), "CrosscoderConfig is required for training a Crosscoder"
     assert all(
         len(activation_factory.hook_points) == len(settings.activation_factories[0].hook_points)
         for activation_factory in settings.activation_factories
     ), "Number of hook points of activation factories must be the same"
     assert (
         len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == settings.sae.n_heads
-    ), "Total number of hook points must match the number of heads in the CrossCoder"
+    ), "Total number of hook points must match the number of heads in the Crosscoder"
     head_parallel_size = len(settings.activation_factories)
 
     device_mesh = init_device_mesh(
@@ -364,7 +364,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         "data", "model"
     ]  # Remove the head dimension, since each activation factory should only be responsible for a subset of the heads.
 
-    logger.info("Setting up activation factory for CrossCoder")
+    logger.info("Setting up activation factory for Crosscoder")
     activation_factory = ActivationFactory(
         settings.activation_factories[device_mesh.get_local_rank("head")], device_mesh=activation_factory_mesh
     )
@@ -394,9 +394,9 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     if wandb_logger is not None:
         logger.info("WandB logger initialized")
 
-    logger.info("Initializing CrossCoder")
+    logger.info("Initializing Crosscoder")
     assert settings.initializer is None or not isinstance(settings.initializer, str), (
-        "Cannot use an initializer for a pretrained CrossCoder"
+        "Cannot use an initializer for a pretrained Crosscoder"
     )
     if isinstance(settings.sae, PretrainedSAE):
         sae = SparseDictionary.from_pretrained(
@@ -419,12 +419,12 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
     else:
         sae = SparseDictionary.from_config(settings.sae, device_mesh=device_mesh)
 
-    logger.info("CrossCoder initialized")
+    logger.info("Crosscoder initialized")
 
     # TODO: implement eval_fn
     eval_fn = (lambda x: None) if settings.eval else None
 
-    logger.info("Starting CrossCoder training")
+    logger.info("Starting Crosscoder training")
     if settings.trainer.from_pretrained_path is not None:
         trainer = Trainer.from_checkpoint(
             sae,
@@ -439,7 +439,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         sae=sae, activation_stream=activations_stream, eval_fn=eval_fn, wandb_logger=wandb_logger
     )
 
-    logger.info("Training completed, saving CrossCoder")
+    logger.info("Training completed, saving Crosscoder")
     if end_of_stream:
         trainer.save_checkpoint(
             sae=sae,
@@ -464,7 +464,7 @@ def train_crosscoder(settings: TrainCrossCoderSettings) -> None:
         wandb_logger.finish()
         logger.info("WandB session closed")
 
-    logger.info("CrossCoder training completed successfully")
+    logger.info("Crosscoder training completed successfully")
 
 
 class TrainCLTSettings(BaseSettings):

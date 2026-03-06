@@ -14,10 +14,10 @@ from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor, Dire
 from lm_saes.analysis.feature_analyzer import FeatureAnalyzer, FeatureAnalyzerConfig
 from lm_saes.backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
 from lm_saes.config import DatasetConfig
-from lm_saes.crosscoder import CrossCoder
 from lm_saes.database import MongoClient, MongoDBConfig
+from lm_saes.models.crosscoder import Crosscoder
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.utils.distributed.utils import broadcast_object
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
 
@@ -258,11 +258,11 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
     logger.info("SAE analysis completed successfully")
 
 
-class AnalyzeCrossCoderSettings(BaseSettings):
-    """Settings for analyzing a CrossCoder model."""
+class AnalyzeCrosscoderSettings(BaseSettings):
+    """Settings for analyzing a Crosscoder model."""
 
     sae: PretrainedSAE
-    """Configuration for the CrossCoder model architecture and parameters"""
+    """Configuration for the Crosscoder model architecture and parameters"""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -293,18 +293,18 @@ class AnalyzeCrossCoderSettings(BaseSettings):
 
 
 @torch.no_grad()
-def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
-    """Analyze a CrossCoder model. The key difference to analyze_sae is that the activation factories are a list of ActivationFactoryConfig, one for each head; and the analyzing contains a device mesh transformation from head parallelism to model (feature) parallelism.
+def analyze_crosscoder(settings: AnalyzeCrosscoderSettings) -> None:
+    """Analyze a Crosscoder model. The key difference to analyze_sae is that the activation factories are a list of ActivationFactoryConfig, one for each head; and the analyzing contains a device mesh transformation from head parallelism to model (feature) parallelism.
 
     Args:
-        settings: Configuration settings for CrossCoder analysis
+        settings: Configuration settings for Crosscoder analysis
     """
     # Set up logging
     setup_logging(level="INFO")
 
     parallel_size = len(settings.activation_factories)
 
-    logger.info(f"Analyzing CrossCoder with {parallel_size} parallel size")
+    logger.info(f"Analyzing Crosscoder with {parallel_size} parallel size")
 
     crosscoder_device_mesh = init_device_mesh(
         device_type=settings.device_type,
@@ -318,7 +318,7 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
         mesh_dim_names=("model",),
     )
 
-    logger.info("Device meshes initialized for CrossCoder analysis")
+    logger.info("Device meshes initialized for Crosscoder analysis")
 
     mongo_client = None
     if settings.mongo is not None:
@@ -328,11 +328,11 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
         assert settings.output_dir is not None, "Output directory must be provided if MongoDB client is not provided"
         logger.info(f"Analysis results will be saved to: {settings.output_dir}")
 
-    logger.info("Setting up activation factory for CrossCoder head")
+    logger.info("Setting up activation factory for Crosscoder head")
     activation_factory = ActivationFactory(settings.activation_factories[crosscoder_device_mesh.get_local_rank("head")])
 
-    logger.info("Loading CrossCoder model")
-    sae = CrossCoder.from_pretrained(
+    logger.info("Loading Crosscoder model")
+    sae = Crosscoder.from_pretrained(
         settings.sae.pretrained_name_or_path,
         device_mesh=crosscoder_device_mesh,
         device=settings.sae.device,
@@ -342,13 +342,13 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
     )
 
     assert len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == sae.cfg.n_heads, (
-        "Total number of hook points must match the number of heads in the CrossCoder"
+        "Total number of hook points must match the number of heads in the Crosscoder"
     )
 
     logger.info("Feature analyzer initialized")
     analyzer = FeatureAnalyzer(settings.analyzer)
 
-    logger.info("Processing activations for CrossCoder analysis")
+    logger.info("Processing activations for Crosscoder analysis")
 
     with torch.amp.autocast(device_type=settings.device_type, dtype=settings.amp_dtype):
         result = analyzer.analyze_chunk(
@@ -357,7 +357,7 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
             device_mesh=device_mesh,
         )
 
-    logger.info("CrossCoder analysis completed, saving results to MongoDB")
+    logger.info("Crosscoder analysis completed, saving results to MongoDB")
     start_idx = 0 if device_mesh is None else device_mesh.get_local_rank("model") * len(result)
     if mongo_client is not None:
         mongo_client.add_feature_analysis(
@@ -381,11 +381,11 @@ def analyze_crosscoder(settings: AnalyzeCrossCoderSettings) -> None:
         )
         logger.info(f"Results saved to: {pickle_path}")
 
-    logger.info("CrossCoder analysis completed successfully")
+    logger.info("Crosscoder analysis completed successfully")
 
 
 class DirectLogitAttributeSettings(BaseSettings):
-    """Settings for analyzing a CrossCoder model."""
+    """Settings for analyzing a Crosscoder model."""
 
     sae: PretrainedSAE
     """Configuration for the SAE model architecture and parameters"""
