@@ -257,11 +257,13 @@ def hook_in_fn_builder(replacement_module: SparseDictionary) -> Callable:
         ):
             assert hook.name in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
             cache_activations[hook.name + ".x"] = x
-            cache_activations[hook.name + ".feature_acts.up"] = replacement_module.encode(x)
+            cache_activations[hook.name + ".feature_acts.up"] = replacement_module.encode(
+                cache_activations[hook.name + ".x"]
+            )
             cache_activations[hook.name + ".feature_acts.down"] = (
                 cache_activations[hook.name + ".feature_acts.up"].detach().requires_grad_(True)
             )
-            return x.detach()
+            return x
 
         return hook_in_fn
 
@@ -276,7 +278,7 @@ def hook_in_fn_builder(replacement_module: SparseDictionary) -> Callable:
             assert hook.name in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
             cache_activations[hook.name + ".x"] = x
             encode_result = replacement_module.encode(
-                x,
+                cache_activations[hook.name + ".x"],
                 return_hidden_pre=False,
                 return_attention_pattern=True,
                 return_attention_score=True,
@@ -287,7 +289,7 @@ def hook_in_fn_builder(replacement_module: SparseDictionary) -> Callable:
                 cache_activations[hook.name + ".feature_acts.up"].detach().requires_grad_(True)
             )
 
-            return x.detach()
+            return x
 
         return hook_in_fn
 
@@ -316,10 +318,28 @@ def hook_out_fn_builder(replacement_module: SparseDictionary) -> Callable:
             cache_activations[hook.name + ".error"] = error
         else:
             error = cache_activations[hook.name + ".error"]
-
-        return reconstructed + error
+        return error + reconstructed
 
     return hook_out_fn
+
+
+def detach_hook_fn_builder(models: TransformerLensLanguageModel) -> list[tuple[str, Callable]]:
+
+    def detach_hook_fn(x: torch.Tensor, hook: HookPoint):
+        return x.detach()
+
+    assert models.model is not None, "model must be initialized"
+    detach_hooks = []
+    for block in models.model.blocks:
+        for module_name in ["ln1", "ln2", "ln1_post", "ln2_post"]:
+            if hasattr(block, module_name) and isinstance(getattr(block, module_name), torch.nn.Module):
+                detach_hooks.append((getattr(block, module_name).hook_scale.name, detach_hook_fn))
+        if hasattr(block, "attn") and isinstance(block.attn, torch.nn.Module):
+            assert isinstance(block.attn.hook_pattern, HookPoint), "attn must be an instance of AbstractAttention"
+            detach_hooks.append((block.attn.hook_pattern.name, detach_hook_fn))
+
+    detach_hooks.append(("ln_final.hook_scale", detach_hook_fn))
+    return detach_hooks
 
 
 class EdgeMatrix(torch.Tensor):
@@ -539,7 +559,6 @@ def update_edge_matrix_rows(edge_matrix: EdgeMatrix) -> None:
     column_start += edge_matrix.n_tokens
 
     for feature_acts_down in _get_cache_activations(edge_matrix.cache_activations, ".feature_acts.down"):
-        assert feature_acts_down.grad is not None, "feature_acts_down must have a gradient"
         if feature_acts_down.grad is not None:
             attribution = (
                 feature_acts_down[:cur_batch_size] * feature_acts_down.grad[:cur_batch_size]
@@ -639,7 +658,7 @@ class TransformerLensLanguageModel(LanguageModel):
         assert self.model is not None, "model must be initialized"
         cache_activations: dict[str, torch.Tensor] = {}
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
-        fwd_hooks_in: list[tuple[Union[str, Callable], Callable]] = [
+        fwd_hooks_in: list[tuple[str, Callable]] = [
             (
                 hook_in,
                 partial(
@@ -651,7 +670,7 @@ class TransformerLensLanguageModel(LanguageModel):
             for replacement_module in replacement_modules
             for hook_in in replacement_module.cfg.hooks_in
         ]
-        fwd_hooks_out: list[tuple[Union[str, Callable], Callable]] = [
+        fwd_hooks_out: list[tuple[str, Callable]] = [
             (
                 hook_out,
                 partial(
@@ -674,13 +693,19 @@ class TransformerLensLanguageModel(LanguageModel):
             cache_activations["hook_embed"].retain_grad()
             return x
 
-        token_fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [
+        token_fwd_hooks: list[tuple[str, Callable]] = [
             (
                 "hook_embed",
                 partial(token_fwd_hook_fn, cache_activations=cache_activations),
             )
         ]
-        with self.hooks(fwd_hooks=fwd_hooks_in + fwd_hooks_out + token_fwd_hooks):
+        detach_hooks: list[tuple[str, Callable]] = detach_hook_fn_builder(self)
+        with self.hooks(
+            fwd_hooks=cast(
+                list[tuple[str | Callable, Callable]],
+                fwd_hooks_in + fwd_hooks_out + token_fwd_hooks + detach_hooks,
+            )
+        ):
             batch_logits = self.forward(einops.repeat(tokens, "n -> b n", b=batch_size))
 
         with torch.no_grad():
@@ -688,6 +713,7 @@ class TransformerLensLanguageModel(LanguageModel):
             top_p, top_idx = torch.topk(probs, max_n_logits)
             cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
             top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
+
         cache_activations["logits"] = batch_logits[:, :, top_idx]
 
         edge_matrix = EdgeMatrix(
@@ -702,50 +728,68 @@ class TransformerLensLanguageModel(LanguageModel):
             batch_nodes.sum().backward(retain_graph=True)
             update_edge_matrix_rows(cast(EdgeMatrix, edge_matrix[i : i + cur_batch_size]))
 
-        def get_normalize_edge_matrix(matrix: torch.Tensor):
+        def get_normalize_edge_matrix(matrix: torch.Tensor) -> torch.Tensor:
             return torch.abs(matrix) / torch.abs(matrix).sum(dim=1, keepdim=True).clamp(min=1e-8)
 
-        with EdgeMatrix.no_wrap():
-            features_attributions = einops.einsum(
-                get_normalize_edge_matrix(
+        def compute_feature_influences(
+            edge_matrix: EdgeMatrix,
+            max_iter: int,
+            device: str | torch.device = "cpu",
+        ) -> torch.Tensor:
+            """Compute feature scores by iteratively propagating logit mass on the known subgraph."""
+            with EdgeMatrix.no_wrap():
+                influences = einops.einsum(
+                    top_p.to(device),
+                    get_normalize_edge_matrix(
+                        edge_matrix[
+                            : edge_matrix.n_logits,
+                            edge_matrix.n_tokens : edge_matrix.n_tokens + edge_matrix.n_active_features,
+                        ]
+                    ).to(device),
+                    "logits, logits features -> features",
+                )
+
+            if len(edge_matrix.row2column) == edge_matrix.n_logits:
+                return influences
+
+            with EdgeMatrix.no_wrap():
+                feature_to_feature = get_normalize_edge_matrix(
                     edge_matrix[
-                        : edge_matrix.n_logits,
+                        edge_matrix.n_logits : len(edge_matrix.row2column),
                         edge_matrix.n_tokens : edge_matrix.n_tokens + edge_matrix.n_active_features,
                     ]
-                ).to(self.device),
-                top_p,
-                "logits features, logits -> features",
+                ).to(device)
+            prod = influences
+            visited_features = torch.tensor(
+                edge_matrix.row2column[edge_matrix.n_logits :], device=device, dtype=torch.long
             )
-        visited_features: torch.Tensor | None = None
+            for _ in range(max_iter):
+                prod = prod[visited_features] @ feature_to_feature
+                if not torch.any(prod):
+                    break
+                influences = influences + prod
+            return influences
 
+        visited_features: torch.Tensor | None = None
         for i in tqdm(range(0, edge_matrix.max_features, batch_size)):
             cur_batch = min(batch_size, edge_matrix.max_features - i)
+            features_attributions = compute_feature_influences(edge_matrix, max_iter=len(replacement_modules) + 10)
             if visited_features is not None:
                 features_attributions[visited_features] = float("-inf")
             _, batch_feature_ids = torch.topk(features_attributions, cur_batch)
-            batch_column_ids = batch_feature_ids + edge_matrix.n_tokens
+            batch_column_ids = batch_feature_ids.to("cpu") + edge_matrix.n_tokens
             _clear_cache_activation_grads(cache_activations)
             bwd = edge_matrix.get_column_values(batch_column_ids.tolist(), "up")
-            torch.stack(bwd).sum().backward(retain_graph=True)
+            bwd = torch.stack(bwd).sum()
+            bwd.backward(retain_graph=True)
+
             update_edge_matrix_rows(
                 cast(EdgeMatrix, edge_matrix[i + edge_matrix.n_logits : i + cur_batch + edge_matrix.n_logits])
             )
-            edge_matrix.update_row_info_from_columns(batch_column_ids.tolist())
             visited_features = (
                 batch_feature_ids if visited_features is None else torch.cat([visited_features, batch_feature_ids])
             )
-            with EdgeMatrix.no_wrap():
-                features_attributions += einops.einsum(
-                    get_normalize_edge_matrix(edge_matrix[: edge_matrix.n_logits, batch_column_ids]).to(self.device),
-                    get_normalize_edge_matrix(
-                        edge_matrix[
-                            i + edge_matrix.n_logits : i + cur_batch + edge_matrix.n_logits,
-                            edge_matrix.n_tokens : edge_matrix.n_tokens + edge_matrix.n_active_features,
-                        ]
-                    ).to(self.device),
-                    top_p,
-                    "logits batch_features, batch_features features, logits -> features",
-                )
+            edge_matrix.update_row_info_from_columns(batch_column_ids.tolist())
 
         return edge_matrix
 
