@@ -10,7 +10,7 @@ import torch
 from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.activation.factory import ActivationFactory
-from lm_saes.sparse_dictionary import SparseDictionary
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 
 from .base import PostAnalysisProcessor, register_post_analysis_processor

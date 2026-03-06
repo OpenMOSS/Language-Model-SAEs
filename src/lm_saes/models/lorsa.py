@@ -22,7 +22,13 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from lm_saes.sparse_dictionary import (
+from lm_saes.models.protocols import (
+    DatasetNormStandardizable,
+    EncoderBiasInitializable,
+    NormComputing,
+    NormConstrainable,
+)
+from lm_saes.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
@@ -100,7 +106,13 @@ class LorsaConfig(SparseDictionaryConfig):
 
 
 @register_sae_model("lorsa")
-class LowRankSparseAttention(SparseDictionary):
+class LowRankSparseAttention(
+    SparseDictionary,
+    NormComputing,
+    NormConstrainable,
+    DatasetNormStandardizable,
+    EncoderBiasInitializable,
+):
     def __init__(self, cfg: LorsaConfig, device_mesh: Optional[DeviceMesh] = None):
         super().__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg
@@ -636,11 +648,6 @@ class LowRankSparseAttention(SparseDictionary):
                 query, key, value, scale=1 / self.attn_scale, is_causal=True, enable_gqa=True
             )
         return z.permute(0, 2, 1, 3).reshape(*v.shape)
-
-    @override
-    @torch.no_grad()
-    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        raise NotImplementedError("It does not make sense to init the encoder with the decoder transpose for Lorsa")
 
     @overload
     def encode(

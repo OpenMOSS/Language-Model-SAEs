@@ -76,11 +76,11 @@ export function CreateSaeSetDialog({
           } else if (saeType === 'clt') {
             return 'Cross Layer Transcoder'
           } else if (saeType === 'crosscoder') {
-            return 'CrossCoder'
+            return 'Crosscoder'
           } else if (saeType === 'lorsa') {
             return 'Lorsa'
           } else if (saeType === 'molt') {
-            return 'MoLT'
+            return 'MOLT'
           } else {
             return saeType
           }

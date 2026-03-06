@@ -4,8 +4,8 @@ from typing import List, Tuple, Union
 
 import torch
 
-from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.models.clt import CrossLayerTranscoder
+from lm_saes.models.lorsa import LowRankSparseAttention
 
 from .transcoder_set import TranscoderSet
 

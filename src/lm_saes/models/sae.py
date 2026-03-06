@@ -12,7 +12,15 @@ from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
 from lm_saes.activation_functions import JumpReLU
-from lm_saes.sparse_dictionary import (
+from lm_saes.models.protocols import (
+    ActiveSubspaceInitializable,
+    DatasetNormStandardizable,
+    EncoderBiasInitializable,
+    EncoderInitializable,
+    NormComputing,
+    NormConstrainable,
+)
+from lm_saes.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
@@ -42,7 +50,15 @@ class SAEConfig(SparseDictionaryConfig):
 
 
 @register_sae_model("sae")
-class SparseAutoEncoder(SparseDictionary):
+class SparseAutoEncoder(
+    SparseDictionary,
+    NormComputing,
+    NormConstrainable,
+    DatasetNormStandardizable,
+    EncoderInitializable,
+    ActiveSubspaceInitializable,
+    EncoderBiasInitializable,
+):
     def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
         super(SparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg
@@ -448,7 +464,7 @@ class SparseAutoEncoder(SparseDictionary):
         demeaned_label = label - label.mean(dim=0)
         U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
         proj_weight = U[:, :d_active_subspace]  # [d_model, d_active_subspace]
-        self.W_D.copy_(self.W_D.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
+        self.W_D.copy_(self.W_D[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
 
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)

@@ -9,7 +9,8 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
-from lm_saes.sparse_dictionary import (
+from lm_saes.models.protocols import DatasetNormStandardizable, NormComputing, NormConstrainable
+from lm_saes.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
@@ -126,7 +127,12 @@ class MOLTConfig(SparseDictionaryConfig):
 
 
 @register_sae_model("molt")
-class MixtureOfLinearTransform(SparseDictionary):
+class MixtureOfLinearTransform(
+    SparseDictionary,
+    NormComputing,
+    NormConstrainable,
+    DatasetNormStandardizable,
+):
     """Mixture of Linear Transforms (MOLT) model.
 
     MOLT is a sparse autoencoder variant that uses d_sae linear transforms,
@@ -454,11 +460,6 @@ class MixtureOfLinearTransform(SparseDictionary):
 
         self.cfg.norm_activation = "inference"
 
-    @override
-    @timer.time("init_encoder_with_decoder_transpose")
-    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        raise NotImplementedError("init_encoder_with_decoder_transpose does not make sense for MOLT")
-
     @overload
     def encode(
         self,
@@ -771,7 +772,7 @@ class MixtureOfLinearTransform(SparseDictionary):
     ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         x = batch[self.cfg.hook_point_in]
         encoder_kwargs = {}
-        decoder_kwargs = {"original_x": x}  # Pass original input to decoder for MoLT
+        decoder_kwargs = {"original_x": x}  # Pass original input to decoder for MOLT
         return x, encoder_kwargs, decoder_kwargs
 
     @override

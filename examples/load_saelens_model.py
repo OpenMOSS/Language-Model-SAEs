@@ -7,7 +7,7 @@ Requires: uv add "lm-saes[sae_lens]"
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.sparse_dictionary import SparseDictionary
+from lm_saes.models.sparse_dictionary import SparseDictionary
 
 # Load Gemma Scope 2 sparse dictionary from HuggingFace
 sae = SparseDictionary.from_pretrained("gemma-scope-2-1b-pt-res-all:layer_12_width_16k_l0_small").to("cpu")

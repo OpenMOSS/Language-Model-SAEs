@@ -22,7 +22,8 @@ from torch.distributed.tensor import DTensor
 from typing_extensions import override
 
 from lm_saes.activation_functions import JumpReLU
-from lm_saes.sparse_dictionary import (
+from lm_saes.models.protocols import DatasetNormStandardizable, EncoderBiasInitializable, NormComputing
+from lm_saes.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
@@ -120,7 +121,12 @@ class CLTConfig(SparseDictionaryConfig):
 
 
 @register_sae_model("clt")
-class CrossLayerTranscoder(SparseDictionary):
+class CrossLayerTranscoder(
+    SparseDictionary,
+    NormComputing,
+    DatasetNormStandardizable,
+    EncoderBiasInitializable,
+):
     """Cross Layer Transcoder (CLT) implementation.
 
     A CLT has L encoders (one per layer) and L(L+1)/2 decoders arranged in an upper
@@ -817,16 +823,6 @@ class CrossLayerTranscoder(SparseDictionary):
         return torch.ones(self.cfg.n_layers, device=self.cfg.device, dtype=self.cfg.dtype)
         return torch.ones(self.cfg.n_layers, device=self.cfg.device, dtype=self.cfg.dtype)
 
-    @override
-    def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
-        raise NotImplementedError("set_decoder_to_fixed_norm does not make sense for CLT")
-
-    @override
-    @torch.no_grad()
-    def set_encoder_to_fixed_norm(self, value: float):
-        """Set encoder weights to fixed norm."""
-        raise NotImplementedError("set_encoder_to_fixed_norm does not make sense for CLT")
-
     @torch.no_grad()
     def keep_only_decoders_for_layer_from(self, layer_from: int):
         """Keep only the decoder norm for the given layer."""
@@ -939,11 +935,6 @@ class CrossLayerTranscoder(SparseDictionary):
                 self.W_D[layer_to].data[layer_from].mul_(input_norm_factor(layer_from) / output_norm_factor(layer_to))
 
         self.cfg.norm_activation = "inference"
-
-    @override
-    @torch.no_grad()
-    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        raise NotImplementedError("init_encoder_with_decoder_transpose does not make sense for CLT")
 
     @override
     def prepare_input(
@@ -1111,11 +1102,6 @@ class CrossLayerTranscoder(SparseDictionary):
                 "reconstructed": reconstructed,
             }
         return loss
-
-    @override
-    @torch.no_grad()
-    def transform_to_unit_decoder_norm(self):
-        raise NotImplementedError("transform_to_unit_decoder_norm does not make sense for CLT")
 
     def dim_maps(self) -> "dict[str, DimMap]":
         """Return dimension maps for distributed training along feature dimension."""

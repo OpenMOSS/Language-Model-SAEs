@@ -11,7 +11,8 @@ from torch.distributed.tensor import DTensor, Partial, Shard
 from torch.distributed.tensor.experimental import local_map
 from typing_extensions import override
 
-from lm_saes.sparse_dictionary import (
+from lm_saes.models.protocols import DatasetNormStandardizable, EncoderInitializable, NormComputing, NormConstrainable
+from lm_saes.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
@@ -25,8 +26,8 @@ from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
 
-class CrossCoderSpecs(TensorSpecs):
-    """Tensor specs for CrossCoder with n_heads dimension."""
+class CrosscoderSpecs(TensorSpecs):
+    """Tensor specs for Crosscoder with n_heads dimension."""
 
     @staticmethod
     def feature_acts(tensor: torch.Tensor) -> tuple[str, ...]:
@@ -48,11 +49,11 @@ class CrossCoderSpecs(TensorSpecs):
 
     @staticmethod
     def label(tensor: torch.Tensor) -> tuple[str, ...]:
-        return CrossCoderSpecs.reconstructed(tensor)
+        return CrosscoderSpecs.reconstructed(tensor)
 
 
 @register_sae_config("crosscoder")
-class CrossCoderConfig(SparseDictionaryConfig):
+class CrosscoderConfig(SparseDictionaryConfig):
     sae_type: str = "crosscoder"
     hook_points: list[str]
     """Hook points for each head. Crosscoder reads from these hook points (simultaneously) and writes to the same hook points."""
@@ -75,7 +76,13 @@ class CrossCoderConfig(SparseDictionaryConfig):
 
 
 @register_sae_model("crosscoder")
-class CrossCoder(SparseDictionary):
+class Crosscoder(
+    SparseDictionary,
+    NormComputing,
+    NormConstrainable,
+    DatasetNormStandardizable,
+    EncoderInitializable,
+):
     """Sparse AutoEncoder model.
 
     An autoencoder model that learns to compress the input activation tensor into a high-dimensional but sparse feature activation tensor.
@@ -83,17 +90,17 @@ class CrossCoder(SparseDictionary):
     Can also act as a transcoder model, which learns to compress the input activation tensor into a feature activation tensor, and then reconstruct a label activation tensor from the feature activation tensor.
     """
 
-    specs: type[TensorSpecs] = CrossCoderSpecs
-    """Tensor specs for CrossCoder with n_heads dimension."""
+    specs: type[TensorSpecs] = CrosscoderSpecs
+    """Tensor specs for Crosscoder with n_heads dimension."""
 
-    def __init__(self, cfg: CrossCoderConfig, device_mesh: Optional[DeviceMesh] = None):
-        super(CrossCoder, self).__init__(cfg, device_mesh)
+    def __init__(self, cfg: CrosscoderConfig, device_mesh: Optional[DeviceMesh] = None):
+        super(Crosscoder, self).__init__(cfg, device_mesh)
         self.cfg = cfg
 
         # Assertions
-        assert cfg.sparsity_include_decoder_norm, "Sparsity should include decoder norm in CrossCoder"
-        assert cfg.use_decoder_bias, "Decoder bias should be used in CrossCoder"
-        assert not cfg.use_triton_kernel, "Triton kernel is not supported in CrossCoder"
+        assert cfg.sparsity_include_decoder_norm, "Sparsity should include decoder norm in Crosscoder"
+        assert cfg.use_decoder_bias, "Decoder bias should be used in Crosscoder"
+        assert not cfg.use_triton_kernel, "Triton kernel is not supported in Crosscoder"
 
         # Initialize weights and biases
         if device_mesh is None:
@@ -633,7 +640,7 @@ class CrossCoder(SparseDictionary):
         explained_variance: torch.Tensor,
         **kwargs,
     ) -> dict[str, float]:
-        """Compute per-head training metrics for CrossCoder."""
+        """Compute per-head training metrics for Crosscoder."""
         assert explained_variance.ndim == 1 and len(explained_variance) == len(self.cfg.hook_points)
         feature_act_spec = self.specs.feature_acts(feature_acts)
         l0_spec = tuple(spec for spec in feature_act_spec if spec != "sae")
@@ -665,7 +672,7 @@ class CrossCoder(SparseDictionary):
     @override
     @torch.no_grad()
     def transform_to_unit_decoder_norm(self):
-        raise NotImplementedError("Transform to unit decoder norm is not supported for CrossCoder")
+        raise NotImplementedError("Transform to unit decoder norm is not supported for Crosscoder")
 
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.

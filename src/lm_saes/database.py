@@ -14,8 +14,8 @@ from tqdm import tqdm
 
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.config import DatasetConfig
-from lm_saes.sae import SAEConfig
-from lm_saes.sparse_dictionary import SparseDictionaryConfig
+from lm_saes.models.sae import SAEConfig
+from lm_saes.models.sparse_dictionary import SparseDictionaryConfig
 from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
 
 

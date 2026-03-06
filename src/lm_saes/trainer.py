@@ -33,8 +33,8 @@ from lm_saes.metrics import (
     Metric,
     ModelSpecificMetric,
 )
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.optim import SparseAdam, clip_grad_norm, get_scheduler
-from lm_saes.sparse_dictionary import SparseDictionary
 from lm_saes.utils.distributed import is_primary_rank
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics

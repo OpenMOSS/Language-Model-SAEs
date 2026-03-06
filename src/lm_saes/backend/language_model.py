@@ -37,8 +37,8 @@ from lm_saes.utils.misc import ensure_tokenized, item, pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
-    from lm_saes.lorsa import LowRankSparseAttention
-    from lm_saes.sae import SparseDictionary
+    from lm_saes.models.lorsa import LowRankSparseAttention
+    from lm_saes.models.sparse_dictionary import SparseDictionary
 
 
 def to_tokens(tokenizer, text, max_length, device="cpu", prepend_bos=True):
@@ -244,8 +244,8 @@ class LanguageModel(ABC):
 
 
 def hook_in_fn_builder(replacement_module: SparseDictionary) -> Callable:
-    from lm_saes.lorsa import LowRankSparseAttention
-    from lm_saes.sae import SparseAutoEncoder
+    from lm_saes.models.lorsa import LowRankSparseAttention
+    from lm_saes.models.sae import SparseAutoEncoder
 
     if isinstance(replacement_module, SparseAutoEncoder):
 

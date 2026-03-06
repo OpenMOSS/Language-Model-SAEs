@@ -11,10 +11,10 @@ from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.activation.factory import ActivationFactory
-from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseConfig
-from lm_saes.crosscoder import CrossCoder
-from lm_saes.sparse_dictionary import SparseDictionary
+from lm_saes.models.clt import CrossLayerTranscoder
+from lm_saes.models.crosscoder import Crosscoder
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.utils.discrete import KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap, is_primary_rank, masked_fill, to_local
 from lm_saes.utils.distributed.ops import item
@@ -282,7 +282,7 @@ class FeatureAnalyzer:
                 feature_acts = feature_acts.redistribute(placements=DimMap({"model": -1}).placements(device_mesh))
                 if not isinstance(tokens, DTensor):
                     tokens = DTensor.from_local(tokens, device_mesh, placements=DimMap({}).placements(device_mesh))
-            if isinstance(sae, CrossCoder):
+            if isinstance(sae, Crosscoder):
                 feature_acts = feature_acts.amax(dim=-2)
             assert feature_acts.shape == (tokens.shape[0], tokens.shape[1], sae.cfg.d_sae), (
                 f"feature_acts.shape: {feature_acts.shape}, expected: {(tokens.shape[0], tokens.shape[1], sae.cfg.d_sae)}"

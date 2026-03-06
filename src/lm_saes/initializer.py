@@ -9,12 +9,18 @@ from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
-from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import BaseConfig
-from lm_saes.lorsa import LowRankSparseAttention
-from lm_saes.molt import MixtureOfLinearTransform
-from lm_saes.sae import SparseAutoEncoder
-from lm_saes.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
+from lm_saes.models.clt import CrossLayerTranscoder
+from lm_saes.models.lorsa import LowRankSparseAttention
+from lm_saes.models.molt import MixtureOfLinearTransform
+from lm_saes.models.protocols import (
+    ActiveSubspaceInitializable,
+    EncoderBiasInitializable,
+    EncoderInitializable,
+    NormConstrainable,
+)
+from lm_saes.models.sae import SparseAutoEncoder
+from lm_saes.models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.misc import calculate_activation_norm
@@ -68,6 +74,9 @@ class Initializer:
         )
 
         if self.cfg.init_encoder_with_decoder_transpose:
+            assert isinstance(sae, EncoderInitializable), (
+                f"{type(sae).__name__} does not support encoder initialization from decoder (EncoderInitializable)"
+            )
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
 
         return sae
@@ -104,18 +113,22 @@ class Initializer:
                     f"Bias initialization method {self.cfg.bias_init_method} is not supported for {sae.cfg.sae_type}"
                 )
 
-        if self.cfg.init_encoder_bias_with_mean_hidden_pre:
-            sae.init_encoder_bias_with_mean_hidden_pre(batch)
-
         @torch.autocast(device_type=sae.cfg.device, dtype=sae.cfg.dtype)
         def grid_search_best_init_norm(search_range: List[float]) -> float:
+            assert isinstance(sae, NormConstrainable), (
+                f"{type(sae).__name__} does not support norm constraints (NormConstrainable)"
+            )
             losses: Dict[float, float] = {}
 
             for norm in search_range:
                 sae.set_decoder_to_fixed_norm(norm, force_exact=True)
                 if self.cfg.init_encoder_with_decoder_transpose:
+                    assert isinstance(sae, EncoderInitializable)
                     sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
                 if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+                    assert isinstance(sae, EncoderBiasInitializable), (
+                        f"{type(sae).__name__} does not support encoder bias initialization (EncoderBiasInitializable)"
+                    )
                     sae.init_encoder_bias_with_mean_hidden_pre(batch)
                 mse = item(sae.compute_loss(batch)["l_rec"].mean())
                 losses[norm] = mse
@@ -132,11 +145,19 @@ class Initializer:
             if wandb_logger is not None:
                 wandb_logger.log({"best_norm_fine_grained": best_norm_fine_grained})
 
+            assert isinstance(sae, NormConstrainable)
             sae.set_decoder_to_fixed_norm(best_norm_fine_grained, force_exact=True)
 
         if self.cfg.init_encoder_with_decoder_transpose:
+            assert isinstance(sae, EncoderInitializable), (
+                f"{type(sae).__name__} does not support encoder initialization from decoder (EncoderInitializable)"
+            )
             sae.init_encoder_with_decoder_transpose(self.cfg.init_encoder_with_decoder_transpose_factor)
+
         if self.cfg.init_encoder_bias_with_mean_hidden_pre:
+            assert isinstance(sae, EncoderBiasInitializable), (
+                f"{type(sae).__name__} does not support encoder bias initialization (EncoderBiasInitializable)"
+            )
             sae.init_encoder_bias_with_mean_hidden_pre(batch)
 
         return sae
@@ -243,6 +264,9 @@ class Initializer:
             else:
                 assert self.cfg.d_active_subspace is not None, (
                     "d_active_subspace must be provided for initializing other SAEs with active subspace"
+                )
+                assert isinstance(sae, ActiveSubspaceInitializable), (
+                    f"{type(sae).__name__} does not support active subspace initialization (ActiveSubspaceInitializable)"
                 )
                 sae.init_W_D_with_active_subspace(batch=batch, d_active_subspace=self.cfg.d_active_subspace)
 
