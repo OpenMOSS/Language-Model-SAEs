@@ -29,6 +29,9 @@ interface TopActivationSample {
   sampleIndex?: number;
 }
 
+const CANVAS_SIZE = 480;
+const PADDING = 32;
+
 interface DecoderWeightsUmapResponse {
   embedding: number[][];
   feature_ids: number[];
@@ -384,9 +387,9 @@ export const PositionFeatureUmapCard = ({
       if (p.y > localMaxY) localMaxY = p.y;
     }
 
-    const padding = 32;
-    const width = 480 - padding * 2;
-    const height = 480 - padding * 2;
+    const padding = PADDING;
+    const width = CANVAS_SIZE - padding * 2;
+    const height = CANVAS_SIZE - padding * 2;
     const dx = localMaxX - localMinX || 1;
     const dy = localMaxY - localMinY || 1;
 
@@ -432,8 +435,11 @@ export const PositionFeatureUmapCard = ({
   const handleSvgMouseDown = (event: React.MouseEvent<SVGSVGElement>) => {
     const svg = event.currentTarget;
     const rect = svg.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 480;
-    const y = ((event.clientY - rect.top) / rect.height) * 480;
+    const rawX = ((event.clientX - rect.left) / rect.width) * CANVAS_SIZE;
+    const rawY = ((event.clientY - rect.top) / rect.height) * CANVAS_SIZE;
+    // Clamp到实际绘制区域（去掉 padding），这样起点就和点云坐标严格对齐
+    const x = Math.min(Math.max(rawX, PADDING), CANVAS_SIZE - PADDING);
+    const y = Math.min(Math.max(rawY, PADDING), CANVAS_SIZE - PADDING);
     setIsBrushing(true);
     setBrushRect({ x1: x, y1: y, x2: x, y2: y });
   };
@@ -442,8 +448,10 @@ export const PositionFeatureUmapCard = ({
     if (!isBrushing || !brushRect) return;
     const svg = event.currentTarget;
     const rect = svg.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 480;
-    const y = ((event.clientY - rect.top) / rect.height) * 480;
+    const rawX = ((event.clientX - rect.left) / rect.width) * CANVAS_SIZE;
+    const rawY = ((event.clientY - rect.top) / rect.height) * CANVAS_SIZE;
+    const x = Math.min(Math.max(rawX, PADDING), CANVAS_SIZE - PADDING);
+    const y = Math.min(Math.max(rawY, PADDING), CANVAS_SIZE - PADDING);
     setBrushRect((prev) => (prev ? { ...prev, x2: x, y2: y } : prev));
   };
 
@@ -511,7 +519,7 @@ export const PositionFeatureUmapCard = ({
               onClick={() => setShowOnlyActive((prev) => !prev)}
               disabled={umapPoints.length === 0}
             >
-              {showOnlyActive ? "显示所有 features" : "只显示激活的 features"}
+              {showOnlyActive ? "Visualize all features" : "Only visualize activated features"}
             </Button>
             {zoomRect && (
               <Button
@@ -520,7 +528,7 @@ export const PositionFeatureUmapCard = ({
                 onClick={() => setZoomRect(null)}
                 disabled={umapPoints.length === 0}
               >
-                重置放大区域
+                Reset zoom region
               </Button>
             )}
             {umapPoints.length > 0 && (
@@ -549,7 +557,7 @@ export const PositionFeatureUmapCard = ({
               <div>
                 <div className="mb-2 text-sm text-gray-600">
                   UMAP over all SAE decoder features (blue dots are features activated at position {position}, gray are
-                  inactive). Click a dot to inspect its top activation and interpretation. 拖拽一个矩形可以放大查看该区域。
+                  inactive). Click a dot to inspect its top activation and interpretation. Drag a rectangle to zoom in on that area.
                 </div>
                 <svg
                   viewBox="0 0 480 480"
