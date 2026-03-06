@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,17 @@ interface TopActivationSample {
 
 const CANVAS_SIZE = 480;
 const PADDING = 32;
+
+/** Convert client (screen) coordinates to SVG viewBox coordinates. Handles non-square SVG and scaling correctly. */
+function clientToSvgViewBox(svg: SVGSVGElement, clientX: number, clientY: number): { x: number; y: number } {
+  const pt = svg.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return { x: 0, y: 0 };
+  const svgPt = pt.matrixTransform(ctm.inverse());
+  return { x: svgPt.x, y: svgPt.y };
+}
 
 interface DecoderWeightsUmapResponse {
   embedding: number[][];
@@ -177,6 +188,7 @@ export const PositionFeatureUmapCard = ({
   const [zoomRect, setZoomRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [brushRect, setBrushRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [isBrushing, setIsBrushing] = useState(false);
+  const didBrushThisGesture = useRef(false);
 
   const getDictionaryName = useCallback((): string => {
     const suffix = componentType === "attn" ? "A" : "M";
@@ -433,13 +445,11 @@ export const PositionFeatureUmapCard = ({
   );
 
   const handleSvgMouseDown = (event: React.MouseEvent<SVGSVGElement>) => {
+    didBrushThisGesture.current = false;
     const svg = event.currentTarget;
-    const rect = svg.getBoundingClientRect();
-    const rawX = ((event.clientX - rect.left) / rect.width) * CANVAS_SIZE;
-    const rawY = ((event.clientY - rect.top) / rect.height) * CANVAS_SIZE;
-    // Clamp到实际绘制区域（去掉 padding），这样起点就和点云坐标严格对齐
-    const x = Math.min(Math.max(rawX, PADDING), CANVAS_SIZE - PADDING);
-    const y = Math.min(Math.max(rawY, PADDING), CANVAS_SIZE - PADDING);
+    const { x: rawX, y: rawY } = clientToSvgViewBox(svg, event.clientX, event.clientY);
+    const x = Math.min(Math.max(rawX, 0), CANVAS_SIZE);
+    const y = Math.min(Math.max(rawY, 0), CANVAS_SIZE);
     setIsBrushing(true);
     setBrushRect({ x1: x, y1: y, x2: x, y2: y });
   };
@@ -447,11 +457,9 @@ export const PositionFeatureUmapCard = ({
   const handleSvgMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
     if (!isBrushing || !brushRect) return;
     const svg = event.currentTarget;
-    const rect = svg.getBoundingClientRect();
-    const rawX = ((event.clientX - rect.left) / rect.width) * CANVAS_SIZE;
-    const rawY = ((event.clientY - rect.top) / rect.height) * CANVAS_SIZE;
-    const x = Math.min(Math.max(rawX, PADDING), CANVAS_SIZE - PADDING);
-    const y = Math.min(Math.max(rawY, PADDING), CANVAS_SIZE - PADDING);
+    const { x: rawX, y: rawY } = clientToSvgViewBox(svg, event.clientX, event.clientY);
+    const x = Math.min(Math.max(rawX, 0), CANVAS_SIZE);
+    const y = Math.min(Math.max(rawY, 0), CANVAS_SIZE);
     setBrushRect((prev) => (prev ? { ...prev, x2: x, y2: y } : prev));
   };
 
@@ -467,6 +475,7 @@ export const PositionFeatureUmapCard = ({
       setBrushRect(null);
       return;
     }
+    didBrushThisGesture.current = true;
     setZoomRect({
       x1: Math.min(x1, x2),
       y1: Math.min(y1, y2),
@@ -596,10 +605,10 @@ export const PositionFeatureUmapCard = ({
                   )}
                   {visiblePoints.map((p) => {
                     const isSelected = selectedPoint?.featureIndex === p.featureIndex;
-                    const fill = p.isActive ? "#2563EB" : "rgba(148, 163, 184, 0.4)";
-                    const radius = p.isActive ? 3 : 2;
+                    const fill = p.isActive ? "#2563EB" : "rgba(148, 163, 184, 0.35)";
+                    const radius = p.isActive ? 1.2 : 0.9;
                     const stroke = isSelected ? "#F97316" : p.isActive ? "#1D4ED8" : "rgba(148, 163, 184, 0.8)";
-                    const strokeWidth = isSelected ? 2 : p.isActive ? 1.5 : 1;
+                    const strokeWidth = isSelected ? 1.2 : p.isActive ? 0.8 : 0.5;
                     return (
                       <circle
                         key={p.featureIndex}
@@ -611,6 +620,7 @@ export const PositionFeatureUmapCard = ({
                         strokeWidth={strokeWidth}
                         className="cursor-pointer"
                         onClick={() => {
+                          if (didBrushThisGesture.current) return;
                           setSelectedPoint(p);
                           void loadFeatureDetail(p.featureIndex);
                         }}
