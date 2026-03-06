@@ -31,6 +31,8 @@ interface TopActivationSample {
 
 const CANVAS_SIZE = 480;
 const PADDING = 32;
+const PLOT_WIDTH = CANVAS_SIZE - PADDING * 2;
+const PLOT_HEIGHT = CANVAS_SIZE - PADDING * 2;
 
 /** Convert client (screen) coordinates to SVG viewBox coordinates. Handles non-square SVG and scaling correctly. */
 function clientToSvgViewBox(svg: SVGSVGElement, clientX: number, clientY: number): { x: number; y: number } {
@@ -41,6 +43,30 @@ function clientToSvgViewBox(svg: SVGSVGElement, clientX: number, clientY: number
   if (!ctm) return { x: 0, y: 0 };
   const svgPt = pt.matrixTransform(ctm.inverse());
   return { x: svgPt.x, y: svgPt.y };
+}
+
+type ViewRect = { x1: number; y1: number; x2: number; y2: number };
+
+/** Map point from zoom rect (full viewBox) to display coordinates (fill canvas). */
+function zoomRectToDisplay(
+  zoomRect: ViewRect,
+  fullX: number,
+  fullY: number
+): { dx: number; dy: number } {
+  const w = zoomRect.x2 - zoomRect.x1 || 1;
+  const h = zoomRect.y2 - zoomRect.y1 || 1;
+  const dx = PADDING + ((fullX - zoomRect.x1) / w) * PLOT_WIDTH;
+  const dy = PADDING + ((fullY - zoomRect.y1) / h) * PLOT_HEIGHT;
+  return { dx, dy };
+}
+
+/** Map display coordinates (0–480) to full viewBox when zoomed. */
+function displayToZoomRect(zoomRect: ViewRect, displayX: number, displayY: number): { x: number; y: number } {
+  const w = zoomRect.x2 - zoomRect.x1 || 1;
+  const h = zoomRect.y2 - zoomRect.y1 || 1;
+  const x = zoomRect.x1 + ((displayX - PADDING) / PLOT_WIDTH) * w;
+  const y = zoomRect.y1 + ((displayY - PADDING) / PLOT_HEIGHT) * h;
+  return { x, y };
 }
 
 interface DecoderWeightsUmapResponse {
@@ -439,6 +465,16 @@ export const PositionFeatureUmapCard = ({
     });
   }, [scaledPoints, showOnlyActive, zoomRect]);
 
+  const displayPoints = useMemo(() => {
+    if (zoomRect) {
+      return visiblePoints.map((p) => {
+        const { dx, dy } = zoomRectToDisplay(zoomRect, p.sx, p.sy);
+        return { ...p, dx, dy };
+      });
+    }
+    return visiblePoints.map((p) => ({ ...p, dx: p.sx, dy: p.sy }));
+  }, [visiblePoints, zoomRect]);
+
   const activeCount = useMemo(
     () => visiblePoints.filter((p) => p.isActive).length,
     [visiblePoints]
@@ -448,8 +484,16 @@ export const PositionFeatureUmapCard = ({
     didBrushThisGesture.current = false;
     const svg = event.currentTarget;
     const { x: rawX, y: rawY } = clientToSvgViewBox(svg, event.clientX, event.clientY);
-    const x = Math.min(Math.max(rawX, 0), CANVAS_SIZE);
-    const y = Math.min(Math.max(rawY, 0), CANVAS_SIZE);
+    let x: number;
+    let y: number;
+    if (zoomRect) {
+      const full = displayToZoomRect(zoomRect, rawX, rawY);
+      x = Math.min(Math.max(full.x, zoomRect.x1), zoomRect.x2);
+      y = Math.min(Math.max(full.y, zoomRect.y1), zoomRect.y2);
+    } else {
+      x = Math.min(Math.max(rawX, 0), CANVAS_SIZE);
+      y = Math.min(Math.max(rawY, 0), CANVAS_SIZE);
+    }
     setIsBrushing(true);
     setBrushRect({ x1: x, y1: y, x2: x, y2: y });
   };
@@ -458,8 +502,16 @@ export const PositionFeatureUmapCard = ({
     if (!isBrushing || !brushRect) return;
     const svg = event.currentTarget;
     const { x: rawX, y: rawY } = clientToSvgViewBox(svg, event.clientX, event.clientY);
-    const x = Math.min(Math.max(rawX, 0), CANVAS_SIZE);
-    const y = Math.min(Math.max(rawY, 0), CANVAS_SIZE);
+    let x: number;
+    let y: number;
+    if (zoomRect) {
+      const full = displayToZoomRect(zoomRect, rawX, rawY);
+      x = Math.min(Math.max(full.x, zoomRect.x1), zoomRect.x2);
+      y = Math.min(Math.max(full.y, zoomRect.y1), zoomRect.y2);
+    } else {
+      x = Math.min(Math.max(rawX, 0), CANVAS_SIZE);
+      y = Math.min(Math.max(rawY, 0), CANVAS_SIZE);
+    }
     setBrushRect((prev) => (prev ? { ...prev, x2: x, y2: y } : prev));
   };
 
@@ -494,6 +546,42 @@ export const PositionFeatureUmapCard = ({
     if (isBrushing) {
       finalizeBrush();
     }
+  };
+
+  const handleZoomIn = () => {
+    if (!zoomRect) return;
+    const w = zoomRect.x2 - zoomRect.x1;
+    const h = zoomRect.y2 - zoomRect.y1;
+    const cx = (zoomRect.x1 + zoomRect.x2) / 2;
+    const cy = (zoomRect.y1 + zoomRect.y2) / 2;
+    const factor = 0.75;
+    setZoomRect({
+      x1: cx - (w * factor) / 2,
+      y1: cy - (h * factor) / 2,
+      x2: cx + (w * factor) / 2,
+      y2: cy + (h * factor) / 2,
+    });
+  };
+
+  const handleZoomOut = () => {
+    if (!zoomRect) return;
+    const w = zoomRect.x2 - zoomRect.x1;
+    const h = zoomRect.y2 - zoomRect.y1;
+    const cx = (zoomRect.x1 + zoomRect.x2) / 2;
+    const cy = (zoomRect.y1 + zoomRect.y2) / 2;
+    const factor = 1.33;
+    const newW = w * factor;
+    const newH = h * factor;
+    if (newW >= CANVAS_SIZE - PADDING * 2 && newH >= CANVAS_SIZE - PADDING * 2) {
+      setZoomRect(null);
+      return;
+    }
+    setZoomRect({
+      x1: Math.max(0, cx - newW / 2),
+      y1: Math.max(0, cy - newH / 2),
+      x2: Math.min(CANVAS_SIZE, cx + newW / 2),
+      y2: Math.min(CANVAS_SIZE, cy + newH / 2),
+    });
   };
 
   return (
@@ -531,14 +619,34 @@ export const PositionFeatureUmapCard = ({
               {showOnlyActive ? "Visualize all features" : "Only visualize activated features"}
             </Button>
             {zoomRect && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setZoomRect(null)}
-                disabled={umapPoints.length === 0}
-              >
-                Reset zoom region
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleZoomIn}
+                  disabled={umapPoints.length === 0}
+                  title="Zoom in on current view"
+                >
+                  Zoom in
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleZoomOut}
+                  disabled={umapPoints.length === 0}
+                  title="Zoom out or reset to full view"
+                >
+                  Zoom out
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setZoomRect(null)}
+                  disabled={umapPoints.length === 0}
+                >
+                  Reset zoom region
+                </Button>
+              </>
             )}
             {umapPoints.length > 0 && (
               <div className="text-sm text-gray-600">
@@ -581,29 +689,43 @@ export const PositionFeatureUmapCard = ({
                   <rect x={0} y={0} width={480} height={480} fill="#ffffff" />
                   {zoomRect && (
                     <rect
-                      x={Math.min(zoomRect.x1, zoomRect.x2)}
-                      y={Math.min(zoomRect.y1, zoomRect.y2)}
-                      width={Math.abs(zoomRect.x2 - zoomRect.x1)}
-                      height={Math.abs(zoomRect.y2 - zoomRect.y1)}
+                      x={PADDING}
+                      y={PADDING}
+                      width={PLOT_WIDTH}
+                      height={PLOT_HEIGHT}
                       fill="none"
                       stroke="#9CA3AF"
                       strokeWidth={1}
                       strokeDasharray="4 4"
                     />
                   )}
-                  {brushRect && isBrushing && (
-                    <rect
-                      x={Math.min(brushRect.x1, brushRect.x2)}
-                      y={Math.min(brushRect.y1, brushRect.y2)}
-                      width={Math.abs(brushRect.x2 - brushRect.x1)}
-                      height={Math.abs(brushRect.y2 - brushRect.y1)}
-                      fill="rgba(37, 99, 235, 0.08)"
-                      stroke="#2563EB"
-                      strokeWidth={1}
-                      strokeDasharray="4 4"
-                    />
-                  )}
-                  {visiblePoints.map((p) => {
+                  {brushRect && isBrushing && (() => {
+                    const x1 = zoomRect
+                      ? zoomRectToDisplay(zoomRect, brushRect.x1, brushRect.y1).dx
+                      : brushRect.x1;
+                    const y1 = zoomRect
+                      ? zoomRectToDisplay(zoomRect, brushRect.x1, brushRect.y1).dy
+                      : brushRect.y1;
+                    const x2 = zoomRect
+                      ? zoomRectToDisplay(zoomRect, brushRect.x2, brushRect.y2).dx
+                      : brushRect.x2;
+                    const y2 = zoomRect
+                      ? zoomRectToDisplay(zoomRect, brushRect.x2, brushRect.y2).dy
+                      : brushRect.y2;
+                    return (
+                      <rect
+                        x={Math.min(x1, x2)}
+                        y={Math.min(y1, y2)}
+                        width={Math.abs(x2 - x1)}
+                        height={Math.abs(y2 - y1)}
+                        fill="rgba(37, 99, 235, 0.08)"
+                        stroke="#2563EB"
+                        strokeWidth={1}
+                        strokeDasharray="4 4"
+                      />
+                    );
+                  })()}
+                  {displayPoints.map((p) => {
                     const isSelected = selectedPoint?.featureIndex === p.featureIndex;
                     const fill = p.isActive ? "#2563EB" : "rgba(148, 163, 184, 0.35)";
                     const radius = p.isActive ? 1.2 : 0.9;
@@ -612,8 +734,8 @@ export const PositionFeatureUmapCard = ({
                     return (
                       <circle
                         key={p.featureIndex}
-                        cx={p.sx}
-                        cy={p.sy}
+                        cx={p.dx}
+                        cy={p.dy}
                         r={radius}
                         fill={fill}
                         stroke={stroke}
