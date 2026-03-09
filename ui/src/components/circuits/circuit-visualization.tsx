@@ -294,7 +294,13 @@ export const CircuitVisualization = () => {
         : [...pinnedIds, node.nodeId];
       setPinnedIds(newPinnedIds);
     } else {
-      // Set clicked node
+      // Background click (empty nodeId) should clear selection
+      if (!node.nodeId) {
+        setClickedId(null);
+        return;
+      }
+
+      // Set clicked node (single-file: toggle, multi-file: handled in LinkGraphContainer)
       const newClickedId = node.nodeId === clickedId ? null : node.nodeId;
       setClickedId(newClickedId);
     }

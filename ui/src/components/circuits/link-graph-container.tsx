@@ -40,6 +40,16 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   };
 
   const handleNodeClick = useCallback(async (nodeId: string, metaKey: boolean) => {
+    // Background click (empty id): clear selection-related UI without looking up a node
+    if (!nodeId) {
+      onFeatureSelect?.(null);
+      onConnectedFeaturesSelect?.([]);
+      onConnectedFeaturesLoading?.(false);
+      // Propagate a dummy node with empty nodeId so parent can clear clickedId
+      onNodeClick?.({ nodeId: "", id: "", feature_type: "" } as any, metaKey);
+      return;
+    }
+
     // Try both id and nodeId to handle different node formats
     const node = data.nodes.find(n => n.nodeId === nodeId || n.id === nodeId);
     if (!node) {

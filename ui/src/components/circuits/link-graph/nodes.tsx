@@ -132,10 +132,11 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       .attr("fill", "none")
       .style("opacity", (d: any) => (d.nodeId === hoveredId ? 1 : 0));
 
-    // Cleanup: D3 elements will be fully re-created on next effect run,
-    // no need to mutate React hover state here (avoids hover flicker).
-    return () => {};
-  }, [positionedNodes, positionedLinks, clickedId, hoveredId, handleMouseEnter, handleClick]);
+    // Cleanup: clear hover state when graph data/layout changes significantly
+    return () => {
+      handleMouseLeave();
+    };
+  }, [positionedNodes, positionedLinks, clickedId, handleMouseEnter, handleMouseLeave, handleClick]);
 
   return (
     <g 
