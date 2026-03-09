@@ -303,13 +303,10 @@ export const CircuitVisualization = () => {
       const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
       const isMultiFile = !!(names && names.length > 1);
 
-      // Multi-file: clicking same node keeps selection (avoids flicker)
-      if (isMultiFile && node.nodeId === clickedId) {
-        return;
-      }
-
-      // Single-file: toggle selection; multi-file: set new selection
-      const newClickedId = node.nodeId === clickedId ? null : node.nodeId;
+      // Single-file: toggle selection on same-node click; multi-file: always set (no toggle to avoid flicker)
+      const newClickedId = isMultiFile
+        ? node.nodeId
+        : (node.nodeId === clickedId ? null : node.nodeId);
       setClickedId(newClickedId);
     }
   }, [clickedId, pinnedIds, linkGraphData, setClickedId, setPinnedIds]);
@@ -2848,7 +2845,9 @@ export const CircuitVisualization = () => {
 
         {/* Bottom Row: Feature Card below Link Graph Container */}
         {clickedId && displayLinkGraphData && (() => {
-          const currentNode = displayLinkGraphData.nodes.find(node => node.nodeId === clickedId);
+          const currentNode = displayLinkGraphData.nodes.find(
+            node => String(node.nodeId ?? node.id ?? "") === String(clickedId)
+          );
           
           if (!currentNode) {
             return null;
@@ -2866,17 +2865,9 @@ export const CircuitVisualization = () => {
             return { layerIdx: 0, featureIndex: 0 };
           };
           
-          const { layerIdx, featureIndex } = parseNodeId(currentNode.nodeId);
+          const { layerIdx, featureIndex } = parseNodeId(currentNode.nodeId ?? currentNode.id ?? "");
           const isLorsa = currentNode.feature_type?.toLowerCase() === 'lorsa';
           
-          console.log('Node connection debugging:', {
-            nodeId: currentNode.nodeId,
-            hasSourceLinks: !!currentNode.sourceLinks,
-            sourceLinksCount: currentNode.sourceLinks?.length || 0,
-            hasTargetLinks: !!currentNode.targetLinks,
-            targetLinksCount: currentNode.targetLinks?.length || 0,
-            totalLinksInData: displayLinkGraphData.links.length
-          });
           
           const dictionary = getDictionaryName(layerIdx, isLorsa);
           

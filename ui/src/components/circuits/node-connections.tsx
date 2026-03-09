@@ -40,7 +40,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
 
   // Memoize the clicked node to avoid re-finding it on every render
   const clickedNode = useMemo(() => 
-    data.nodes.find(node => node.nodeId === clickedId), 
+    data.nodes.find(node => String(node.nodeId ?? node.id ?? "") === String(clickedId)), 
     [data.nodes, clickedId]
   );
 
@@ -191,7 +191,7 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
   }, []);
 
   const handleNodeClick = useCallback(async (nodeId: string, metaKey: boolean) => {
-    const node = data.nodes.find(n => n.id === nodeId);
+    const node = data.nodes.find(n => String(n.nodeId ?? n.id ?? "") === String(nodeId));
     if (!node) return;
 
     // Always call parent handler first to update global state
