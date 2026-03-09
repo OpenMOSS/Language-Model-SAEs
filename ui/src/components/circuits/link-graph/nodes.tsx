@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 // @ts-ignore
 import d3 from "../static_js/d3";
 
@@ -24,18 +24,16 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
 
   const svgRef = useRef<SVGSVGElement>(null);
 
-  // Memoize the event handlers to prevent them from being recreated on every render
-  const handleMouseEnter = useCallback((nodeId: string) => {
-    onNodeMouseEnter(nodeId);
-  }, [onNodeMouseEnter]);
-
-  const handleMouseLeave = useCallback(() => {
-    onNodeMouseLeave();
-  }, [onNodeMouseLeave]);
-
-  const handleClick = useCallback((nodeId: string, metaKey: boolean) => {
-    onNodeClick(nodeId, metaKey);
-  }, [onNodeClick]);
+  // Use refs for callbacks so effect doesn't re-run when parent re-renders (e.g. on hoveredId change).
+  // In multi-file mode, handleFeatureHover depends on hoveredId, so the callback chain gets new refs
+  // on every hover, which would cause this effect to run, destroy DOM, recreate nodes, and trigger
+  // mouseenter again -> infinite loop. Refs avoid that.
+  const onNodeMouseEnterRef = useRef(onNodeMouseEnter);
+  const onNodeMouseLeaveRef = useRef(onNodeMouseLeave);
+  const onNodeClickRef = useRef(onNodeClick);
+  onNodeMouseEnterRef.current = onNodeMouseEnter;
+  onNodeMouseLeaveRef.current = onNodeMouseLeave;
+  onNodeClickRef.current = onNodeClick;
 
   const isErrorNode = (d: any) =>
     typeof d.feature_type === "string" && d.feature_type.toLowerCase().includes("error");
@@ -67,16 +65,15 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       sel
         .style("cursor", "pointer")
         .on("mouseenter", function (_event: any, d: any) {
-          handleMouseEnter(d.nodeId);
+          onNodeMouseEnterRef.current(d.nodeId);
         })
         .on("mouseleave", function () {
-          handleMouseLeave();
+          onNodeMouseLeaveRef.current();
         })
         .on("click", function (event: any, d: any) {
           event.stopPropagation();
           const nodeId = d?.nodeId ?? d?.id;
-          console.log("[Nodes] 节点点击:", { nodeId, metaKey: event.metaKey || event.ctrlKey });
-          handleClick(nodeId, event.metaKey || event.ctrlKey);
+          onNodeClickRef.current(nodeId, event.metaKey || event.ctrlKey);
         });
 
     // Regular nodes: circles - append first, then set all attrs on merge
@@ -136,7 +133,7 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
 
     // Do NOT call handleMouseLeave in cleanup - it causes flicker when effect re-runs
     // (e.g. on clickedId change). Hover is cleared by actual mouseleave on nodes.
-  }, [positionedNodes, positionedLinks, clickedId, handleMouseEnter, handleMouseLeave, handleClick]);
+  }, [positionedNodes, positionedLinks, clickedId]);
 
   // Separate effect: update hover indicator opacity when hoveredId changes (no DOM recreation)
   useEffect(() => {
