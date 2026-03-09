@@ -40,6 +40,9 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
   };
 
   const handleNodeClick = useCallback(async (nodeId: string, metaKey: boolean) => {
+    const isMultiFile = !!((data as any)?.metadata?.sourceFileNames?.length > 1);
+    console.log("[LinkGraphContainer] handleNodeClick 收到:", { nodeId, metaKey, isMultiFile, nodesCount: data.nodes.length });
+
     // Background click (empty id): clear selection-related UI without looking up a node
     if (!nodeId) {
       onFeatureSelect?.(null);
@@ -54,10 +57,11 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
     const node = data.nodes.find(n => String(n.nodeId ?? n.id ?? "") === String(nodeId));
     if (!node) {
       const sampleIds = data.nodes.slice(0, 5).map(n => ({ nodeId: n.nodeId, id: n.id }));
-      console.warn('[LinkGraphContainer] Node not found:', { nodeId, sampleIds });
+      console.warn("[LinkGraphContainer] 节点未找到:", { nodeId, sampleIds });
       return;
     }
 
+    console.log("[LinkGraphContainer] 节点已找到，调用 onNodeClick:", { nodeId: node.nodeId, feature_type: node.feature_type });
     // Always call parent handler first to update global state
     onNodeClick?.(node, metaKey);
     

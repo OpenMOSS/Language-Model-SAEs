@@ -74,7 +74,9 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
         })
         .on("click", function (event: any, d: any) {
           event.stopPropagation();
-          handleClick(d?.nodeId ?? d?.id, event.metaKey || event.ctrlKey);
+          const nodeId = d?.nodeId ?? d?.id;
+          console.log("[Nodes] 节点点击:", { nodeId, metaKey: event.metaKey || event.ctrlKey });
+          handleClick(nodeId, event.metaKey || event.ctrlKey);
         });
 
     // Regular nodes: circles - append first, then set all attrs on merge

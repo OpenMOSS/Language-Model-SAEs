@@ -287,6 +287,7 @@ export const CircuitVisualization = () => {
   }, [linkGraphData, positionMappingSelections, setDraftPositionMappingSelections]);
 
   const handleFeatureClick = useCallback((node: Node, isMetaKey: boolean) => {
+    console.log("[CircuitVisualization] handleFeatureClick 收到:", { nodeId: node?.nodeId, isMetaKey, hasNode: !!node });
     if (isMetaKey) {
       // Toggle pinned state
       const newPinnedIds = pinnedIds.includes(node.nodeId)
@@ -307,6 +308,7 @@ export const CircuitVisualization = () => {
       const newClickedId = isMultiFile
         ? node.nodeId
         : (node.nodeId === clickedId ? null : node.nodeId);
+      console.log("[CircuitVisualization] setClickedId:", { newClickedId, prevClickedId: clickedId });
       setClickedId(newClickedId);
     }
   }, [clickedId, pinnedIds, linkGraphData, setClickedId, setPinnedIds]);

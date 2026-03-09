@@ -229,6 +229,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         onClick={(event) => {
           // Only clear selection if clicking on the SVG background (not on nodes)
           if (event.target === event.currentTarget) {
+            console.log("[LinkGraph] SVG 背景点击，清除选中");
             onNodeClick("", false);
           }
         }}
