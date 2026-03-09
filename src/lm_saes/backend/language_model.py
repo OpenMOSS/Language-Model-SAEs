@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -8,7 +9,7 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from functools import partial
 from itertools import accumulate
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Self, Union, cast
 
 import einops
 import torch
@@ -346,6 +347,132 @@ def detach_hook_builder(models: TransformerLensLanguageModel) -> list[tuple[str,
 
     detach_hooks.append(("ln_final.hook_scale", detach_hook_fn))
     return detach_hooks
+
+
+@dataclass
+class Node:
+    key: Any
+    indices: torch.Tensor
+    matrix_indices: torch.Tensor
+
+
+NodeInfo = tuple[Any, torch.Tensor]
+
+
+class Matrix:
+    def __init__(self):
+        self.matrix = torch.zeros(0, 0, dtype=torch.float32, device="cpu")
+        self.source = {}
+        self.target = {}
+
+    def _add_elements(self, node_infos: list[NodeInfo], dim: int):
+        node_dict = self.source if dim == 0 else self.target
+
+        m_start = self.matrix.shape[dim]
+        new_matrix_shape = list(self.matrix.shape)
+        new_matrix_shape[dim] = sum([node_info[1].shape[0] for node_info in node_infos])
+        self.matrix = torch.cat(
+            [self.matrix, torch.zeros(new_matrix_shape, dtype=self.matrix.dtype, device=self.matrix.device)],
+            dim=dim,
+        )
+        for node_info in node_infos:
+            node_length = node_info[1].shape[0]
+            node = Node(
+                node_info[0],
+                node_info[1],
+                torch.arange(m_start, m_start + node_length, device=self.matrix.device),
+            )
+            self._update_node(node, node_dict)
+            m_start += node_length
+
+    def add_source(self, node_infos: list[NodeInfo] | NodeInfo):
+        node_infos = node_infos if isinstance(node_infos, list) else [node_infos]
+        self._add_elements(node_infos, 0)
+
+    def add_target(self, node_infos: list[NodeInfo] | NodeInfo):
+        node_infos = node_infos if isinstance(node_infos, list) else [node_infos]
+        self._add_elements(node_infos, 1)
+
+    def update_matrix(self, matrix: torch.Tensor):
+        self.matrix[:, :] = matrix
+
+    @staticmethod
+    def _update_node(node: Node, node_dict: dict[Any, Node]):
+        if node.key not in node_dict:
+            node_dict[node.key] = node
+        else:
+            node_dict[node.key].matrix_indices = torch.cat(
+                [node_dict[node.key].matrix_indices, node.matrix_indices],
+                dim=0,
+            )
+            node_dict[node.key].indices = torch.cat(
+                [node_dict[node.key].indices, node.indices],
+                dim=0,
+            )
+
+    def _get_sublines(self, node_infos: list[NodeInfo] | None, dim: int):
+        full_node_dict = self.source if dim == 0 else self.target
+        if node_infos is None:
+            return (full_node_dict, torch.arange(self.matrix.shape[dim], device=self.matrix.device))
+
+        new_node_dict = {}
+        old_matrix_indices = torch.zeros(0, device=self.matrix.device, dtype=torch.long)
+        for node_info in node_infos:
+            r = torch.empty(full_node_dict[node_info[0]].indices.max() + 1, device=self.matrix.device, dtype=torch.long)
+            r[full_node_dict[node_info[0]].indices] = torch.arange(
+                full_node_dict[node_info[0]].indices.shape[0], device=self.matrix.device
+            )
+            matrix_indices = full_node_dict[node_info[0]].matrix_indices[r[node_info[1]]]
+            old_matrix_indices = torch.cat(
+                [old_matrix_indices, matrix_indices],
+                dim=0,
+            )
+            self._update_node(
+                Node(
+                    node_info[0],
+                    node_info[1],
+                    torch.arange(
+                        old_matrix_indices.shape[0] - matrix_indices.shape[0],
+                        old_matrix_indices.shape[0],
+                        device=self.matrix.device,
+                    ),
+                ),
+                new_node_dict,
+            )
+
+        return (new_node_dict, old_matrix_indices)
+
+    @classmethod
+    def _build_submatrix(
+        cls, matrix: torch.Tensor, source_node_dict: dict[Any, Node], target_node_dict: dict[Any, Node]
+    ) -> Self:
+        submatrix = cls()
+        submatrix.matrix = matrix
+        submatrix.source = source_node_dict
+        submatrix.target = target_node_dict
+        return submatrix
+
+    def get_submatrix(
+        self,
+        source_node_infos: NodeInfo | list[NodeInfo] | None = None,
+        target_node_infos: NodeInfo | list[NodeInfo] | None = None,
+    ):
+        source_node_infos = (
+            [source_node_infos]
+            if not isinstance(source_node_infos, list) and source_node_infos is not None
+            else source_node_infos
+        )
+        target_node_infos = (
+            [target_node_infos]
+            if not isinstance(target_node_infos, list) and target_node_infos is not None
+            else target_node_infos
+        )
+        source_node_dict, source_matrix_indices = self._get_sublines(source_node_infos, 0)
+        target_node_dict, target_matrix_indices = self._get_sublines(target_node_infos, 1)
+        submatrix = Matrix._build_submatrix(
+            self.matrix[source_matrix_indices][:, target_matrix_indices], source_node_dict, target_node_dict
+        )
+        return submatrix
 
 
 class AdjacencyMatrix(torch.Tensor):
