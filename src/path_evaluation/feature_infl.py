@@ -276,16 +276,11 @@ def compute_feature_interactions_batch(
         ["position_name", "position_idx", "layer", "feature_id", "feature_type"]
     ].drop_duplicates()
 
-    print(f"找到 {len(unique_features)} 个unique features")
-    print("预计算激活值和权重...")
     precomputed_data = precompute_activations_and_weights(
         fen, model, transcoders, lorsas
     )
 
     feature_pairs = _build_feature_pairs_within(unique_features)
-    print(f"将计算 {len(feature_pairs)} 个不同层feature组合")
-
-    print("开始批量计算feature interactions...")
     raw_results = batch_analyze_node_interactions(
         precomputed_data, feature_pairs, steering_scale
     )
@@ -294,17 +289,10 @@ def compute_feature_interactions_batch(
         raw_results, steering_scale, output_prefix, threshold=0.1
     )
 
-    print(f"成功计算了 {len(processed_results)} 个feature组合")
-    if json_file:
-        print(f"JSON结果已保存到 {json_file}")
-    if csv_file:
-        print(f"CSV结果已保存到 {csv_file}")
-
     return processed_results, json_file, csv_file
 
 
 def _mean_infl_from_results(results: List[Dict[str, Any]]) -> float:
-    """计算平均下降比例（reduction_ratio），而不是绝对差值（activation_change）"""
     infls = [float(r.get("reduction_ratio", 0.0)) for r in results]
     if not infls:
         return float("nan")
@@ -377,7 +365,6 @@ def compute_folder_csr(
 
     out_root = Path(output_dir) if output_dir is not None else folder
 
-    print("预计算激活值和权重（全局一次）...")
     precomputed_data = precompute_activations_and_weights(
         fen, model, transcoders, lorsas
     )
