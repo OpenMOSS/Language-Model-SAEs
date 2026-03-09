@@ -40,25 +40,37 @@ export const fetchFeature = async (
   }
 };
 
+/**
+ * Get dictionary name from circuit JSON metadata.
+ * Uses lorsa_analysis_name / tc_analysis_name to build full name (e.g. BT4_lorsa_L4A_k30_e16).
+ */
 export const getDictionaryName = (metadata: any, layer: number, isLorsa: boolean): string => {
   if (isLorsa) {
-    // Support the lorsa_analysis_name field
-    const analysisName = metadata.lorsa_analysis_name;
-    if (analysisName && analysisName.includes('BT4')) {
-      // BT4 format: BT4_lorsa_L{layer}A
-      return `BT4_lorsa_L${layer}A`;
-    } else {
-      return analysisName ? analysisName.replace("{}", layer.toString()) : `lc0-lorsa-L${layer}`;
+    const analysisName = metadata?.lorsa_analysis_name;
+    if (analysisName && typeof analysisName === 'string') {
+      if (analysisName === 'BT4_lorsa') {
+        return `BT4_lorsa_L${layer}A`;
+      }
+      if (analysisName.startsWith('BT4_lorsa_')) {
+        const suffix = analysisName.replace('BT4_lorsa_', '');
+        return `BT4_lorsa_L${layer}A_${suffix}`;
+      }
+      return analysisName.replace('{}', layer.toString());
     }
+    return `BT4_lorsa_L${layer}A_k30_e16`;
   } else {
-    // Support the newer field name tc_analysis_name and keep clt_analysis_name for backward compatibility
-    const analysisName = metadata.tc_analysis_name || metadata.clt_analysis_name;
-    if (analysisName && analysisName.includes('BT4')) {
-      // BT4 format: BT4_tc_L{layer}M
-      return `BT4_tc_L${layer}M`;
-    } else {
-      return analysisName ? analysisName.replace("{}", layer.toString()) : `lc0_L${layer}M_16x_k30_lr2e-03_auxk_sparseadam`;
+    const analysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
+    if (analysisName && typeof analysisName === 'string') {
+      if (analysisName === 'BT4_tc') {
+        return `BT4_tc_L${layer}M`;
+      }
+      if (analysisName.startsWith('BT4_tc_')) {
+        const suffix = analysisName.replace('BT4_tc_', '');
+        return `BT4_tc_L${layer}M_${suffix}`;
+      }
+      return analysisName.replace('{}', layer.toString());
     }
+    return `BT4_tc_L${layer}M_k30_e16`;
   }
 };
 

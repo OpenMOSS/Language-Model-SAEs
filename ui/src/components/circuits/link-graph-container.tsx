@@ -53,9 +53,8 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
     // Node lookup: try nodeId and id (coerce to string for robustness)
     const node = data.nodes.find(n => String(n.nodeId ?? n.id ?? "") === String(nodeId));
     if (!node) {
-      // Debug: log when lookup fails (helps diagnose multi-file nodeId mismatch)
-      const sampleIds = data.nodes.slice(0, 5).map(n => n.nodeId ?? n.id);
-      console.warn('LinkGraphContainer: Node not found for nodeId:', JSON.stringify(nodeId), 'sample nodeIds:', sampleIds);
+      const sampleIds = data.nodes.slice(0, 5).map(n => ({ nodeId: n.nodeId, id: n.id }));
+      console.warn('[LinkGraphContainer] Node not found:', { nodeId, sampleIds });
       return;
     }
 
