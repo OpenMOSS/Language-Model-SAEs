@@ -4,7 +4,7 @@ import d3 from "../static_js/d3";
 
 interface TooltipsProps {
   positionedNodes: any[];
-  visState: { hoveredId: string | null };
+  hoveredId: string | null;
   dimensions: { width: number; height: number };
 }
 
@@ -12,7 +12,7 @@ const BOTTOM_PADDING = 40;
 
 export const Tooltips: React.FC<TooltipsProps> = React.memo(({
   positionedNodes,
-  visState,
+  hoveredId,
   dimensions
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -24,13 +24,12 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
-  }, [visState.hoveredId]);
+  }, [hoveredId]);
 
   // Set a fallback timeout to clear tooltips if mouse leave events fail
   useEffect(() => {
-    if (visState.hoveredId && !timeoutRef.current) {
+    if (hoveredId && !timeoutRef.current) {
       timeoutRef.current = setTimeout(() => {
-        console.log('🔄 Tooltips: Fallback timeout clearing tooltip');
         // This will trigger a re-render and clear the tooltip
         timeoutRef.current = null;
       }, 10000); // 10 second fallback
@@ -43,7 +42,7 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
         timeoutRef.current = null;
       }
     };
-  }, [visState.hoveredId]);
+  }, [hoveredId]);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -54,15 +53,13 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
     svg.selectAll("*").remove();
 
     // If no hovered ID, don't show any tooltip
-    if (!visState.hoveredId) {
-      console.log('🔄 Tooltips: No hovered ID, clearing tooltips');
+    if (!hoveredId) {
       return;
     }
 
-    const hoveredNode = positionedNodes.find((d: any) => d.nodeId === visState.hoveredId);
+    const hoveredNode = positionedNodes.find((d: any) => d.nodeId === hoveredId);
     
     if (hoveredNode) {
-      console.log('🔄 Tooltips: Creating tooltip for node:', visState.hoveredId);
       const tooltip = svg.append("g")
         .attr("class", "clerp-tooltip");
       
@@ -128,7 +125,7 @@ export const Tooltips: React.FC<TooltipsProps> = React.memo(({
         .attr("font-size", "10px")
         .text(tooltipText);
     }
-  }, [positionedNodes, visState.hoveredId, dimensions]);
+  }, [positionedNodes, hoveredId, dimensions]);
 
   return (
     <g ref={svgRef} className="tooltips" />

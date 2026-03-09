@@ -261,10 +261,8 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         <Nodes 
           positionedNodes={positionedNodes}
           positionedLinks={positionedLinks}
-          visState={{
-            clickedId: visState.clickedId,
-            hoveredId: visState.hoveredId
-          }}
+          clickedId={visState.clickedId}
+          hoveredId={visState.hoveredId}
           onNodeMouseEnter={handleNodeMouseEnter}
           onNodeMouseLeave={handleNodeMouseLeave}
           onNodeClick={onNodeClick}
@@ -272,7 +270,7 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
         
         <Tooltips 
           positionedNodes={positionedNodes}
-          visState={{ hoveredId: visState.hoveredId }}
+          hoveredId={visState.hoveredId}
           dimensions={dimensions}
         />
         

@@ -27,18 +27,12 @@ export const useActivationData = ({
    */
   const getNodeActivationData = useCallback((nodeId: string | null): NodeActivationData => {
     if (!nodeId || !originalCircuitJson) {
-      console.log('❌ Missing required parameters:', { 
-        nodeId, 
-        hasOriginalCircuitJson: !!originalCircuitJson 
-      });
-      return { 
-        activations: undefined, 
-        zPatternIndices: undefined, 
-        zPatternValues: undefined 
+      return {
+        activations: undefined,
+        zPatternIndices: undefined,
+        zPatternValues: undefined,
       };
     }
-    
-    console.log(`🔍 Finding activation data for node ${nodeId}...`);
     
     const parsed = parseNodeId(nodeId);
 
@@ -72,7 +66,6 @@ export const useActivationData = ({
 
     // 2) Match based on node_id parsing in activation record collection (layer/position/head_idx/feature_idx)
     const candidateRecords = findCandidateRecords(originalCircuitJson);
-    console.log('🧭 Candidate records count:', candidateRecords.length);
 
     // Determine feature_type from nodes
     let featureTypeForNode: string | undefined = undefined;
@@ -81,18 +74,11 @@ export const useActivationData = ({
       featureTypeForNode = nodeMeta?.feature_type;
     }
 
-    const matched = candidateRecords.find(rec => 
+    const matched = candidateRecords.find(rec =>
       matchActivationRecord(rec, parsed, featureTypeForNode)
     );
     
     if (matched) {
-      console.log('✅ Matched activation record via parsing:', {
-        nodeId,
-        layerForActivation: parsed.layerForActivation,
-        ctxIdx: parsed.ctxIdx,
-        featureOrHead: parsed.featureOrHead,
-        featureTypeForNode,
-      });
       return {
         activations: matched.activations,
         ...normalizeZPattern(matched.zPatternIndices, matched.zPatternValues),
@@ -108,10 +94,6 @@ export const useActivationData = ({
       );
       if (fuzzyMatches.length > 0) {
         const firstMatch = fuzzyMatches[0];
-        console.log('🔍 Using fuzzy matched node:', {
-          node_id: firstMatch.node_id,
-          hasActivations: !!firstMatch.activations,
-        });
         return {
           activations: firstMatch.activations,
           ...normalizeZPattern(firstMatch.zPatternIndices, firstMatch.zPatternValues),
@@ -121,11 +103,10 @@ export const useActivationData = ({
       }
     }
 
-    console.log('❌ No matching node/record found');
-    return { 
-      activations: undefined, 
-      zPatternIndices: undefined, 
-      zPatternValues: undefined 
+    return {
+      activations: undefined,
+      zPatternIndices: undefined,
+      zPatternValues: undefined,
     };
   }, [originalCircuitJson, updateCounter]);
 

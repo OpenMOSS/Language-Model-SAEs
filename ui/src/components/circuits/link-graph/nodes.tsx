@@ -5,10 +5,8 @@ import d3 from "../static_js/d3";
 interface NodesProps {
   positionedNodes: any[];
   positionedLinks: any[];
-  visState: { 
-    clickedId: string | null; 
-    hoveredId: string | null;
-  };
+  clickedId: string | null;
+  hoveredId: string | null;
   onNodeMouseEnter: (nodeId: string) => void;
   onNodeMouseLeave: () => void;
   onNodeClick: (nodeId: string, metaKey: boolean) => void;
@@ -17,7 +15,8 @@ interface NodesProps {
 export const Nodes: React.FC<NodesProps> = React.memo(({
   positionedNodes,
   positionedLinks,
-  visState,
+  clickedId,
+  hoveredId,
   onNodeMouseEnter,
   onNodeMouseLeave,
   onNodeClick
@@ -51,19 +50,19 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
     const errorNodes = positionedNodes.filter((d: any) => isErrorNode(d));
 
     const isConnected = (d: any) =>
-      visState.clickedId &&
+      clickedId &&
       positionedLinks.some(
         (link: any) =>
-          (link.source === visState.clickedId && link.target === d.nodeId) ||
-          (link.target === visState.clickedId && link.source === d.nodeId)
+          (link.source === clickedId && link.target === d.nodeId) ||
+          (link.target === clickedId && link.source === d.nodeId)
       );
     const getStroke = (d: any) => {
-      if (d.nodeId === visState.clickedId) return "#ef4444";
+      if (d.nodeId === clickedId) return "#ef4444";
       if (isConnected(d)) return "#22c55e";
       return "#000";
     };
     const getStrokeWidth = (d: any) =>
-      d.nodeId === visState.clickedId || isConnected(d) ? "1.5" : "0.5";
+      d.nodeId === clickedId || isConnected(d) ? "1.5" : "0.5";
     const nodeEvents = (sel: any) =>
       sel
         .style("cursor", "pointer")
@@ -117,7 +116,7 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       .attr("stroke", "#f0f")
       .attr("stroke-width", 2)
       .attr("fill", "none")
-      .style("opacity", (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0));
+      .style("opacity", (d: any) => (d.nodeId === hoveredId ? 1 : 0));
 
     const hSize = 12;
     const hoverErr = svg.selectAll(".hover-indicator.hover-error").data(errorNodes, (d: any) => d.nodeId);
@@ -131,13 +130,13 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       .attr("stroke", "#f0f")
       .attr("stroke-width", 2)
       .attr("fill", "none")
-      .style("opacity", (d: any) => (d.nodeId === visState.hoveredId ? 1 : 0));
+      .style("opacity", (d: any) => (d.nodeId === hoveredId ? 1 : 0));
 
     // Cleanup function to clear hover state when component unmounts or nodes change
     return () => {
       handleMouseLeave();
     };
-  }, [positionedNodes, positionedLinks, visState, handleMouseEnter, handleMouseLeave, handleClick]);
+  }, [positionedNodes, positionedLinks, clickedId, hoveredId, handleMouseEnter, handleMouseLeave, handleClick]);
 
   return (
     <g 

@@ -208,10 +208,6 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   disableAutoAnalyze = false,
   wdlLoadDelayIndex,
 }) => {
-  // Debug: log display data
-  console.log(`[CB#${sampleIndex ?? 'NA'}] activations:`, activations);
-  console.log(`[CB#${sampleIndex ?? 'NA'}] zPatternIndices:`, zPatternIndices);
-  console.log(`[CB#${sampleIndex ?? 'NA'}] zPatternValues:`, zPatternValues);
 
   // Hover state
   const [hoveredSquare, setHoveredSquare] = useState<number | null>(null);
