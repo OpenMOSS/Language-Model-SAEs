@@ -232,6 +232,10 @@ const LinkGraphComponent: React.FC<LinkGraphProps> = ({
             onNodeClick("", false);
           }
         }}
+        onMouseLeave={() => {
+          // Clear hover when mouse leaves the graph area (safety net when DOM is recreated)
+          handleNodeMouseLeave();
+        }}
         style={{ position: "relative", zIndex: 1, pointerEvents: "auto" }}
       >
         {/* Atomic components - each manages its own rendering */}

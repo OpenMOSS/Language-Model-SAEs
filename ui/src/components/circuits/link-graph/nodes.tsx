@@ -132,11 +132,16 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       .attr("fill", "none")
       .style("opacity", (d: any) => (d.nodeId === hoveredId ? 1 : 0));
 
-    // Cleanup: clear hover state when graph data/layout changes significantly
-    return () => {
-      handleMouseLeave();
-    };
+    // Do NOT call handleMouseLeave in cleanup - it causes flicker when effect re-runs
+    // (e.g. on clickedId change). Hover is cleared by actual mouseleave on nodes.
   }, [positionedNodes, positionedLinks, clickedId, handleMouseEnter, handleMouseLeave, handleClick]);
+
+  // Separate effect: update hover indicator opacity when hoveredId changes (no DOM recreation)
+  useEffect(() => {
+    if (!svgRef.current) return;
+    const sel = d3.select(svgRef.current);
+    sel.selectAll(".hover-indicator").style("opacity", (d: any) => (d.nodeId === hoveredId ? 1 : 0));
+  }, [hoveredId]);
 
   return (
     <g 
