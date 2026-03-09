@@ -814,12 +814,6 @@ export const CircuitVisualization = () => {
                         }
                       }
                       
-                      console.log("Processing activation data:", {
-                        indicesLength: sample.featureActsIndices.length,
-                        valuesLength: sample.featureActsValues.length,
-                        nonZeroCount: activationsArray.filter(v => v !== 0).length,
-                        maxActivation
-                      });
                     }
                     
                     chessSamples.push({
@@ -845,10 +839,6 @@ export const CircuitVisualization = () => {
         .sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength))
         .slice(0, 8);
       
-      console.log("Top activation data fetched:", {
-        totalChessSamples: chessSamples.length,
-        topSamplesCount: topSamples.length
-      });
       
       setTopActivations(topSamples);
       

@@ -155,7 +155,7 @@ export const useCircuitFileUpload = ({
         alert(warningMessage);
       }
 
-      // Merge graphs
+      // Merge graphs (validates lorsa/tc_analysis_name consistency when 2+ files)
       const merged = jsons.length === 1 
         ? (() => {
             const data = transformCircuitData(jsons[0]);

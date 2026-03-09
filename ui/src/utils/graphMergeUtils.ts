@@ -32,6 +32,34 @@ export const getSubsetColor = (
 };
 
 /**
+ * Validate that all circuit files have the same lorsa_analysis_name and tc_analysis_name.
+ * Required for multi-file mode so we can fetch top activation from the correct dictionary.
+ */
+const validateAnalysisNamesConsistency = (
+  jsons: CircuitJsonData[],
+  fileNames: string[]
+): void => {
+  if (jsons.length <= 1) return;
+
+  const firstLorsa = jsons[0]?.metadata?.lorsa_analysis_name;
+  const firstTc = jsons[0]?.metadata?.tc_analysis_name ?? jsons[0]?.metadata?.clt_analysis_name;
+
+  for (let i = 1; i < jsons.length; i++) {
+    const lorsa = jsons[i]?.metadata?.lorsa_analysis_name;
+    const tc = jsons[i]?.metadata?.tc_analysis_name ?? jsons[i]?.metadata?.clt_analysis_name;
+
+    if (lorsa !== firstLorsa || tc !== firstTc) {
+      const msg =
+        `Analysis names mismatch across files. All circuit files must use the same SAE dictionary.\n\n` +
+        `File 1 (${fileNames[0]}): lorsa=${firstLorsa ?? "undefined"}, tc=${firstTc ?? "undefined"}\n` +
+        `File ${i + 1} (${fileNames[i]}): lorsa=${lorsa ?? "undefined"}, tc=${tc ?? "undefined"}\n\n` +
+        `Please upload files that use the same lorsa_analysis_name and tc_analysis_name.`;
+      throw new Error(msg);
+    }
+  }
+};
+
+/**
  * Merge multiple circuit graphs into a single LinkGraphData
  * Nodes are merged by node_id, links are merged by (source, target)
  */
@@ -39,6 +67,9 @@ export const mergeCircuitGraphs = (
   jsons: CircuitJsonData[],
   fileNames?: string[]
 ): any => {
+  const names = fileNames ?? jsons.map((_, i) => `file_${i + 1}.json`);
+  validateAnalysisNamesConsistency(jsons, names);
+
   // Transform each JSON to LinkGraphData
   const graphs = jsons.map(j => transformCircuitData(j));
   const totalSources = graphs.length;
@@ -46,13 +77,17 @@ export const mergeCircuitGraphs = (
   // Subset color cache for stable coloring
   const subsetColorCache = new Map<string, string>();
 
-  // Merge metadata
+  // Merge metadata: use first file's raw metadata for analysis names (ensures correct dictionary)
+  const firstMeta = jsons[0]?.metadata || {};
   const mergedMetadata: any = {
     ...(graphs[0]?.metadata || {}),
-    prompt_tokens: graphs.map((g, i) => 
+    lorsa_analysis_name: firstMeta.lorsa_analysis_name ?? graphs[0]?.metadata?.lorsa_analysis_name,
+    tc_analysis_name: firstMeta.tc_analysis_name ?? firstMeta.clt_analysis_name ?? graphs[0]?.metadata?.tc_analysis_name ?? graphs[0]?.metadata?.clt_analysis_name,
+    clt_analysis_name: firstMeta.clt_analysis_name ?? firstMeta.tc_analysis_name ?? graphs[0]?.metadata?.clt_analysis_name ?? graphs[0]?.metadata?.tc_analysis_name,
+    prompt_tokens: graphs.map((g, i) =>
       `[#${i + 1}] ` + (g?.metadata?.prompt_tokens?.join(' ') || '')
     ).filter(Boolean),
-    sourceFileNames: fileNames && fileNames.length ? fileNames : undefined,
+    sourceFileNames: names.length ? names : undefined,
   };
 
   // Merge nodes
