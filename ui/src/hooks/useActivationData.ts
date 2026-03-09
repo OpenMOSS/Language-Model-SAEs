@@ -47,11 +47,6 @@ export const useActivationData = ({
           exactMatch.zPatternIndices,
           exactMatch.zPatternValues
         );
-        console.log('✅ Node inline fields check:', {
-          hasInlineActivations: !!inlineActs,
-          hasInlineZIdx: !!inlineZIdx,
-          hasInlineZVal: !!inlineZVal,
-        });
         if (inlineActs || (inlineZIdx && inlineZVal)) {
           return {
             activations: inlineActs,

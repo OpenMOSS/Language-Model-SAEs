@@ -499,7 +499,12 @@ export const CircuitVisualization = () => {
 
   const fen = extractFenFromPrompt();
   const outputMove = extractOutputMove();
-  const nodeActivationData = getNodeActivationData(clickedId);
+  // Memoize to prevent new object reference every render (causes useEffect/useMemo loops)
+  // Use activationDataHook.getNodeActivationData directly - it's stable (useCallback in hook)
+  const nodeActivationData = useMemo(
+    () => activationDataHook.getNodeActivationData(clickedId),
+    [activationDataHook.getNodeActivationData, clickedId]
+  );
 
   /** Reset display mode to single position when switching nodes. */
   useEffect(() => {
@@ -1736,20 +1741,6 @@ export const CircuitVisualization = () => {
     );
   }
 
-  // Debug data passed to ChessBoard
-  if (clickedId && nodeActivationData) {
-    console.log('Data passed to ChessBoard:', {
-      nodeId: clickedId,
-      hasActivations: !!nodeActivationData.activations,
-      activationsLength: nodeActivationData.activations?.length || 0,
-      hasZPatternIndices: !!nodeActivationData.zPatternIndices,
-      hasZPatternValues: !!nodeActivationData.zPatternValues,
-      nodeType: nodeActivationData.nodeType,
-      hasClerp: !!nodeActivationData.clerp,
-      clerpLength: nodeActivationData.clerp?.length || 0
-    });
-  }
-
   return (
     <div className="space-y-6 w-full max-w-full overflow-hidden">
       <SaeComboLoader />
@@ -2780,15 +2771,6 @@ export const CircuitVisualization = () => {
                 </button>
                 {(() => {
                   const isDisabled = isSaving || editingClerp.trim() === (nodeActivationData.clerp || '');
-                  console.log('Button state debugging:', {
-                    isSaving,
-                    editingClerpTrimmed: editingClerp.trim(),
-                    nodeActivationDataClerp: nodeActivationData.clerp,
-                    nodeActivationDataClerpOrEmpty: nodeActivationData.clerp || '',
-                    isEqual: editingClerp.trim() === (nodeActivationData.clerp || ''),
-                    isDisabled
-                  });
-                  
                   return (
                     <button
                       onClick={handleSaveClerp}

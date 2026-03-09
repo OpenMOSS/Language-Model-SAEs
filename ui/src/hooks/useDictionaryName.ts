@@ -118,20 +118,14 @@ export const useDictionaryName = ({ linkGraphData }: UseDictionaryNameOptions) =
    * Get SAE name for CircuitInterpretation component
    */
   const getSaeNameForCircuit = useCallback((layer: number, isLorsa: boolean) => {
-    console.log('[CircuitVisualization] getSaeNameForCircuit called:', { layer, isLorsa });
     try {
       const metadata = linkGraphData?.metadata || {};
       const template = getSaeNameTemplate(layer, isLorsa, metadata);
-      console.log('[CircuitVisualization] Template result:', template);
       const result = template.replace('{}', layer.toString());
-      console.log('[CircuitVisualization] Final SAE name:', result);
       return result;
     } catch (error) {
       console.error('[CircuitVisualization] Error in getSaeNameForCircuit:', error);
-      // Return default value
-      const fallback = isLorsa ? `BT4_lorsa_L${layer}A` : `BT4_tc_L${layer}M`;
-      console.log('[CircuitVisualization] Using fallback:', fallback);
-      return fallback;
+      return isLorsa ? `BT4_lorsa_L${layer}A` : `BT4_tc_L${layer}M`;
     }
   }, [linkGraphData]);
 
