@@ -294,11 +294,22 @@ export const CircuitVisualization = () => {
         : [...pinnedIds, node.nodeId];
       setPinnedIds(newPinnedIds);
     } else {
-      // Set clicked node
-      const newClickedId = node.nodeId === clickedId ? null : node.nodeId;
-      setClickedId(newClickedId);
+      // Use different selection behavior for single-file vs multi-file mode
+      const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
+      const isMultiFile = !!(names && names.length > 1);
+
+      if (isMultiFile) {
+        // In multi-file mode, avoid toggle-to-null behavior to prevent flickering selection
+        if (node.nodeId !== clickedId) {
+          setClickedId(node.nodeId);
+        }
+      } else {
+        // In single-file mode, keep the original toggle behavior
+        const newClickedId = node.nodeId === clickedId ? null : node.nodeId;
+        setClickedId(newClickedId);
+      }
     }
-  }, [clickedId, pinnedIds, setClickedId, setPinnedIds]);
+  }, [clickedId, pinnedIds, linkGraphData, setClickedId, setPinnedIds]);
 
   const handleFeatureHover = useCallback((nodeId: string | null) => {
     // Only update if the hovered ID has actually changed
