@@ -294,22 +294,11 @@ export const CircuitVisualization = () => {
         : [...pinnedIds, node.nodeId];
       setPinnedIds(newPinnedIds);
     } else {
-      // Use different selection behavior for single-file vs multi-file mode
-      const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
-      const isMultiFile = !!(names && names.length > 1);
-
-      if (isMultiFile) {
-        // In multi-file mode, avoid toggle-to-null behavior to prevent flickering selection
-        if (node.nodeId !== clickedId) {
-          setClickedId(node.nodeId);
-        }
-      } else {
-        // In single-file mode, keep the original toggle behavior
-        const newClickedId = node.nodeId === clickedId ? null : node.nodeId;
-        setClickedId(newClickedId);
-      }
+      // Set clicked node
+      const newClickedId = node.nodeId === clickedId ? null : node.nodeId;
+      setClickedId(newClickedId);
     }
-  }, [clickedId, pinnedIds, linkGraphData, setClickedId, setPinnedIds]);
+  }, [clickedId, pinnedIds, setClickedId, setPinnedIds]);
 
   const handleFeatureHover = useCallback((nodeId: string | null) => {
     // Only update if the hovered ID has actually changed
@@ -998,26 +987,15 @@ export const CircuitVisualization = () => {
     }
   }, [fen, linkGraphData, steeringScale, checkSaeLoaded]);
 
-  /** Fetch Top Activation data when node is clicked (Token Predictions is manual).
-   */
+  /** Fetch Top Activation data when node is clicked (Token Predictions is manual) */
   useEffect(() => {
-    if (!clickedId) {
+    if (clickedId) {
+      fetchTopActivations(clickedId);
+    } else {
       setTopActivations([]);
       setTokenPredictions(null);
-      return;
     }
-
-    const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
-    const isMultiFile = !!(names && names.length > 1);
-
-    if (isMultiFile) {
-      setTopActivations([]);
-      setTokenPredictions(null);
-      return;
-    }
-
-    fetchTopActivations(clickedId);
-  }, [clickedId, fetchTopActivations, linkGraphData, setTopActivations, setTokenPredictions]);
+  }, [clickedId, fetchTopActivations]);
 
   /** Sync clerps to backend interpretations */
   const syncClerpsToBackend = useCallback(async () => {
@@ -2507,14 +2485,6 @@ export const CircuitVisualization = () => {
               <h3 className="text-lg font-semibold">Top Activation Board</h3>
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-600">Node: {clickedId}</span>
-                <button
-                  type="button"
-                  onClick={() => clickedId && fetchTopActivations(clickedId)}
-                  disabled={loadingTopActivations}
-                  className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                >
-                  {loadingTopActivations ? "Recomputing..." : "Compute Top Activations"}
-                </button>
                 {loadingTopActivations && (
                   <div className="flex items-center space-x-2">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>

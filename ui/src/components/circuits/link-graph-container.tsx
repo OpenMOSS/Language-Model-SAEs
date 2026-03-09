@@ -43,7 +43,7 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
     // Try both id and nodeId to handle different node formats
     const node = data.nodes.find(n => n.nodeId === nodeId || n.id === nodeId);
     if (!node) {
-      console.warn('⚠️ LinkGraphContainer: Node not found for nodeId:', nodeId);
+      console.warn('Warning: LinkGraphContainer: Node not found for nodeId:', nodeId);
       return;
     }
 
@@ -52,37 +52,38 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
     
     // If not meta key (not pinning), handle feature selection
     if (!metaKey) {
-      if (clickedId === nodeId) {
-        // Deselecting the same node
+      const names = (data as any)?.metadata?.sourceFileNames as string[] | undefined;
+      const isMultiFile = !!(names && names.length > 1);
+
+      // In single-file mode, keep the original "click same node to deselect" behavior.
+      // In multi-file mode, do NOT treat clicking the same node as deselect, to avoid flicker.
+      if (!isMultiFile && clickedId === nodeId) {
         onFeatureSelect?.(null);
         onConnectedFeaturesSelect?.([]);
         onConnectedFeaturesLoading?.(false);
-      } else {
-        // Only fetch feature data for supported node types
-        if (node.feature_type === 'cross layer transcoder' || node.feature_type === 'lorsa') {
-          const layerAndFeature = extractLayerAndFeature(nodeId);
-          if (layerAndFeature) {
-            const { layer, featureId, isLorsa } = layerAndFeature;
-            const dictionaryName = getDictionaryName(data.metadata, layer, isLorsa);
+        return;
+      }
 
-            if (dictionaryName) {
-              try {
-                onConnectedFeaturesLoading?.(true);
-                const feature = await fetchFeature(dictionaryName, layer, featureId);
-                if (feature) {
-                  onFeatureSelect?.(feature);
-                } else {
-                  onFeatureSelect?.(null);
-                  onConnectedFeaturesSelect?.([]);
-                  onConnectedFeaturesLoading?.(false);
-                }
-              } catch (error) {
-                console.error('Failed to fetch feature:', error);
+      // Only fetch feature data for supported node types
+      if (node.feature_type === 'cross layer transcoder' || node.feature_type === 'lorsa') {
+        const layerAndFeature = extractLayerAndFeature(nodeId);
+        if (layerAndFeature) {
+          const { layer, featureId, isLorsa } = layerAndFeature;
+          const dictionaryName = getDictionaryName(data.metadata, layer, isLorsa);
+
+          if (dictionaryName) {
+            try {
+              onConnectedFeaturesLoading?.(true);
+              const feature = await fetchFeature(dictionaryName, layer, featureId);
+              if (feature) {
+                onFeatureSelect?.(feature);
+              } else {
                 onFeatureSelect?.(null);
                 onConnectedFeaturesSelect?.([]);
                 onConnectedFeaturesLoading?.(false);
               }
-            } else {
+            } catch (error) {
+              console.error('Failed to fetch feature:', error);
               onFeatureSelect?.(null);
               onConnectedFeaturesSelect?.([]);
               onConnectedFeaturesLoading?.(false);
@@ -93,14 +94,18 @@ export const LinkGraphContainer: React.FC<LinkGraphContainerProps> = ({
             onConnectedFeaturesLoading?.(false);
           }
         } else {
-          // For unsupported node types, clear the selection
           onFeatureSelect?.(null);
           onConnectedFeaturesSelect?.([]);
           onConnectedFeaturesLoading?.(false);
         }
+      } else {
+        // For unsupported node types, clear the selection
+        onFeatureSelect?.(null);
+        onConnectedFeaturesSelect?.([]);
+        onConnectedFeaturesLoading?.(false);
       }
     }
-  }, [onNodeClick, clickedId, data.nodes, data.metadata, onFeatureSelect, onConnectedFeaturesSelect, onConnectedFeaturesLoading]);
+  }, [onNodeClick, clickedId, data, onFeatureSelect, onConnectedFeaturesSelect, onConnectedFeaturesLoading]);
 
   const handleNodeHover = useCallback((nodeId: string | null) => {
     if (onNodeHover) {
