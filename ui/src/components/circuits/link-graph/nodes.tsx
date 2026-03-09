@@ -132,11 +132,10 @@ export const Nodes: React.FC<NodesProps> = React.memo(({
       .attr("fill", "none")
       .style("opacity", (d: any) => (d.nodeId === hoveredId ? 1 : 0));
 
-    // Cleanup function to clear hover state when component unmounts or nodes change
-    return () => {
-      handleMouseLeave();
-    };
-  }, [positionedNodes, positionedLinks, clickedId, hoveredId, handleMouseEnter, handleMouseLeave, handleClick]);
+    // Cleanup: D3 elements will be fully re-created on next effect run,
+    // no need to mutate React hover state here (avoids hover flicker).
+    return () => {};
+  }, [positionedNodes, positionedLinks, clickedId, hoveredId, handleMouseEnter, handleClick]);
 
   return (
     <g 
