@@ -46,7 +46,6 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
   const [showLogsDialog, setShowLogsDialog] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
   // Subscribe to global state changes
@@ -74,7 +73,7 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     }
   }, [loadingLogs]);
 
-  // Fetch loading logs from backend
+  // 手动刷新一次 loading 日志（不再轮询）
   const fetchLoadingLogs = useCallback(async () => {
     try {
       const url = `${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?model_name=${encodeURIComponent(modelName)}`;
@@ -123,11 +122,6 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
     try {
       console.log('🔍 Start preloading Transcoders and Lorsas for model:', modelName);
 
-      // Start polling logs
-      pollIntervalRef.current = setInterval(async () => {
-        await fetchLoadingLogs();
-      }, 500);
-
       // Send preload request
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`, {
         method: 'POST',
@@ -136,15 +130,6 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
         },
         body: JSON.stringify({ model_name: modelName }),
       });
-
-      // Wait a bit to fetch final logs
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      await fetchLoadingLogs();
-
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
 
       if (response.ok) {
         const data = await response.json();
@@ -160,10 +145,6 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
       console.error('❌ Preload error:', error);
       setError(error instanceof Error ? error.message : 'Unknown error');
     } finally {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
       globalLoadingState.isLoading = false;
       setIsLoading(false);
       notifyListeners();
@@ -194,15 +175,6 @@ export const ModelLoadingStatus: React.FC<ModelLoadingStatusProps> = ({
       checkAndLoad();
     }
   }, [autoPreload, checkLoadingStatus, preloadModels]);
-
-  // Cleanup polling interval
-  useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
-    };
-  }, []);
 
   // Get status icon
   const getStatusIcon = () => {

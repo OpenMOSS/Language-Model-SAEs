@@ -135,60 +135,15 @@ export const GlobalWeightPage: React.FC = () => {
   }, [saeComboId]);
 
   const preloadModels = async (comboId: string): Promise<void> => {
-    setLoadingMessage('Checking model loading status...');
-    
-    // First check if it is loading
-    const checkLoadingStatus = async (): Promise<{ isLoading: boolean; logs?: Array<{ timestamp: number; message: string }> }> => {
-      try {
-        const logParams = new URLSearchParams({
-          model_name: 'lc0/BT4-1024x15x32h',
-          sae_combo_id: comboId,
-        });
-        const logRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?${logParams.toString()}`);
-        if (logRes.ok) {
-          const logData: { is_loading?: boolean; logs?: Array<{ timestamp: number; message: string }> } = await logRes.json();
-          return { isLoading: logData.is_loading ?? false, logs: logData.logs };
-        }
-      } catch (err) {
-        console.warn('Failed to check loading status:', err);
-      }
-      return { isLoading: false };
-    };
+    setLoadingMessage("Starting model preload...");
 
-    // If it is loading, wait for it to complete
-    let status = await checkLoadingStatus();
-    if (status.isLoading) {
-      setLoadingMessage('Detected model is loading, waiting for it to complete...');
-      // Poll to wait for it to complete
-      const maxWaitTime = 300000; // Maximum wait time is 5 minutes
-      const startTime = Date.now();
-      let lastLogCount = status.logs?.length ?? 0;
-      while (status.isLoading && Date.now() - startTime < maxWaitTime) {
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Check every 2 seconds
-        status = await checkLoadingStatus();
-        // If there is a new log, display the last one
-        if (status.logs && status.logs.length > lastLogCount) {
-          const lastLog = status.logs[status.logs.length - 1];
-          setLoadingMessage(`Loading: ${lastLog.message}`);
-          lastLogCount = status.logs.length;
-        }
-      }
-      if (status.isLoading) {
-        throw new Error('Model loading timeout, please try again later');
-      }
-      setLoadingMessage('Model loaded, preparing to calculate virtual weights...');
-      return; // Loading completed
-    }
-
-    // Call the preload interface
-    setLoadingMessage('Starting model preload...');
     const preloadRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model_name: 'lc0/BT4-1024x15x32h',
+        model_name: "lc0/BT4-1024x15x32h",
         sae_combo_id: comboId,
       }),
     });
@@ -199,37 +154,15 @@ export const GlobalWeightPage: React.FC = () => {
     }
 
     const preloadData = await preloadRes.json();
-    
-    // If it returns already_loaded, it means it has been loaded
-    if (preloadData.status === 'already_loaded') {
-      setLoadingMessage('Model loaded, preparing to calculate virtual weights...');
+
+    // 无论 loaded 还是 already_loaded，都认为可以继续算虚拟权重
+    if (preloadData.status === "loaded" || preloadData.status === "already_loaded") {
+      setLoadingMessage("Model loaded, preparing to calculate virtual weights...");
       return;
     }
 
-    // If it returns loaded or loading, wait for it to complete
-    if (preloadData.status === 'loaded' || preloadData.status === 'loading') {
-      setLoadingMessage('Waiting for model to load...');
-      const maxWaitTime = 300000; // Maximum wait time is 5 minutes
-      const startTime = Date.now();
-      let lastLogCount = 0;
-      while (Date.now() - startTime < maxWaitTime) {
-        status = await checkLoadingStatus();
-        // If there is a new log, display the last one
-        if (status.logs && status.logs.length > lastLogCount) {
-          const lastLog = status.logs[status.logs.length - 1];
-          setLoadingMessage(`Loading: ${lastLog.message}`);
-          lastLogCount = status.logs.length;
-        }
-        if (!status.isLoading) {
-          // Wait again to ensure it is loaded
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          setLoadingMessage('Model loaded, preparing to calculate virtual weights...');
-          return;
-        }
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-      throw new Error('Model loading timeout, please try again later');
-    }
+    // 其他状态直接继续，不再轮询 /circuit/loading_logs
+    setLoadingMessage("Model preload requested, preparing to calculate virtual weights...");
   };
 
   const fetchVirtualWeight = async () => {

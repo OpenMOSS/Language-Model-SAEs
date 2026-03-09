@@ -3151,9 +3151,6 @@ def get_loading_logs(
 
     logs = _loading_logs.get(combo_key, [])
     is_loading = _loading_status.get(combo_key, {}).get("is_loading", False)
-    
-    # debug information
-    print(f"📊 GET /circuit/loading_logs: combo_key={combo_key}, logs_count={len(logs)}, is_loading={is_loading}")
 
     return {
         "model_name": decoded_model_name,

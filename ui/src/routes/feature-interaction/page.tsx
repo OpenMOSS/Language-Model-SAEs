@@ -71,16 +71,9 @@ export const FeatureInteractionPage = () => {
     };
 
     window.addEventListener("storage", handleStorageChange);
-    const interval = setInterval(() => {
-      const stored = window.localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (stored !== saeComboId) {
-        setSaeComboId(stored || undefined);
-      }
-    }, 500);
 
     return () => {
       window.removeEventListener("storage", handleStorageChange);
-      clearInterval(interval);
     };
   }, [saeComboId]);
 
@@ -88,13 +81,25 @@ export const FeatureInteractionPage = () => {
     if (!saeComboId) return;
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?model_name=lc0/BT4-1024x15x32h&sae_combo_id=${saeComboId}`);
+      const response = await fetch(
+        `${import.meta.env.VITE_BACKEND_URL}/circuit/preload_models`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model_name: "lc0/BT4-1024x15x32h",
+            sae_combo_id: saeComboId,
+          }),
+        },
+      );
       if (response.ok) {
         const data = await response.json();
         setLoadingStatus({
-          loaded: !data.is_loading,
-          loading: data.is_loading,
-          model_name: 'lc0/BT4-1024x15x32h',
+          loaded: data.status === "loaded" || data.status === "already_loaded",
+          loading: false,
+          model_name: "lc0/BT4-1024x15x32h",
           combo_id: saeComboId,
         });
       }
@@ -102,15 +107,14 @@ export const FeatureInteractionPage = () => {
       setLoadingStatus({
         loaded: false,
         loading: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : "Unknown error",
       });
     }
   }, [saeComboId]);
 
   useEffect(() => {
+    // 仅在 combo 变化时检查一次，不再定时轮询 /circuit/loading_logs
     checkLoadingStatus();
-    const interval = setInterval(checkLoadingStatus, 2000);
-    return () => clearInterval(interval);
   }, [checkLoadingStatus]);
 
   // Add source feature

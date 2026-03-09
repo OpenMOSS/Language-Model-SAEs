@@ -22,14 +22,6 @@ interface PreloadResponse {
   sae_combo_id: string;
 }
 
-interface LoadingLogsResponse {
-  model_name: string;
-  sae_combo_id: string;
-  logs: { timestamp: number; message: string }[];
-  total_count: number;
-  is_loaded?: boolean;  // Added: backend-actual cache check result
-}
-
 const LOCAL_STORAGE_KEY = "bt4_sae_combo_id";
 
 export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className }) => {
@@ -39,10 +31,6 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [logs, setLogs] = useState<{ timestamp: number; message: string }[]>([]);
-
-  // Max number of logs to display on the frontend (keep only the latest N)
-  const MAX_VISIBLE_LOGS = 200;
 
   const backendBase = import.meta.env.VITE_BACKEND_URL ?? "";
 
@@ -69,50 +57,9 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
 
         setSelectedId(initialId);
 
-        // Fetch historical logs for this combo (shared across pages) and verify whether it's really loaded
-        if (initialId) {
-          try {
-            const logParams = new URLSearchParams({
-              model_name: "lc0/BT4-1024x15x32h",
-              sae_combo_id: initialId,
-            });
-            const logRes = await fetch(`${backendBase}/circuit/loading_logs?${logParams.toString()}`);
-            if (logRes.ok) {
-              const logData: LoadingLogsResponse & { is_loading?: boolean } = await logRes.json();
-              const allLogs = logData.logs ?? [];
-              const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
-              setLogs(sliced);
-
-              // Sync loading state
-              if (logData.is_loading) {
-                setIsLoading(true);
-              } else {
-                setIsLoading(false);
-              }
-
-              // Use the backend's is_loaded field to judge whether the combo is really loaded (actual cache check)
-              // This is the most reliable way, because the backend checks whether the cache exists
-              if (logData.is_loaded === true && !logData.is_loading) {
-                // Confirm loaded, set loadedId
-                setLoadedId(initialId);
-                console.log('✅ Confirmed SAE combo is loaded (cache verified):', initialId);
-              } else {
-                // Not loaded or state unclear, do not set loadedId
-                setLoadedId(null);
-                console.log('⚠️ SAE combo not loaded or state unclear:', initialId, {
-                  is_loaded: logData.is_loaded,
-                  is_loading: logData.is_loading
-                });
-              }
-            } else {
-              // If fetching logs fails, do not set loadedId
-              setLoadedId(null);
-            }
-          } catch (logErr) {
-            console.warn("Failed to fetch initial loading logs:", logErr);
-            // If getting logs fails, do not set loadedId
-            setLoadedId(null);
-          }
+        // 初始时直接认为后端 current_id 已经加载好
+        if (data.current_id) {
+          setLoadedId(data.current_id);
         } else {
           setLoadedId(null);
         }
@@ -123,58 +70,7 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
     fetchCombos();
   }, [backendBase]);
 
-  // Poll logs (poll even when not loading, to show historical logs and real-time updates)
-  useEffect(() => {
-    if (!selectedId) return;
-
-    let cancelled = false;
-
-    const poll = async () => {
-      try {
-        const params = new URLSearchParams({
-          model_name: "lc0/BT4-1024x15x32h",
-          sae_combo_id: selectedId,
-        });
-        const res = await fetch(`${backendBase}/circuit/loading_logs?${params.toString()}`);
-        if (!res.ok) return;
-        const data: LoadingLogsResponse & { is_loading?: boolean } = await res.json();
-        if (!cancelled) {
-          const allLogs = data.logs ?? [];
-          // Keep only the latest MAX_VISIBLE_LOGS entries
-          const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
-          setLogs(sliced);
-          // If the backend reports loading is in progress, but the frontend state is not, update frontend state
-          if (data.is_loading && !isLoading) {
-            setIsLoading(true);
-          } else if (!data.is_loading && isLoading) {
-            setIsLoading(false);
-          }
-          // Sync loadedId state (based on actual cache check)
-          if (data.is_loaded === true && !data.is_loading) {
-            // Confirm loaded, set loadedId
-            if (selectedId && selectedId !== loadedId) {
-              setLoadedId(selectedId);
-            }
-          } else if (data.is_loaded === false) {
-            // If the cache does not exist, and the currently selected combo is considered loaded, clear loadedId
-            if (loadedId === selectedId) {
-              setLoadedId(null);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch loading logs:", err);
-      }
-    };
-
-    // Execute once immediately, then start polling (so logs appear right away when switching pages)
-    poll();
-    const timer = window.setInterval(poll, 1000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [selectedId, isLoading, backendBase]);
+  // 不再轮询 /circuit/loading_logs，避免持续打日志
 
   const handleCancel = useCallback(async () => {
     try {
@@ -217,8 +113,6 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       }
     }
 
-    // Clear local log cache before each reload to avoid old combo's logs sticking around
-    setLogs([]);
     setIsLoading(true);
 
     try {
@@ -239,18 +133,20 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
       }
       const data: PreloadResponse = await res.json();
       setCurrentServerId(data.sae_combo_id);
+      setLoadedId(data.sae_combo_id);
       window.localStorage.setItem(LOCAL_STORAGE_KEY, data.sae_combo_id);
+      window.alert(`SAE combo ${data.sae_combo_id} 已加载完成`);
     } catch (err) {
       console.error("Failed to preload SAE models:", err);
-      // Clear state when loading fails
       setIsLoading(false);
       if (loadedId === selectedId) {
         setLoadedId(null);
       }
+      window.alert("加载 SAE combo 失败，请稍后重试");
     }
-  }, [selectedId, loadedId, isLoading, backendBase]);
+  }, [selectedId, loadedId, backendBase]);
 
-  const canReload = selectedId != null && selectedId !== loadedId && !isLoading;
+  const canReload = selectedId != null && !isLoading;
 
   if (combos.length === 0) {
     return null;
@@ -275,34 +171,13 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Select
             value={selectedId ?? undefined}
-            onValueChange={async (value) => {
+            onValueChange={(value) => {
               setSelectedId(value);
-              // When switching combo, immediately fetch logs for the new combo
-              try {
-                const params = new URLSearchParams({
-                  model_name: "lc0/BT4-1024x15x32h",
-                  sae_combo_id: value,
-                });
-                const res = await fetch(`${backendBase}/circuit/loading_logs?${params.toString()}`);
-                if (res.ok) {
-                  const data: LoadingLogsResponse & { is_loading?: boolean } = await res.json();
-                  const allLogs = data.logs ?? [];
-                  const sliced = allLogs.slice(-MAX_VISIBLE_LOGS);
-                  setLogs(sliced);
-                  if (data.is_loading) {
-                    setIsLoading(true);
-                  } else {
-                    setIsLoading(false);
-                  }
-                  // Sync loadedId state (based on actual cache check)
-                  if (data.is_loaded === true && !data.is_loading) {
-                    setLoadedId(value);
-                  } else {
-                    setLoadedId(null);
-                  }
-                }
-              } catch (err) {
-                console.warn("Failed to fetch logs when switching combo:", err);
+              // 切换 combo 时只更新前端状态，不再请求 loading_logs
+              if (value === currentServerId) {
+                setLoadedId(value);
+              } else {
+                setLoadedId(null);
               }
             }}
           >
@@ -343,19 +218,6 @@ export const SaeComboLoader: React.FC<SaeComboLoaderProps> = ({ title, className
             </Button>
           )}
         </div>
-      </div>
-      <div className="mt-2 max-h-40 overflow-y-auto rounded bg-blue-100 p-2 text-xs font-mono leading-relaxed">
-        {logs.length === 0 ? (
-          <div className="text-blue-700 opacity={0.8}">
-            No loading logs yet. Select a combo and click "Load / Reload" to start loading Lorsa / Transcoder.
-          </div>
-        ) : (
-          logs.map((log, idx) => (
-            <div key={`${log.timestamp}-${idx}`}>
-              {new Date(log.timestamp * 1000).toLocaleTimeString()} - {log.message}
-            </div>
-          ))
-        )}
       </div>
     </div>
   );
