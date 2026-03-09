@@ -287,7 +287,6 @@ export const CircuitVisualization = () => {
   }, [linkGraphData, positionMappingSelections, setDraftPositionMappingSelections]);
 
   const handleFeatureClick = useCallback((node: Node, isMetaKey: boolean) => {
-    console.log("[CircuitVisualization] handleFeatureClick 收到:", { nodeId: node?.nodeId, isMetaKey, hasNode: !!node });
     if (isMetaKey) {
       // Toggle pinned state
       const newPinnedIds = pinnedIds.includes(node.nodeId)

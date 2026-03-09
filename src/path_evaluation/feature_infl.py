@@ -164,7 +164,6 @@ def _build_feature_pairs_between(
             pos1, pos2 = int(f1["position_idx"]), int(f2["position_idx"])
             fid1, fid2 = int(f1["feature_id"]), int(f2["feature_id"])
 
-            # 排除相同的 feature（cross-connection 不应该包含相同的 feature）
             if layer1 == layer2 and pos1 == pos2 and fid1 == fid2 and type1 == type2:
                 continue
 

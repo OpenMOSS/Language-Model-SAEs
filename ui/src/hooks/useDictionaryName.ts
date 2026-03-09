@@ -62,7 +62,6 @@ export const useDictionaryName = ({ linkGraphData }: UseDictionaryNameOptions) =
     const metadata = linkGraphData?.metadata || {};
     let dictionary: string;
     let usingDefault = false;
-    console.log(`⚠️ Using default combo k128_e128 dictionary name: ${metadata?.lorsa_analysis_name}`)
     if (isLorsa) {
       const lorsaAnalysisName = metadata?.lorsa_analysis_name;
       if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
