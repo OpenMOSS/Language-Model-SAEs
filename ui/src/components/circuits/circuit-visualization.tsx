@@ -987,15 +987,26 @@ export const CircuitVisualization = () => {
     }
   }, [fen, linkGraphData, steeringScale, checkSaeLoaded]);
 
-  /** Fetch Top Activation data when node is clicked (Token Predictions is manual) */
+  /** Fetch Top Activation data when node is clicked (Token Predictions is manual).
+   */
   useEffect(() => {
-    if (clickedId) {
-      fetchTopActivations(clickedId);
-    } else {
+    if (!clickedId) {
       setTopActivations([]);
       setTokenPredictions(null);
+      return;
     }
-  }, [clickedId, fetchTopActivations]);
+
+    const names = (linkGraphData as any)?.metadata?.sourceFileNames as string[] | undefined;
+    const isMultiFile = !!(names && names.length > 1);
+
+    if (isMultiFile) {
+      setTopActivations([]);
+      setTokenPredictions(null);
+      return;
+    }
+
+    fetchTopActivations(clickedId);
+  }, [clickedId, fetchTopActivations, linkGraphData, setTopActivations, setTokenPredictions]);
 
   /** Sync clerps to backend interpretations */
   const syncClerpsToBackend = useCallback(async () => {
@@ -2485,6 +2496,14 @@ export const CircuitVisualization = () => {
               <h3 className="text-lg font-semibold">Top Activation Board</h3>
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-600">Node: {clickedId}</span>
+                <button
+                  type="button"
+                  onClick={() => clickedId && fetchTopActivations(clickedId)}
+                  disabled={loadingTopActivations}
+                  className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loadingTopActivations ? "Recomputing..." : "Compute Top Activations"}
+                </button>
                 {loadingTopActivations && (
                   <div className="flex items-center space-x-2">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
