@@ -234,26 +234,47 @@ _circuit_trace_results: Dict[str, dict] = {}  # trace_key -> {"graph_data": ...,
 TRACE_RESULTS_DIR = Path(__file__).parent.parent / "circuit_trace_results"
 TRACE_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-def _save_trace_result_to_disk(trace_key: str, result: dict) -> None:
-    """Save trace result to disk"""
+def _save_trace_result_to_disk(trace_key: str, graph_data: dict) -> None:
     try:
         # Use safe filename (replace special characters)
         safe_key = trace_key.replace("::", "_").replace("/", "_").replace(" ", "_")
         file_path = TRACE_RESULTS_DIR / f"{safe_key}.json"
-        
-        # Save result (include trace_key for recovery)
-        save_data = {
-            "trace_key": trace_key,
-            "result": result,
-            "saved_at": time.time()
-        }
-        
+
         with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(save_data, f, ensure_ascii=False, indent=2)
+            json.dump(graph_data, f, ensure_ascii=False, indent=2)
         
         print(f"✅ Trace result saved to disk: {file_path}")
     except Exception as e:
         print(f"⚠️ Failed to save trace result to disk: {e}")
+
+def _coerce_disk_trace_file_to_result_payload(
+    file_path: Path, save_data: dict
+) -> tuple[str | None, dict | None, float]:
+    if isinstance(save_data, dict) and "result" in save_data:
+        trace_key = save_data.get("trace_key")
+        result = save_data.get("result")
+        saved_at = float(save_data.get("saved_at", 0) or 0)
+        if isinstance(result, dict) and result.get("graph_data") is not None:
+            return trace_key, result, saved_at or file_path.stat().st_mtime
+        if isinstance(result, dict):
+            graph_data = result
+            finished_at = float(graph_data.get("metadata", {}).get("finished_at", 0) or 0)
+            payload = {"graph_data": graph_data, "finished_at": finished_at, "logs": []}
+            return trace_key, payload, saved_at or file_path.stat().st_mtime
+        return trace_key, None, saved_at or file_path.stat().st_mtime
+
+    if isinstance(save_data, dict) and "graph_data" in save_data and "trace_key" in save_data:
+        trace_key = save_data.get("trace_key")
+        result = save_data.get("graph_data")
+        payload = {"graph_data": result, "finished_at": file_path.stat().st_mtime, "logs": []}
+        return trace_key, payload, file_path.stat().st_mtime
+
+    if isinstance(save_data, dict):
+        graph_data = save_data
+        payload = {"graph_data": graph_data, "finished_at": file_path.stat().st_mtime, "logs": []}
+        return None, payload, file_path.stat().st_mtime
+
+    return None, None, file_path.stat().st_mtime
 
 def _load_trace_results_from_disk() -> None:
     """Load saved circuit trace results from disk."""
@@ -268,20 +289,23 @@ def _load_trace_results_from_disk() -> None:
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     save_data = json.load(f)
-                
-                trace_key = save_data.get("trace_key")
-                result = save_data.get("result")
-                
-                if trace_key and result:
-                    # Only load results from the last 30 days (avoid loading too much stale data)
-                    saved_at = save_data.get("saved_at", 0)
-                    if time.time() - saved_at < 30 * 24 * 3600:
-                        _circuit_trace_results[trace_key] = result
+
+                trace_key, payload, saved_ts = _coerce_disk_trace_file_to_result_payload(
+                    file_path=file_path, save_data=save_data
+                )
+
+                if payload is None:
+                    continue
+
+                # Only load results from the last 30 days (avoid loading too much stale data)
+                if time.time() - float(saved_ts or 0) < 30 * 24 * 3600:
+                    if trace_key:
+                        _circuit_trace_results[trace_key] = payload
                         loaded_count += 1
-                    else:
-                        # Delete expired files
-                        file_path.unlink()
-                        print(f"🗑️ Deleted expired trace result: {file_path}")
+                else:
+                    # Delete expired files
+                    file_path.unlink()
+                    print(f"🗑️ Deleted expired trace result: {file_path}")
             except Exception as e:
                 print(f"⚠️ Failed to load trace result file {file_path}: {e}")
         
@@ -295,7 +319,6 @@ _load_trace_results_from_disk()
 
 # Unified persistent storage helpers (defined above)
 def _load_trace_result_from_disk(trace_key: str) -> dict | None:
-    """Load a trace result from disk (using the unified storage format)."""
     import urllib.parse
     try:
         # Use a safe filename
@@ -305,14 +328,17 @@ def _load_trace_result_from_disk(trace_key: str) -> dict | None:
         if file_path.exists():
             with open(file_path, "r", encoding="utf-8") as f:
                 save_data = json.load(f)
-            
-            # Verify that the trace_key matches
-            saved_trace_key = save_data.get("trace_key")
-            if saved_trace_key == trace_key:
-                result = save_data.get("result")
-                if result:
-                    print(f"✅ Loaded trace result from disk: {file_path}")
-                    return result
+
+            saved_trace_key, payload, _ = _coerce_disk_trace_file_to_result_payload(
+                file_path=file_path, save_data=save_data
+            )
+
+            if saved_trace_key is not None and saved_trace_key != trace_key:
+                payload = None
+
+            if payload:
+                print(f"✅ Loaded trace result from disk: {file_path}")
+                return payload
         
         # If an exact match is not found, try scanning all files for a matching trace_key (handle encoding differences)
         if TRACE_RESULTS_DIR.exists():
@@ -321,15 +347,15 @@ def _load_trace_result_from_disk(trace_key: str) -> dict | None:
                     with open(storage_file, "r", encoding="utf-8") as f:
                         save_data = json.load(f)
                     
-                    saved_trace_key = save_data.get("trace_key")
-                    # Try decoding and comparing to handle possible encoding differences
-                    if saved_trace_key == trace_key:
-                        result = save_data.get("result")
-                        if result:
-                            print(
-                                f"✅ Loaded trace result from disk (via iterative search): {storage_file}"
-                            )
-                            return result
+                    saved_trace_key, payload, _ = _coerce_disk_trace_file_to_result_payload(
+                        file_path=storage_file, save_data=save_data
+                    )
+
+                    if saved_trace_key == trace_key and payload:
+                        print(
+                            f"✅ Loaded trace result from disk (via iterative search): {storage_file}"
+                        )
+                        return payload
                 except Exception as e:
                     continue
         
@@ -3419,7 +3445,7 @@ def circuit_trace(request: dict):
                 
                 # persist to disk (ensure can recover even if server restarts)
                 try:
-                    _save_trace_result_to_disk(trace_key, result_data)
+                    _save_trace_result_to_disk(trace_key, graph_data)
                 except Exception as e:
                     print(f"⚠️ persist trace result failed (but result is saved in memory): {e}")
                 
@@ -3436,7 +3462,6 @@ def circuit_trace(request: dict):
                             "error": str(trace_error)
                         }
                         _circuit_trace_results[trace_key] = partial_result
-                        _save_trace_result_to_disk(trace_key, partial_result)
                     except:
                         pass
                 raise
@@ -3528,23 +3553,24 @@ def circuit_trace_result(
                     try:
                         with open(storage_file, "r", encoding="utf-8") as f:
                             save_data = json.load(f)
-                        saved_trace_key = save_data.get("trace_key")
-                        disk_result = save_data.get("result")
-                        if disk_result:
-                            ts = disk_result.get("finished_at", 0)
+                        saved_trace_key, payload, saved_ts = _coerce_disk_trace_file_to_result_payload(
+                            file_path=storage_file, save_data=save_data
+                        )
+                        if payload:
+                            ts = float(payload.get("finished_at", 0) or saved_ts or 0)
                             if ts > latest_disk_ts:
                                 latest_disk_ts = ts
-                                latest_disk_result = disk_result
+                                latest_disk_result = payload
                                 latest_trace_key = saved_trace_key
                     except Exception as e:
                         print(f"⚠️ load trace file failed {storage_file}: {e}")
                         continue
                 
-                if latest_disk_result and latest_trace_key:
-                    # load to memory
-                    _circuit_trace_results[latest_trace_key] = latest_disk_result
+                if latest_disk_result:
+                    if latest_trace_key:
+                        _circuit_trace_results[latest_trace_key] = latest_disk_result
+                        print(f"✅ successfully recovered latest trace result from disk: {latest_trace_key}")
                     result = latest_disk_result
-                    print(f"✅ successfully recovered latest trace result from disk: {latest_trace_key}")
 
     if not result:
         raise HTTPException(status_code=404, detail="no trace result found")
