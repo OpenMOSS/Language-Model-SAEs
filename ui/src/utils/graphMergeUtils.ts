@@ -9,6 +9,9 @@ import { mixHexColorsVivid } from "./colorUtils";
 export const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // Blue, Orange, Green, Red
 export const POSITION_MAPPING_HIGHLIGHT_COLOR = "#8E44AD"; // Purple: position mapping highlight
 
+const DEFAULT_LORSA_ANALYSIS_NAME = "BT4_lorsa_k30_e16";
+const DEFAULT_TC_ANALYSIS_NAME = "BT4_tc_k30_e16";
+
 /**
  * Get subset color for partially shared nodes
  * Uses stable coloring for subset combinations (e.g., 0-1, 0-2, 1-2 for 3 files)
@@ -53,8 +56,9 @@ const validateAnalysisNamesConsistency = (
         `Analysis names mismatch across files. All circuit files must use the same SAE dictionary.\n\n` +
         `File 1 (${fileNames[0]}): lorsa=${firstLorsa ?? "undefined"}, tc=${firstTc ?? "undefined"}\n` +
         `File ${i + 1} (${fileNames[i]}): lorsa=${lorsa ?? "undefined"}, tc=${tc ?? "undefined"}\n\n` +
-        `Please upload files that use the same lorsa_analysis_name and tc_analysis_name.`;
-      throw new Error(msg);
+        `Proceeding with defaults: lorsa=${DEFAULT_LORSA_ANALYSIS_NAME}, tc=${DEFAULT_TC_ANALYSIS_NAME}.`;
+      console.warn(msg);
+      return;
     }
   }
 };
@@ -81,9 +85,22 @@ export const mergeCircuitGraphs = (
   const firstMeta = jsons[0]?.metadata || {};
   const mergedMetadata: any = {
     ...(graphs[0]?.metadata || {}),
-    lorsa_analysis_name: firstMeta.lorsa_analysis_name ?? graphs[0]?.metadata?.lorsa_analysis_name,
-    tc_analysis_name: firstMeta.tc_analysis_name ?? firstMeta.clt_analysis_name ?? graphs[0]?.metadata?.tc_analysis_name ?? graphs[0]?.metadata?.clt_analysis_name,
-    clt_analysis_name: firstMeta.clt_analysis_name ?? firstMeta.tc_analysis_name ?? graphs[0]?.metadata?.clt_analysis_name ?? graphs[0]?.metadata?.tc_analysis_name,
+    lorsa_analysis_name:
+      firstMeta.lorsa_analysis_name ??
+      graphs[0]?.metadata?.lorsa_analysis_name ??
+      DEFAULT_LORSA_ANALYSIS_NAME,
+    tc_analysis_name:
+      firstMeta.tc_analysis_name ??
+      firstMeta.clt_analysis_name ??
+      graphs[0]?.metadata?.tc_analysis_name ??
+      graphs[0]?.metadata?.clt_analysis_name ??
+      DEFAULT_TC_ANALYSIS_NAME,
+    clt_analysis_name:
+      firstMeta.clt_analysis_name ??
+      firstMeta.tc_analysis_name ??
+      graphs[0]?.metadata?.clt_analysis_name ??
+      graphs[0]?.metadata?.tc_analysis_name ??
+      DEFAULT_TC_ANALYSIS_NAME,
     prompt_tokens: graphs.map((g, i) =>
       `[#${i + 1}] ` + (g?.metadata?.prompt_tokens?.join(' ') || '')
     ).filter(Boolean),

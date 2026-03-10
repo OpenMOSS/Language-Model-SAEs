@@ -13,6 +13,7 @@ import { SaeComboLoader } from "@/components/common/SaeComboLoader";
 import { CustomFenInput } from "@/components/feature/custom-fen-input";
 import { PosFeatureCard } from "@/components/feature/pos-feature-card";
 import { CircuitInterpretationCard } from "./circuit-interpretation-card";
+import { FeatureInterpretationCard } from "@/components/feature/interpret";
 import { useCircuitFileUpload } from "@/hooks/useCircuitFileUpload";
 import { FileUploadZone } from "./FileUploadZone";
 import { useActivationData } from "@/hooks/useActivationData";
@@ -2712,109 +2713,41 @@ export const CircuitVisualization = () => {
           </div>
         )}
 
-        {/* Feature Interpretation Editor - New Section */}
-        {clickedId && nodeActivationData && (
-          <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Feature Interpretation Editor</h3>
-              <div className="flex items-center space-x-2">
+        {/* Feature Interpretation - saves to backend MongoDB (same as feature page) */}
+        {clickedId && displayLinkGraphData && (() => {
+          const currentNode = displayLinkGraphData.nodes.find(
+            (n: any) => String(n.nodeId ?? n.id ?? "") === String(clickedId)
+          );
+          if (!currentNode) return null;
+          const ft = (currentNode.feature_type || "").toLowerCase();
+          if (ft !== "lorsa" && ft !== "cross layer transcoder") return null;
+          const parts = (currentNode.nodeId ?? currentNode.id ?? "").split("_");
+          if (parts.length < 2) return null;
+          const rawLayer = parseInt(parts[0]) || 0;
+          const featureIndex = parseInt(parts[1]) || 0;
+          const layerIdx = Math.floor(rawLayer / 2);
+          const isLorsa = ft === "lorsa";
+          const dictionaryName = getDictionaryName(layerIdx, isLorsa);
+          const clerpText = nodeActivationData?.clerp ?? (currentNode as any)?.clerp ?? "";
+          const feature: Feature = {
+            featureIndex,
+            dictionaryName,
+            analysisName: dictionaryName,
+            interpretation: clerpText ? { text: clerpText, validation: [] } : undefined,
+          };
+          return (
+            <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">Feature Interpretation</h3>
                 <span className="text-sm text-gray-600">Node: {clickedId}</span>
-                {nodeActivationData.nodeType && (
-                  <span className="px-2 py-1 bg-blue-100 text-blue-800 text-sm font-medium rounded-full">
-                    {nodeActivationData.nodeType.toUpperCase()}
-                  </span>
-                )}
               </div>
+              <FeatureInterpretationCard feature={feature} title="" />
+              <p className="text-xs text-gray-500 mt-2">
+                Interpretation is saved to backend MongoDB. Use &quot;Provide Custom Interpretation&quot; or &quot;Automatic Interpretation&quot; to save.
+              </p>
             </div>
-            
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <label className="block text-sm font-medium text-gray-700">
-                  Feature Interpretation (Editable)
-                  {nodeActivationData.clerp === undefined && (
-                    <span className="text-xs text-gray-500 ml-2">(Node has no interpretation field, you can create a new one)</span>
-                  )}
-                  {nodeActivationData.clerp === '' && (
-                    <span className="text-xs text-gray-500 ml-2">(Currently empty)</span>
-                  )}
-                </label>
-                <div className="text-xs text-gray-500">
-                  Character count: {editingClerp.length}
-                </div>
-              </div>
-              <textarea
-                value={editingClerp}
-                onChange={(e) => setEditingClerp(e.target.value)}
-                className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                placeholder={
-                  nodeActivationData.clerp === undefined 
-                    ? "No interpretation" 
-                    : "Enter or edit node interpretation content..."
-                }
-              />
-              <div className="flex justify-end space-x-2">
-                <button
-                  onClick={() => setEditingClerp(nodeActivationData.clerp || '')}
-                  className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
-                  disabled={isSaving}
-                >
-                  Reset
-                </button>
-                {(() => {
-                  const isDisabled = isSaving || editingClerp.trim() === (nodeActivationData.clerp || '');
-                  return (
-                    <button
-                      onClick={handleSaveClerp}
-                      disabled={isDisabled}
-                      className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
-                      title="Save changes and automatically download updated file to Downloads folder"
-                    >
-                      {isSaving && (
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                      )}
-                      {isSaving ? 'Saving...' : 'Save and Download'}
-                    </button>
-                  );
-                })()}
-              </div>
-              {editingClerp.trim() !== (nodeActivationData.clerp || '') && (
-                <div className="text-xs text-orange-600 bg-orange-50 p-2 rounded">
-                  ⚠️ Content modified, please click "Save and Download" to save changes
-                </div>
-              )}
-              
-              <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
-                <div className="flex justify-between">
-                  <span>
-                    Original state: {
-                      nodeActivationData.clerp === undefined 
-                        ? 'No interpretation field' 
-                        : nodeActivationData.clerp === '' 
-                          ? 'Empty string' 
-                          : `Has content (${nodeActivationData.clerp.length} characters)`
-                    }
-                  </span>
-                  <span>
-                    Current edit: {editingClerp === '' ? 'Empty' : `${editingClerp.length} characters`}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="text-xs text-blue-600 bg-blue-50 p-3 rounded border-l-4 border-blue-200">
-                <div className="font-medium mb-1">💡 File update workflow:</div>
-                <ol className="list-decimal list-inside space-y-1 text-blue-700">
-                  <li>Edit interpretation content then click "Save and Download"</li>
-                  <li>Updated file will be automatically downloaded to Downloads folder</li>
-                  <li>Replace original file with new file, or drag and drop again to this page</li>
-                  <li>File name includes timestamp to avoid accidental overwrite</li>
-                </ol>
-                <div className="mt-2 text-xs">
-                  <strong>Tip:</strong> Due to browser security restrictions, cannot directly modify original file, but downloaded file contains all changes.
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Bottom Row: Feature Card below Link Graph Container */}
         {clickedId && displayLinkGraphData && (() => {

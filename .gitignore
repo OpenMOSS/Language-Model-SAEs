@@ -199,6 +199,7 @@ pyrightconfig.json
 /analysis
 /results
 /graphs
+/circuit_trace_results
 
 # Local todo notes
 /todo
