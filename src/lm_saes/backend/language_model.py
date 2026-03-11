@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
 import re
 import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import partial
 from itertools import accumulate
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Self, Union, cast
@@ -33,6 +33,7 @@ from transformers import (
 from lm_saes.backend.run_with_cache_until import run_with_cache_until
 from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
+from lm_saes.utils.discrete import DiscreteMapper, KeyedDiscreteMapper
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import ensure_tokenized, item, pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
@@ -360,10 +361,30 @@ NodeInfo = tuple[Any, torch.Tensor]
 
 
 class Matrix:
-    def __init__(self):
-        self.matrix = torch.zeros(0, 0, dtype=torch.float32, device="cpu")
-        self.source = {}
-        self.target = {}
+    def __init__(self, device: torch.device | str = "cpu"):
+        self.device = torch.device(device) if isinstance(device, str) else device
+        self.matrix = torch.zeros(0, 0, dtype=torch.float32, device=self.device)
+        self.source: dict[Any, Node] = {}
+        self.target: dict[Any, Node] = {}
+        self.mapper = KeyedDiscreteMapper()
+        self.matrix_indices_mapping = {
+            "source": {
+                "node_key": torch.empty(0, device=self.device, dtype=torch.long),
+                "indices": torch.empty(0, device=self.device, dtype=torch.long),
+            },
+            "target": {
+                "node_key": torch.empty(0, device=self.device, dtype=torch.long),
+                "indices": torch.empty(0, device=self.device, dtype=torch.long),
+            },
+        }
+
+    @property
+    def target_nodes(self) -> list[Node]:
+        return list(self.target.values())
+
+    @property
+    def source_nodes(self) -> list[Node]:
+        return list(self.source.values())
 
     def _add_elements(self, node_infos: list[NodeInfo], dim: int):
         node_dict = self.source if dim == 0 else self.target
@@ -375,7 +396,9 @@ class Matrix:
             [self.matrix, torch.zeros(new_matrix_shape, dtype=self.matrix.dtype, device=self.matrix.device)],
             dim=dim,
         )
+        mapper_key = "source" if dim == 0 else "target"
         for node_info in node_infos:
+            node_key_id = self.mapper.encode(mapper_key, [node_info[0]])[0]
             node_length = node_info[1].shape[0]
             node = Node(
                 node_info[0],
@@ -383,6 +406,16 @@ class Matrix:
                 torch.arange(m_start, m_start + node_length, device=self.matrix.device),
             )
             self._update_node(node, node_dict)
+            self.matrix_indices_mapping[mapper_key]["indices"] = torch.cat(
+                [self.matrix_indices_mapping[mapper_key]["indices"], node_info[1]], dim=0
+            )
+            self.matrix_indices_mapping[mapper_key]["node_key"] = torch.cat(
+                [
+                    self.matrix_indices_mapping[mapper_key]["node_key"],
+                    torch.full((node_length,), node_key_id, device=self.matrix.device, dtype=torch.long),
+                ],
+                dim=0,
+            )
             m_start += node_length
 
     def add_source(self, node_infos: list[NodeInfo] | NodeInfo):
@@ -413,12 +446,21 @@ class Matrix:
     def _get_sublines(self, node_infos: list[NodeInfo] | None, dim: int):
         full_node_dict = self.source if dim == 0 else self.target
         if node_infos is None:
-            return (full_node_dict, torch.arange(self.matrix.shape[dim], device=self.matrix.device))
+            mapper_key = "source" if dim == 0 else "target"
+            return (
+                full_node_dict,
+                torch.arange(self.matrix.shape[dim], device=self.matrix.device),
+                self.mapper.mappers[mapper_key],
+            )
 
         new_node_dict = {}
+        new_mapper = DiscreteMapper()
         old_matrix_indices = torch.zeros(0, device=self.matrix.device, dtype=torch.long)
         for node_info in node_infos:
-            r = torch.empty(full_node_dict[node_info[0]].indices.max() + 1, device=self.matrix.device, dtype=torch.long)
+            # TODO: check if torch.empty using extra memory
+            r = torch.empty(
+                int(full_node_dict[node_info[0]].indices.max() + 1), device=self.matrix.device, dtype=torch.long
+            )
             r[full_node_dict[node_info[0]].indices] = torch.arange(
                 full_node_dict[node_info[0]].indices.shape[0], device=self.matrix.device
             )
@@ -439,18 +481,74 @@ class Matrix:
                 ),
                 new_node_dict,
             )
+            new_mapper.encode([node_info[0]])
 
-        return (new_node_dict, old_matrix_indices)
+        return (new_node_dict, old_matrix_indices, new_mapper)
+
+    def _mapping_matrix_indices_to_node_infos(self, matrix_indices: torch.Tensor, dim: int) -> list[NodeInfo]:
+        """Map matrix row/column indices back to a list of NodeInfo, grouped by node key.
+
+        Args:
+            matrix_indices: 1D tensor of matrix indices along the given dimension.
+            dim: 0 for source, 1 for target.
+
+        Returns:
+            List of NodeInfo tuples ``(key, indices_tensor)``, one per unique node key.
+        """
+        mapper_key = "source" if dim == 0 else "target"
+        indices = self.matrix_indices_mapping[mapper_key]["indices"][matrix_indices]
+        node_keys = self.mapper.decode(
+            mapper_key, self.matrix_indices_mapping[mapper_key]["node_key"][matrix_indices].tolist()
+        )
+
+        grouped_indices: dict[Any, list[torch.Tensor]] = {}
+        for i, key in enumerate(node_keys):
+            grouped_indices.setdefault(key, []).append(indices[i])
+        return [(key, torch.stack(index_list)) for key, index_list in grouped_indices.items()]
+
+    def top_k(self, k: int, dim: int, reduction_weights: torch.Tensor, ignored_indices: torch.Tensor | None = None):
+        pattern_map = {
+            0: "source target, target -> source",
+            1: "source target, source -> target",
+        }
+        if dim not in pattern_map:
+            raise ValueError(f"Invalid dimension: {dim}")
+        reduction_matrix = einops.einsum(self.matrix, reduction_weights, pattern_map[dim])
+        if ignored_indices is not None:
+            reduction_matrix[ignored_indices] = -float("inf")
+        # reduction_matrix is always 1D after einsum, so top-k is taken along dim 0.
+        topk_values, topk_indices = torch.topk(reduction_matrix, k=k, dim=0)
+        node_infos = self._mapping_matrix_indices_to_node_infos(topk_indices, dim)
+        return topk_values, topk_indices, node_infos
 
     @classmethod
     def _build_submatrix(
-        cls, matrix: torch.Tensor, source_node_dict: dict[Any, Node], target_node_dict: dict[Any, Node]
+        cls,
+        matrix: torch.Tensor,
+        source_node_dict: dict[Any, Node],
+        target_node_dict: dict[Any, Node],
+        mapper: KeyedDiscreteMapper,
+        matrix_indices_mapping: dict[str, dict[str, torch.Tensor]],
     ) -> Self:
-        submatrix = cls()
+        submatrix = cls(matrix.device)
         submatrix.matrix = matrix
         submatrix.source = source_node_dict
         submatrix.target = target_node_dict
+        submatrix.mapper = mapper
+        submatrix.matrix_indices_mapping = matrix_indices_mapping
         return submatrix
+
+    @classmethod
+    def multiply_matrix(cls, matrix_A: Matrix, matrix_B: Matrix):
+        matrix_value = matrix_A.matrix @ matrix_B.matrix
+        matrix_indices_mapping = {
+            "source": matrix_A.matrix_indices_mapping["source"],
+            "target": matrix_B.matrix_indices_mapping["target"],
+        }
+        mapper = KeyedDiscreteMapper()
+        mapper.add_mapper("source", matrix_A.mapper.get_mapper("source"))
+        mapper.add_mapper("target", matrix_B.mapper.get_mapper("target"))
+        return cls._build_submatrix(matrix_value, matrix_A.source, matrix_B.target, mapper, matrix_indices_mapping)
 
     def get_submatrix(
         self,
@@ -467,120 +565,37 @@ class Matrix:
             if not isinstance(target_node_infos, list) and target_node_infos is not None
             else target_node_infos
         )
-        source_node_dict, source_matrix_indices = self._get_sublines(source_node_infos, 0)
-        target_node_dict, target_matrix_indices = self._get_sublines(target_node_infos, 1)
+        source_node_dict, source_matrix_indices, source_mapper = self._get_sublines(source_node_infos, 0)
+        target_node_dict, target_matrix_indices, target_mapper = self._get_sublines(target_node_infos, 1)
+        new_mapper = KeyedDiscreteMapper()
+        new_mapper.add_mapper("source", source_mapper)
+        new_mapper.add_mapper("target", target_mapper)
+        matrix_indices_mapping = {
+            "source": {
+                key: value[source_matrix_indices] for key, value in self.matrix_indices_mapping["source"].items()
+            },
+            "target": {
+                key: value[target_matrix_indices] for key, value in self.matrix_indices_mapping["target"].items()
+            },
+        }
         submatrix = Matrix._build_submatrix(
-            self.matrix[source_matrix_indices][:, target_matrix_indices], source_node_dict, target_node_dict
+            self.matrix[source_matrix_indices][:, target_matrix_indices],
+            source_node_dict,
+            target_node_dict,
+            new_mapper,
+            matrix_indices_mapping,
         )
         return submatrix
 
 
-class AdjacencyMatrix(torch.Tensor):
-    matrix: torch.Tensor
-    source_list: list[tuple[torch.Tensor, Any]]
-    target_list: list[tuple[torch.Tensor, Any]]
-    _wrap_enabled: bool = True
-
-    @classmethod
-    def _wrap(
-        cls,
-        matrix: torch.Tensor,
-        source_list: list[Any],
-        target_list: list[Any],
-    ) -> "AdjacencyMatrix":
-        obj = torch.Tensor._make_wrapper_subclass(
-            cls,
-            size=matrix.shape,
-            dtype=matrix.dtype,
-            layout=matrix.layout,
-            device=matrix.device,
-            requires_grad=matrix.requires_grad,
-        )
-        obj.matrix = matrix
-        obj.source_list = source_list
-        obj.target_list = target_list
-        return obj
-
-    @staticmethod
-    def __new__(
-        cls, source_list: list[tuple[torch.Tensor, Any]] = [], target_list: list[tuple[torch.Tensor, Any]] = []
-    ) -> "AdjacencyMatrix":
-        matrix = torch.zeros(len(source_list), len(target_list), dtype=torch.float32, device="cpu")
-        return cls._wrap(matrix, source_list, target_list)
-
-    @classmethod
-    @contextmanager
-    def unwrap(cls):
-        """Temporarily disable wrapper re-construction in ``__torch_dispatch__``."""
-        prev = cls._wrap_enabled
-        cls._wrap_enabled = False
-        try:
-            yield
-        finally:
-            cls._wrap_enabled = prev
-
-    def _add_elements(
-        self,
-        metadata: Any | list[Any],
-        values: torch.Tensor | None,
-        is_source: bool = True,
-    ) -> None:
-        info_list = self.source_list if is_source else self.target_list
-        dim = 0 if is_source else 1
-        metadata_list = metadata if isinstance(metadata, list) else [metadata]
-        info_list.extend(metadata_list)
-        # TODO: check if metadata matches values
-        sub_matrix_shape = list(self.matrix.shape)
-        sub_matrix_shape[dim] = len(info_list) - self.matrix.shape[dim]
-        assert sub_matrix_shape[dim] >= 0, "sub_matrix_shape[dim] must be non-negative"
-        values = values if values is not None else torch.zeros(sub_matrix_shape)
-        self.matrix = torch.cat(
-            [
-                self.matrix,
-                values.to(self.matrix.device).to(self.matrix.dtype),
-            ],
-            dim=dim,
-        )
-
-    def add_source(self, metadata: Any | list[Any], values: torch.Tensor | None = None) -> None:
-        self._add_elements(metadata, values, is_source=True)
-
-    def add_target(self, metadata: Any | list[Any], values: torch.Tensor | None = None) -> None:
-        self._add_elements(metadata, values, is_source=False)
-
-    @classmethod
-    def __torch_dispatch__(cls, func: Any, types: list[type], args: Any = (), kwargs: Any = None) -> Any:
-        from torch.utils._pytree import tree_map
-
-        kwargs = {} if kwargs is None else kwargs
-        source: AdjacencyMatrix | None = None
-        for a in tree_map(lambda x: x, args):
-            if isinstance(a, AdjacencyMatrix):
-                source = a
-                break
-        if source is None:
-            for v in tree_map(lambda x: x, kwargs):
-                if isinstance(v, AdjacencyMatrix):
-                    source = v
-                    break
-
-        def unwrap(x: Any) -> Any:
-            return x.matrix if isinstance(x, AdjacencyMatrix) else x
-
-        out = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
-        if not cls._wrap_enabled or source is None:
-            return out
-
-        def wrap(x: Any) -> Any:
-            if isinstance(x, torch.Tensor) and not isinstance(x, AdjacencyMatrix):
-                return cls._wrap(x, source.source_list, source.target_list)
-            return x
-
-        return tree_map(wrap, out)
-
-
 class AttributionGraph:
-    def __init__(self, cache_activations: dict[str, torch.Tensor], max_features: int | None = None):
+    def __init__(
+        self,
+        cache_activations: dict[str, torch.Tensor],
+        max_features: int | None = None,
+        device: torch.device | str = "cpu",
+    ):
+        self.device = torch.device(device) if isinstance(device, str) else device
         self.cache_activations = cache_activations
         self.n_tokens = cache_activations["hook_embed"].shape[1]
         self.n_logits = cache_activations["logits"].shape[-1]
@@ -594,64 +609,44 @@ class AttributionGraph:
         )
         self.max_features = min(max_features or self.n_active_features, self.n_active_features)
         self.n_error = self.n_tokens * len([v for k, v in cache_activations.items() if k.endswith(".error")])
-        self.adjacency_matrix = self._init_adjacency_matrix()
+        self.matrix = self._init_matrix()
         self.selected_features: torch.Tensor | None = None
 
-    def _init_adjacency_matrix(self) -> AdjacencyMatrix:
-        target_info_list = [(pos, "hook_embed", "embed") for pos in range(self.n_tokens)]
-        target_tensor_list = [self.cache_activations["hook_embed"][:, pos] for pos in range(self.n_tokens)]
-        for key in self.cache_activations:
-            if key.endswith(".feature_acts.down"):
-                active_mask = self.cache_activations[key][0] > 0  # [n_pos, n_features]
-                pos_ids, feat_ids = active_mask.nonzero(as_tuple=True)
-                target_tensor_list.extend(
-                    [
-                        self.cache_activations[key][:, pos_id, feat_id]
-                        for pos_id, feat_id in zip(pos_ids.tolist(), feat_ids.tolist())
-                    ]
-                )
-                target_info_list.extend(
-                    [(pos_id, key, feat_id) for pos_id, feat_id in zip(pos_ids.tolist(), feat_ids.tolist())]
-                )
-        for key in self.cache_activations:
-            if key.endswith(".error"):
-                target_tensor_list.extend([self.cache_activations[key][:, pos_id] for pos_id in range(self.n_tokens)])
-                target_info_list.extend([(pos_id, key, "error") for pos_id in range(self.n_tokens)])
-
-        target_metadata = list(zip(target_tensor_list, target_info_list))
-        return AdjacencyMatrix([], target_metadata)
-
-    def get_source_nodes(
-        self, idx: int | list[int], mapping_from: Literal["target", "logits"]
-    ) -> list[tuple[torch.Tensor, tuple[int, str, int]]]:
-        # return a list of metadata
-        if mapping_from == "target":
-            target_idx = [idx] if isinstance(idx, int) else idx
-            meta_infos = [self.adjacency_matrix.target_list[i][1] for i in target_idx]
-            return [
-                (
-                    cast(
-                        torch.Tensor,
-                        (
-                            self.cache_activations[hook_key.replace(".feature_acts.down", ".feature_acts.up")][
-                                :, pos, feat_id
-                            ]
-                        ),
-                    ),
-                    (pos, hook_key.replace(".feature_acts.down", ".feature_acts.up"), feat_id),
-                )
-                for pos, hook_key, feat_id in meta_infos
+    def _init_matrix(self) -> Matrix:
+        target_infos: list[NodeInfo] = (
+            [
+                ((pos, "hook_embed"), torch.tensor(0, dtype=torch.long, device=self.device))
+                for pos in range(self.n_tokens)
             ]
-        else:
-            logits_idx = [idx] if isinstance(idx, int) else idx
-            return [
-                (self.cache_activations["logits"][:, -1, idx], (self.n_tokens - 1, "logits", idx)) for idx in logits_idx
+            + [
+                ((pos, key), torch.nonzero(self.cache_activations[key][0, pos]))
+                for pos in range(self.n_tokens)
+                for key in self.cache_activations
+                if key.endswith(".feature_acts.down")
             ]
+            + [
+                ((pos, key), torch.tensor(0, dtype=torch.long, device=self.device))
+                for pos in range(self.n_tokens)
+                for key in self.cache_activations
+                if key.endswith(".error")
+            ]
+        )
+        matrix = Matrix(self.device)
+        matrix.add_target(target_infos)
+        return matrix
 
-    def update_source(
-        self, source_metadata: list[tuple[torch.Tensor, tuple[int, str, int]]], values: torch.Tensor
-    ) -> None:
-        self.adjacency_matrix.add_source(source_metadata, values)
+    def bwd_values(self, source_node_infos: list[NodeInfo]) -> torch.Tensor:
+        values = []
+        batch_idx = 0
+        for (pos_id, hook_key), indices in source_node_infos:
+            local_batch = torch.arange(indices.shape[0], device=self.device) + batch_idx
+            values.append(
+                self.cache_activations[hook_key.replace(".feature_acts.down", ".feature_acts.up")][
+                    local_batch, pos_id, indices
+                ]
+            )
+            batch_idx += indices.shape[0]
+        return torch.cat(values, dim=0)
 
     def clear_cache_activation_grads(self) -> None:
         """Clear gradients for all cached activations in-place."""
@@ -659,63 +654,91 @@ class AttributionGraph:
             if activation.requires_grad and activation.grad is not None:
                 activation.grad = None
 
-
-def calculate_attribution(matrix: AdjacencyMatrix, batch_size: int):
-
-    rows = torch.zeros(batch_size, matrix.shape[1], dtype=matrix.dtype, device=matrix.device)
-    # TODO: target_list currently contains many fragmented feature acts; aggregating them
-    # before computing attribution in a batched way may be significantly faster.
-    for i, (tensor, _) in enumerate(matrix.target_list):
-        if tensor.grad is not None:
-            rows[:, i] = (
-                einops.einsum(
-                    tensor[:batch_size],
-                    cast(torch.Tensor, tensor[:batch_size].grad),
-                    "batch ..., batch ... -> batch",
-                )
-                .to(matrix.device)
-                .to(matrix.dtype)
+    def calculate_attribution(
+        self,
+        source_node_infos: list[NodeInfo],
+    ):
+        self.matrix.add_source(source_node_infos)
+        submatrix = self.matrix.get_submatrix(source_node_infos=source_node_infos)
+        attribution = torch.zeros_like(submatrix.matrix)  # (batch_size / n_source, n_target)
+        for target_node in submatrix.target_nodes:
+            (pos_id, key), indices, matrix_indices = target_node.key, target_node.indices, target_node.matrix_indices
+            tensor = (
+                self.cache_activations[key][:, pos_id, indices]
+                if key.endswith(".feature_acts.down")
+                else self.cache_activations[key][:, pos_id]
             )
-    return rows
+            grad = torch.zeros_like(tensor) if tensor.grad is None else tensor.grad
+            contribution = (
+                (tensor[: len(source_node_infos)] * grad[: len(source_node_infos)])
+                if key.endswith(".feature_acts.down")
+                else tensor[: len(source_node_infos)] * grad[: len(source_node_infos)].sum(dim=1, keepdim=True)
+            ).to(self.device)
+            attribution[:, matrix_indices] += contribution
+
+        submatrix.update_matrix(attribution)
+        return submatrix
 
 
 def get_normalized_matrix(matrix: torch.Tensor) -> torch.Tensor:
     return torch.abs(matrix) / torch.abs(matrix).sum(dim=1, keepdim=True).clamp(min=1e-8)
 
 
+def update_nodeinfo(node_infos: list[NodeInfo], node_dict: dict[Any, NodeInfo]):
+    for node_info in node_infos:
+        if node_info[0] not in node_dict:
+            node_dict[node_info[0]] = node_info
+        else:
+            node_dict[node_info[0]] = (node_info[0], torch.cat([node_dict[node_info[0]][1], node_info[1]], dim=0))
+    return node_dict
+
+
 def compute_feature_influences(
     graph: AttributionGraph,
+    batch_size: int,
+    feature_infos: list[NodeInfo],
+    logits_infos: list[NodeInfo],
+    selected_node_infos: dict[Any, NodeInfo],
+    ignored_indices: torch.Tensor | None = None,
     max_iter: int = 100,
-) -> torch.Tensor:
+) -> tuple[list[NodeInfo], torch.Tensor]:
 
-    with graph.adjacency_matrix.unwrap():
-        influences = einops.einsum(
-            graph.cache_activations["top_p"].to(graph.adjacency_matrix.device),
-            get_normalized_matrix(
-                graph.adjacency_matrix[
-                    :,
-                    graph.n_tokens : graph.n_tokens + graph.n_active_features,
-                ]
-            ),
-            "logits, logits features -> features",
-        )
-    if graph.selected_features is None:
-        return influences
+    pass
 
-    with graph.adjacency_matrix.unwrap():
-        feature_to_feature = get_normalized_matrix(
-            graph.adjacency_matrix[
-                graph.n_logits : graph.selected_features.shape[0] + graph.n_logits,
-                graph.n_tokens : graph.n_tokens + graph.n_active_features,
-            ]
-        )
-    prod = influences
-    for _ in range(max_iter):
-        prod = prod[graph.selected_features] @ feature_to_feature
-        if not torch.any(prod):
-            break
-        influences += prod
-    return influences
+
+# def compute_feature_influences(
+#     graph: AttributionGraph,
+#     max_iter: int = 100,
+# ) -> torch.Tensor:
+
+#     with graph.adjacency_matrix.unwrap():
+#         influences = einops.einsum(
+#             graph.cache_activations["top_p"].to(graph.adjacency_matrix.device),
+#             get_normalized_matrix(
+#                 graph.adjacency_matrix[
+#                     :,
+#                     graph.n_tokens : graph.n_tokens + graph.n_active_features,
+#                 ]
+#             ),
+#             "logits, logits features -> features",
+#         )
+#     if graph.selected_features is None:
+#         return influences
+
+#     with graph.adjacency_matrix.unwrap():
+#         feature_to_feature = get_normalized_matrix(
+#             graph.adjacency_matrix[
+#                 graph.n_logits : graph.selected_features.shape[0] + graph.n_logits,
+#                 graph.n_tokens : graph.n_tokens + graph.n_active_features,
+#             ]
+#         )
+#     prod = influences
+#     for _ in range(max_iter):
+#         prod = prod[graph.selected_features] @ feature_to_feature
+#         if not torch.any(prod):
+#             break
+#         influences += prod
+#     return influences
 
 
 class TransformerLensLanguageModel(LanguageModel):
@@ -844,16 +867,34 @@ class TransformerLensLanguageModel(LanguageModel):
 
         for i in range(0, graph.n_logits, batch_size):
             cur_batch_size = min(batch_size, graph.n_logits - i)
-            logits_source_metadata = graph.get_source_nodes(list(range(i, i + cur_batch_size)), mapping_from="logits")
-            batch_source_values = torch.stack([tensor[i] for i, (tensor, _) in enumerate(logits_source_metadata)])
-            batch_source_values -= torch.mean(batch_logits[:cur_batch_size, -1, :], dim=-1).squeeze()
+            node_infos = [
+                (
+                    (graph.n_tokens - 1, "logits"),
+                    torch.arange(i, i + cur_batch_size, dtype=torch.long, device=graph.device),
+                )
+            ]
+            bwd_values = graph.bwd_values(node_infos)
+            bwd_values -= torch.mean(batch_logits[:cur_batch_size, -1, :], dim=-1).squeeze()
             graph.clear_cache_activation_grads()
-            batch_source_values.sum().backward(retain_graph=True)
-            graph.update_source(logits_source_metadata, calculate_attribution(graph.adjacency_matrix, cur_batch_size))
+            bwd_values.sum().backward(retain_graph=True)
+            graph.calculate_attribution(node_infos)
 
+        logits_infos = [
+            ((graph.n_tokens - 1, "logits"), torch.arange(graph.n_logits, dtype=torch.long, device=graph.device))
+        ]
+
+        ignored_indices = None
+        selected_node_infos = {}
         for i in tqdm(range(0, graph.max_features, batch_size)):
             cur_batch = min(batch_size, graph.max_features - i)
-            features_attributions = compute_feature_influences(graph, max_iter=len(replacement_modules) + 10)
+            features_attributions = compute_feature_influences(
+                graph,
+                cur_batch,
+                logits_infos,
+                selected_node_infos,
+                ignored_indices,
+                max_iter=len(replacement_modules) + 10,
+            )
             if graph.selected_features is not None:
                 features_attributions[graph.selected_features] = float("-inf")
             _, batch_feature_ids = torch.topk(features_attributions, cur_batch)
