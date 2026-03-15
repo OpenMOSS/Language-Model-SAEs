@@ -642,16 +642,19 @@ class MixtureOfLinearTransform(
             # Step 3: U @ (weighted V @ x)
             reconstruction_local += torch.einsum("... c r, c d r -> ... d", weighted_Vx, U_local)
 
-        # Add decoder bias prior to creating DTensor to avoid distributed broadcasting issues
+        # All-reduce(sum) within model parallel shards
+        model_group = mesh.get_group("model")
+        torch.distributed.all_reduce(reconstruction_local, op=torch.distributed.ReduceOp.SUM, group=model_group)
+
+        # Add decoder bias after model-parallel reduction.
+        #
+        # IMPORTANT: b_D is replicated across the model-parallel group, so adding it before the all-reduce
+        # would incorrectly scale it by model_parallel_size.
         if self.cfg.use_decoder_bias:
             bias_local = self.b_D.to_local() if isinstance(self.b_D, DTensor) else self.b_D
             while bias_local.ndim < reconstruction_local.ndim:
                 bias_local = bias_local.unsqueeze(0)  # align dimensions for broadcasting
             reconstruction_local = reconstruction_local + bias_local
-
-        # All-reduce(sum) within model parallel shards
-        model_group = mesh.get_group("model")
-        torch.distributed.all_reduce(reconstruction_local, op=torch.distributed.ReduceOp.SUM, group=model_group)
 
         # Convert to DTensor with proper sharding (sharding along data dimension, replicated along model dimension)
         reconstruction_dt = DTensor.from_local(
