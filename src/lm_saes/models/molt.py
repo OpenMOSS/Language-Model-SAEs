@@ -436,6 +436,7 @@ class MixtureOfLinearTransform(
 
     @override
     @timer.time("standardize_parameters_of_dataset_norm")
+    @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self) -> None:
         # Similar to SAE standardization
         assert self.cfg.norm_activation == "dataset-wise"
