@@ -19,7 +19,6 @@ from typing import (
     Self,
     Sequence,
     TypeVar,
-    TypedDict,
     Union,
     cast,
     overload,
@@ -35,7 +34,6 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
 from torch.types import Number
-from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from transformers import (
@@ -51,7 +49,7 @@ from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.discrete import DiscreteMapper
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import ensure_tokenized, item, pad_and_truncate_tokens
+from lm_saes.utils.misc import ensure_tokenized, pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
@@ -369,7 +367,7 @@ def detach_hook_builder(models: TransformerLensLanguageModel) -> list[tuple[str,
 class Node:
     key: Any
     """Key of the node. Should be a hashable object."""
-    
+
     indices: torch.Tensor
     """Indices of elements in the node's data. Should be of shape `(n_elements, d_index)`."""
 
@@ -472,8 +470,7 @@ class NodeIndexedTensor:
         dtype: torch.dtype = torch.float32,
     ) -> Self:
         shape = [
-            sum([node_info.indices.shape[0] for node_info in node_infos_per_dim])
-            for node_infos_per_dim in node_infos
+            sum([node_info.indices.shape[0] for node_info in node_infos_per_dim]) for node_infos_per_dim in node_infos
         ]
         return cls.from_data(torch.zeros(shape, dtype=dtype, device=device), node_infos)
 
@@ -584,7 +581,7 @@ class NodeIndexedTensor:
         unique_keys_encoded, inverse_indices = torch.unique_consecutive(keys_encoded, return_inverse=True)
         unique_keys = self.mappers[dim].decode(unique_keys_encoded.tolist())
         node_infos: Sequence[NodeInfo] = [
-            NodeInfo(   
+            NodeInfo(
                 key=unique_keys[i],
                 indices=self.node_mappings[dim][unique_keys[i]].indices[indices[inverse_indices == i]],
             )
@@ -927,9 +924,7 @@ def greedily_collect_attribution(
     """
     Greedily collect attribution from targets to sources through intermediates.
     """
-    intermediate_source_to_target_mapping = {
-        intermediate[1].key: intermediate[0].key for intermediate in intermediates
-    }
+    intermediate_source_to_target_mapping = {intermediate[1].key: intermediate[0].key for intermediate in intermediates}
     all_sources = list(sources) + [intermediate[1] for intermediate in intermediates]
     attribution = NodeIndexedMatrix.from_node_infos(
         node_infos=(targets, all_sources),
@@ -943,9 +938,14 @@ def greedily_collect_attribution(
 
     def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
         return [node_info.ref[:, node_info.indices] for node_info in node_infos]
-    
+
     def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-        return [node_info.ref.grad[:, node_info.indices] if node_info.ref.grad is not None else torch.zeros_like(node_info.ref[:, node_info.indices]) for node_info in node_infos]
+        return [
+            node_info.ref.grad[:, node_info.indices]
+            if node_info.ref.grad is not None
+            else torch.zeros_like(node_info.ref[:, node_info.indices])
+            for node_info in node_infos
+        ]
 
     def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
         for node_info in node_infos:
@@ -955,15 +955,12 @@ def greedily_collect_attribution(
         clear_grads(all_sources)
         root = torch.diag(torch.cat(values(target_batch), dim=1)).sum()
         root.backward()
-        attribution[target_batch, None] = torch.cat([
-            einops.einsum(value, grad, "batch n_elements ..., batch n_elements ... -> batch n_elements") for value, grad in zip(values(all_sources), grads(all_sources))
-        ])
-
-        
-
-        
-
-    
+        attribution[target_batch, None] = torch.cat(
+            [
+                einops.einsum(value, grad, "batch n_elements ..., batch n_elements ... -> batch n_elements")
+                for value, grad in zip(values(all_sources), grads(all_sources))
+            ]
+        )
 
     return attribution
 
@@ -1219,8 +1216,6 @@ class TransformerLensLanguageModel(LanguageModel):
             )
             for replacement_module in replacement_modules
             for hook_in in replacement_module.cfg.hooks_in
-            for pos in range(seq_len)
-            if cache_activations[hook_in + ".feature_acts.up"][0, pos].any()
         ]
 
         max_intermediates = max_features if max_features is not None else len(intermediates)
