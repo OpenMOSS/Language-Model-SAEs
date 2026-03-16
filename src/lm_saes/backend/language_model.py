@@ -18,7 +18,6 @@ from typing import (
     Optional,
     Self,
     Sequence,
-    TypeVar,
     Union,
     cast,
     overload,
@@ -899,10 +898,7 @@ class NodeInfoRef(NodeInfo):
     ref: torch.Tensor
 
 
-T = TypeVar("T", bound=NodeInfo)
-
-
-class NodeInfoQueue[T]:
+class NodeInfoQueue[T: NodeInfo]:
     def __init__(self, node_infos: Sequence[T]):
         self.queue = list(node_infos)
 
@@ -929,7 +925,7 @@ class NodeInfoQueue[T]:
             raise StopIteration
 
 
-class NodeInfoSet[T]:
+class NodeInfoSet[T: NodeInfo]:
     def __init__(self, node_infos: Sequence[T] = []):
         self.dict: dict[Any, T] = {}
         self.extend(node_infos)
