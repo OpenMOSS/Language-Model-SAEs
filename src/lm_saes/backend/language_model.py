@@ -508,7 +508,7 @@ class NodeIndexedTensor:
                 device=self.data.device,
                 dtype=torch.long,
             )
-            inv_indices[self.node_mappings[dim][node.key].indices] = torch.arange(
+            inv_indices[self.node_mappings[dim][node.key].indices.unbind(dim=1)] = torch.arange(
                 self.node_mappings[dim][node.key].indices.shape[0], device=self.data.device
             )
             self.inv_indices_mappings[dim][node.key] = inv_indices
@@ -517,7 +517,12 @@ class NodeIndexedTensor:
             self.offset_mapping[dim]["indices"] = torch.cat(
                 [
                     self.offset_mapping[dim]["indices"],
-                    n_original_elements * torch.arange(node_length, device=self.data.device, dtype=torch.long),
+                    torch.arange(
+                        n_original_elements,
+                        n_original_elements + node_length,
+                        device=self.data.device,
+                        dtype=torch.long,
+                    ),
                 ],
                 dim=0,
             )
@@ -563,7 +568,7 @@ class NodeIndexedTensor:
         for i, node_info in enumerate(node_infos):
             key, indices = node_info.key, node_info.indices
             offsets[start : start + indices.shape[0]] = self.node_mappings[dim][key].offsets[
-                self.inv_indices_mappings[dim][key][indices]
+                self.inv_indices_mappings[dim][key][indices.unbind(dim=1)]
             ]
             start += indices.shape[0]
         return offsets
@@ -937,13 +942,13 @@ def greedily_collect_attribution(
     queue = NodeInfoQueue(targets)
 
     def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-        return [node_info.ref[:, node_info.indices] for node_info in node_infos]
+        return [node_info.ref[:, *node_info.indices.unbind(dim=1)] for node_info in node_infos]
 
     def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
         return [
-            node_info.ref.grad[:, node_info.indices]
+            node_info.ref.grad[:, *node_info.indices.unbind(dim=1)]
             if node_info.ref.grad is not None
-            else torch.zeros_like(node_info.ref[:, node_info.indices])
+            else torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)])
             for node_info in node_infos
         ]
 
