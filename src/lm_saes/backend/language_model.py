@@ -673,6 +673,10 @@ class NodeIndexedTensor:
         self.data[tuple(indexers)] = value
         return self
 
+    def __add__(self, other: Self):
+        data = self.data + other.data
+        return self.__class__.from_data(data, self.node_infos)
+
 
 class NodeIndexedVector(NodeIndexedTensor):
     def __init__(
@@ -689,7 +693,14 @@ class NodeIndexedVector(NodeIndexedTensor):
     def add_nodes(self, node_infos: Sequence[NodeInfo]):
         self._add_elements(node_infos, 0)
 
-    def topk(self, k: int):
+    def topk(self, k: int, ignore_node_infos: Sequence[NodeInfo] | None = None):
+        ignore_indices = (
+            self._nodes_to_offsets(ignore_node_infos, 0)
+            if ignore_node_infos is not None and len(ignore_node_infos) > 0
+            else None
+        )
+        if ignore_indices is not None:
+            self.data[ignore_indices] = float("-inf")
         topk_values, topk_indices = torch.topk(self.data, k=k, dim=0)
         return topk_values, self._offsets_to_nodes(topk_indices, 0)
 
@@ -893,8 +904,7 @@ T = TypeVar("T", bound=NodeInfo)
 
 class NodeInfoQueue[T]:
     def __init__(self, node_infos: Sequence[T]):
-        self.node_infos = node_infos
-        self.queue = []
+        self.queue = list(node_infos)
 
     def enqueue(self, node_info: Sequence[T]):
         self.queue.extend(node_info)
@@ -919,17 +929,64 @@ class NodeInfoQueue[T]:
             raise StopIteration
 
 
+class NodeInfoSet[T]:
+    def __init__(self, node_infos: Sequence[T] = []):
+        self.dict: dict[Any, T] = {}
+        self.extend(node_infos)
+
+    def extend(self, node_infos: Sequence[T]):
+        for node_info in node_infos:
+            if node_info.key not in self.dict:
+                self.dict[node_info.key] = node_info
+            else:
+                self.dict[node_info.key].indices = torch.cat(
+                    [self.dict[node_info.key].indices, node_info.indices],
+                    dim=0,
+                )
+
+    def __len__(self) -> int:
+        return sum(len(node_info) for node_info in self.dict.values())
+
+    def to_list(self) -> list[T]:
+        return list(self.dict.values())
+
+
+def compute_intermediates_attribution(
+    attribution: NodeIndexedMatrix,
+    targets: Sequence[NodeInfoRef],
+    intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]],
+    max_iter: int,
+) -> NodeIndexedMatrix:
+    if len(intermediates) == 0:
+        return attribution[targets, None]
+    t2i: NodeIndexedMatrix = attribution[targets, [intermediate[1] for intermediate in intermediates]]
+    influence = attribution[targets, None]
+    for _ in range(max_iter):
+        cur_influence = t2i @ attribution[[intermediate[0] for intermediate in intermediates], None]
+        if not torch.any(cur_influence.data):
+            break
+        influence += cur_influence
+        t2i = (
+            t2i
+            @ attribution[
+                [intermediate[0] for intermediate in intermediates], [intermediate[1] for intermediate in intermediates]
+            ]
+        )
+    return influence
+
+
 def greedily_collect_attribution(
     targets: Sequence[NodeInfoRef],
     sources: Sequence[NodeInfoRef],
-    intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]],
+    intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]],  # [up as target, down as source]
     max_intermediates: int,
+    reduction_weight: torch.Tensor,
     max_iter: int = 100,
 ) -> NodeIndexedMatrix:
     """
     Greedily collect attribution from targets to sources through intermediates.
     """
-    intermediate_source_to_target_mapping = {intermediate[1].key: intermediate[0].key for intermediate in intermediates}
+
     all_sources = list(sources) + [intermediate[1] for intermediate in intermediates]
     attribution = NodeIndexedMatrix.from_node_infos(
         node_infos=(targets, all_sources),
@@ -961,6 +1018,38 @@ def greedily_collect_attribution(
         root = torch.diag(torch.cat(values(target_batch), dim=1)).sum()
         root.backward()
         attribution[target_batch, None] = torch.cat(
+            [
+                einops.einsum(value, grad, "batch n_elements ..., batch n_elements ... -> batch n_elements")
+                for value, grad in zip(values(all_sources), grads(all_sources))
+            ]
+        )
+
+    def retrive_from_intermediates(node_infos: Sequence[NodeInfo]):
+        node_refs = []
+        for node_info in node_infos:
+            for intermediate in intermediates:
+                if node_info.key == intermediate[0].key:
+                    node_refs.append(NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[0].ref))
+
+        return node_refs
+
+    intermediates_set = NodeInfoSet()
+    reduction_weight: NodeIndexedVector = NodeIndexedVector.from_data(reduction_weight, node_infos=(targets,))
+    for i in range(0, max_intermediates, batch_size):
+        cur_batch_size = min(batch_size, max_intermediates - i)
+        intermediates_attribution = compute_intermediates_attribution(
+            attribution[None, [intermediate[1] for intermediate in intermediates]], targets, intermediates, max_iter
+        )
+
+        influence = reduction_weight @ intermediates_attribution
+        _, selected_node_infos = influence.topk(k=cur_batch_size, ignore_node_infos=intermediates_set.to_list())
+        intermediates_set.extend(selected_node_infos)
+        attribution.add_target(selected_node_infos)
+        clear_grads(all_sources)
+        node_refs = retrive_from_intermediates(selected_node_infos)
+        root = torch.diag(torch.cat(values(node_refs), dim=1)).sum()
+        root.backward()
+        attribution[selected_node_infos, None] = torch.cat(
             [
                 einops.einsum(value, grad, "batch n_elements ..., batch n_elements ... -> batch n_elements")
                 for value, grad in zip(values(all_sources), grads(all_sources))
@@ -1209,12 +1298,12 @@ class TransformerLensLanguageModel(LanguageModel):
         intermediates: list[tuple[NodeInfoRef, NodeInfoRef]] = [
             (
                 NodeInfoRef(
-                    key=hook_in + ".feature_acts.up",
+                    key=hook_in + ".feature_acts",
                     ref=cache_activations[hook_in + ".feature_acts.up"],
                     indices=cache_activations[hook_in + ".feature_acts.up"][0].nonzero(),
                 ),
                 NodeInfoRef(
-                    key=hook_in + ".feature_acts.down",
+                    key=hook_in + ".feature_acts",
                     ref=cache_activations[hook_in + ".feature_acts.down"],
                     indices=cache_activations[hook_in + ".feature_acts.up"][0].nonzero(),
                 ),
@@ -1231,6 +1320,7 @@ class TransformerLensLanguageModel(LanguageModel):
             sources=sources,
             intermediates=intermediates,
             max_intermediates=max_intermediates,
+            reduction_weight=top_p,
             max_iter=max_iter,
         )
 
