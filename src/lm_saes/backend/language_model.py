@@ -33,6 +33,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
 from torch.types import Number
+from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from transformers import (
@@ -315,33 +316,33 @@ def replacement_hookin_fn_builder(replacement_module: SparseDictionary) -> Calla
 
 
 def replacement_hookout_fn_builder(replacement_module: SparseDictionary) -> Callable:
-    if isinstance(replacement_module, CrossLayerTranscoder):
-        raise NotImplementedError("CLT hookout function builder not implemented")
+    # if isinstance(replacement_module, CrossLayerTranscoder):
+    #     raise NotImplementedError("CLT hookout function builder not implemented")
 
-    else:
+    # else:
 
-        def hookout_fn(
-            x: torch.Tensor,
-            hook: HookPoint,
-            replacement_module: SparseDictionary,
-            cache_activations: dict[str, torch.Tensor],
-            update_error_cache: bool = False,
-        ):
-            assert hook.name in replacement_module.cfg.hooks_out, "Hook point must be in hook points out"
-            hook_in = replacement_module.cfg.hooks_in[0]  # TODO: handle multiple hook points in for CLT
-            reconstructed = replacement_module.decode(cache_activations[hook_in + ".feature_acts.down"])
-            cache_activations[hook.name + ".reconstructed"] = reconstructed
-            assert hook.name + ".error" in cache_activations or update_error_cache, (
-                "There must be an error cache for the hook point"
-            )
-            if update_error_cache:
-                error = (x - reconstructed).detach().requires_grad_(True)
-                cache_activations[hook.name + ".error"] = error
-            else:
-                error = cache_activations[hook.name + ".error"]
-            return error + reconstructed
+    def hookout_fn(
+        x: torch.Tensor,
+        hook: HookPoint,
+        replacement_module: SparseDictionary,
+        cache_activations: dict[str, torch.Tensor],
+        update_error_cache: bool = False,
+    ):
+        assert hook.name in replacement_module.cfg.hooks_out, "Hook point must be in hook points out"
+        hook_in = replacement_module.cfg.hooks_in[0]  # TODO: handle multiple hook points in for CLT
+        reconstructed = replacement_module.decode(cache_activations[hook_in + ".feature_acts.down"])
+        cache_activations[hook.name + ".reconstructed"] = reconstructed
+        assert hook.name + ".error" in cache_activations or update_error_cache, (
+            "There must be an error cache for the hook point"
+        )
+        if update_error_cache:
+            error = (x - reconstructed).detach().requires_grad_(True)
+            cache_activations[hook.name + ".error"] = error
+        else:
+            error = cache_activations[hook.name + ".error"]
+        return error + reconstructed
 
-        return hookout_fn
+    return hookout_fn
 
 
 def detach_hook_builder(models: TransformerLensLanguageModel) -> list[tuple[str, Callable]]:
@@ -546,7 +547,6 @@ class NodeIndexedTensor:
 
     def _add_elements(self, node_infos: Sequence[NodeInfo], dim: int):
         start = self.data.shape[dim]
-
         new_data_shape = [
             self.data.shape[i] if i != dim else sum([node_info.indices.shape[0] for node_info in node_infos])
             for i in range(self.n_dims)
@@ -556,6 +556,8 @@ class NodeIndexedTensor:
             [self.data, torch.zeros(new_data_shape, dtype=self.data.dtype, device=self.data.device)],
             dim=dim,
         )
+
+        self.node_infos = tuple(n if i != dim else n + node_infos for i, n in enumerate(self.node_infos))
 
         self._register_nodes(node_infos, dim, start)
 
@@ -876,10 +878,6 @@ class NodeIndexedMatrix(NodeIndexedTensor):
 #         return submatrix
 
 
-def get_normalized_matrix(matrix: torch.Tensor) -> torch.Tensor:
-    return torch.abs(matrix) / torch.abs(matrix).sum(dim=1, keepdim=True).clamp(min=1e-8)
-
-
 # def compute_feature_influences(
 #     batch_size: int,
 #     feature_infos: list[NodeInfo],
@@ -908,7 +906,7 @@ class NodeInfoQueue[T: NodeInfo]:
     def dequeue(self, batch_size: int) -> Sequence[T]:
         accumulated = 0
         results = []
-        while accumulated < batch_size:
+        while accumulated < batch_size and len(self.queue) > 0:
             if accumulated + len(self.queue[0]) > batch_size:
                 results.append(self.queue[0][: batch_size - accumulated])
                 self.queue[0] = self.queue[0][batch_size - accumulated :]
@@ -921,30 +919,34 @@ class NodeInfoQueue[T: NodeInfo]:
     def iter(self, batch_size: int) -> Iterator[Sequence[T]]:
         while len(self.queue) > 0:
             yield self.dequeue(batch_size)
-        else:
-            raise StopIteration
 
 
 class NodeInfoSet[T: NodeInfo]:
     def __init__(self, node_infos: Sequence[T] = []):
-        self.dict: dict[Any, T] = {}
+        self.node_dict: dict[Any, T] = {}
         self.extend(node_infos)
 
     def extend(self, node_infos: Sequence[T]):
         for node_info in node_infos:
-            if node_info.key not in self.dict:
-                self.dict[node_info.key] = node_info
+            if node_info.key not in self.node_dict:
+                self.node_dict[node_info.key] = replace(node_info)
             else:
-                self.dict[node_info.key].indices = torch.cat(
-                    [self.dict[node_info.key].indices, node_info.indices],
+                self.node_dict[node_info.key].indices = torch.cat(
+                    [self.node_dict[node_info.key].indices, node_info.indices],
                     dim=0,
                 )
 
     def __len__(self) -> int:
-        return sum(len(node_info) for node_info in self.dict.values())
+        return sum(len(node_info) for node_info in self.node_dict.values())
 
     def to_list(self) -> list[T]:
-        return list(self.dict.values())
+        return list(self.node_dict.values())
+
+
+def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
+    return NodeIndexedMatrix.from_data(
+        torch.abs(matrix.data) / torch.abs(matrix.data).sum(dim=1, keepdim=True).clamp(min=1e-8), matrix.node_infos
+    )
 
 
 def compute_intermediates_attribution(
@@ -953,10 +955,11 @@ def compute_intermediates_attribution(
     intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]],
     max_iter: int,
 ) -> NodeIndexedMatrix:
-    if len(intermediates) == 0:
-        return attribution[targets, None]
-    t2i: NodeIndexedMatrix = attribution[targets, [intermediate[1] for intermediate in intermediates]]
+    attribution = get_normalized_matrix(attribution)
     influence = attribution[targets, None]
+    if len(intermediates) == 0:
+        return influence
+    t2i: NodeIndexedMatrix = attribution[targets, [intermediate[1] for intermediate in intermediates]]
     for _ in range(max_iter):
         cur_influence = t2i @ attribution[[intermediate[0] for intermediate in intermediates], None]
         if not torch.any(cur_influence.data):
@@ -984,6 +987,7 @@ def greedily_collect_attribution(
     """
 
     all_sources = list(sources) + [intermediate[1] for intermediate in intermediates]
+
     attribution = NodeIndexedMatrix.from_node_infos(
         node_infos=(targets, all_sources),
         device=targets[0].ref.device,
@@ -1011,45 +1015,64 @@ def greedily_collect_attribution(
 
     for target_batch in queue.iter(batch_size):
         clear_grads(all_sources)
-        root = torch.diag(torch.cat(values(target_batch), dim=1)).sum()
-        root.backward()
+        root = torch.diag(torch.cat(values(target_batch), dim=1))
+        root.sum().backward(retain_graph=True)
         attribution[target_batch, None] = torch.cat(
             [
-                einops.einsum(value, grad, "batch n_elements ..., batch n_elements ... -> batch n_elements")
+                einops.einsum(
+                    value[: root.shape[0]],
+                    grad[: root.shape[0]],
+                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                )
                 for value, grad in zip(values(all_sources), grads(all_sources))
-            ]
+            ],
+            dim=1,
         )
 
-    def retrive_from_intermediates(node_infos: Sequence[NodeInfo]):
+    def retrieval_from_intermediates(node_infos: Sequence[NodeInfo]):
         node_refs = []
         for node_info in node_infos:
             for intermediate in intermediates:
                 if node_info.key == intermediate[0].key:
-                    node_refs.append(NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[0].ref))
+                    node_refs.append(
+                        (
+                            NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[0].ref),
+                            NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[1].ref),
+                        )
+                    )
 
         return node_refs
 
     intermediates_set = NodeInfoSet()
     reduction_weight: NodeIndexedVector = NodeIndexedVector.from_data(reduction_weight, node_infos=(targets,))
-    for i in range(0, max_intermediates, batch_size):
+    for i in tqdm(range(0, max_intermediates, batch_size)):
         cur_batch_size = min(batch_size, max_intermediates - i)
         intermediates_attribution = compute_intermediates_attribution(
-            attribution[None, [intermediate[1] for intermediate in intermediates]], targets, intermediates, max_iter
+            attribution, targets, retrieval_from_intermediates(intermediates_set.to_list()), max_iter
+        )
+        influence = (
+            reduction_weight @ intermediates_attribution[None, [intermediate[1] for intermediate in intermediates]]
         )
 
-        influence = reduction_weight @ intermediates_attribution
         _, selected_node_infos = influence.topk(k=cur_batch_size, ignore_node_infos=intermediates_set.to_list())
+
         intermediates_set.extend(selected_node_infos)
         attribution.add_target(selected_node_infos)
+
         clear_grads(all_sources)
-        node_refs = retrive_from_intermediates(selected_node_infos)
-        root = torch.diag(torch.cat(values(node_refs), dim=1)).sum()
-        root.backward()
+        node_refs = retrieval_from_intermediates(selected_node_infos)
+        root = torch.diag(torch.cat(values([node_ref[0] for node_ref in node_refs]), dim=1))
+        root.sum().backward(retain_graph=True)
         attribution[selected_node_infos, None] = torch.cat(
             [
-                einops.einsum(value, grad, "batch n_elements ..., batch n_elements ... -> batch n_elements")
+                einops.einsum(
+                    value[: root.shape[0]],
+                    grad[: root.shape[0]],
+                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                )
                 for value, grad in zip(values(all_sources), grads(all_sources))
-            ]
+            ],
+            dim=1,
         )
 
     return attribution
@@ -1271,7 +1294,7 @@ class TransformerLensLanguageModel(LanguageModel):
             NodeInfoRef(
                 key="logits",
                 ref=batch_logits[:, -1, :] - batch_logits[:, -1, :].mean(dim=-1, keepdim=True),
-                indices=top_idx,
+                indices=top_idx.unsqueeze(-1),
             )
         ]
 
