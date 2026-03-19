@@ -493,15 +493,25 @@ class Dimension:
         return sum([len(node_info) for node_info in self.node_infos])
 
     @timer.time("nodes_to_offsets")
-    def nodes_to_offsets(self, node_infos: Sequence[NodeInfo]) -> torch.Tensor:
-        offsets = torch.empty(sum([len(node_info) for node_info in node_infos]), device=self.device, dtype=torch.long)
-        start = 0
-        for node_info in node_infos:
-            offsets[start : start + len(node_info)] = self.node_mappings[node_info.key].offsets[
-                self.node_mappings[node_info.key].inv_indices[node_info.indices.unbind(dim=1)]
-            ]
-            start += len(node_info)
-        return offsets
+    def nodes_to_offsets(self, dimension: Sequence[NodeInfo] | Dimension) -> torch.Tensor:
+        if isinstance(dimension, Dimension):
+            offsets = torch.empty(len(dimension), device=self.device, dtype=torch.long)
+            for node in dimension.node_mappings.values():
+                offsets[node.offsets] = self.node_mappings[node.key].offsets[
+                    self.node_mappings[node.key].inv_indices[node.indices.unbind(dim=1)]
+                ]
+            return offsets
+        else:
+            offsets = torch.empty(
+                sum([len(node_info) for node_info in dimension]), device=self.device, dtype=torch.long
+            )
+            start = 0
+            for node_info in dimension:
+                offsets[start : start + len(node_info)] = self.node_mappings[node_info.key].offsets[
+                    self.node_mappings[node_info.key].inv_indices[node_info.indices.unbind(dim=1)]
+                ]
+                start += len(node_info)
+            return offsets
 
     @timer.time("offsets_to_nodes")
     def offsets_to_nodes(self, offsets: torch.Tensor) -> Sequence[NodeInfo]:
@@ -613,9 +623,7 @@ class NodeIndexedTensor:
             if dimension is None:
                 continue
 
-            offsets = self.dimensions[dim].nodes_to_offsets(
-                dimension.node_infos if isinstance(dimension, Dimension) else dimension
-            )
+            offsets = self.dimensions[dim].nodes_to_offsets(dimension)
             with timer.time("index_select"):
                 data = data.index_select(dim, offsets)
 
@@ -655,9 +663,7 @@ class NodeIndexedTensor:
         for dim in range(self.n_dims):
             dimension = key[dim]
             offsets = (
-                self.dimensions[dim].nodes_to_offsets(
-                    dimension.node_infos if isinstance(dimension, Dimension) else dimension
-                )
+                self.dimensions[dim].nodes_to_offsets(dimension)
                 if dimension is not None
                 else torch.arange(self.data.shape[dim], device=self.data.device, dtype=torch.long)
             )
