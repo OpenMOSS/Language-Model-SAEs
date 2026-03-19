@@ -373,6 +373,9 @@ class Node:
     offsets: torch.Tensor
     """In-tensor offsets of elements. Should be of shape `(n_elements,)`."""
 
+    inv_indices: torch.Tensor
+    """Inverse indices of elements. Should be of shape `(n_elements, d_index)`."""
+
 
 @dataclass
 class NodeInfo:
@@ -399,6 +402,131 @@ class NodeInfo:
         return self[:batch_size], self[batch_size:]
 
 
+@timer.time("compute_inv_indices")
+def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
+    inv_indices = torch.empty(
+        [int(indices[:, i].max() + 1) for i in range(indices.shape[1])],
+        device=indices.device,
+        dtype=torch.long,
+    )
+    inv_indices[indices.unbind(dim=1)] = torch.arange(indices.shape[0], device=indices.device)
+    return inv_indices
+
+
+class Dimension:
+    def __init__(self, node_infos: Sequence[NodeInfo], device: torch.device | str | None = None):
+        self.node_infos = []
+        self.device = device if device is not None else node_infos[0].indices.device
+        self.mapper = DiscreteMapper()
+        self.node_mappings = {}
+        self.offset_mapping = {
+            "keys": torch.tensor([], device=self.device, dtype=torch.long),
+            "indices": torch.tensor([], device=self.device, dtype=torch.long),
+        }
+
+        self.register_nodes(node_infos, 0)
+
+    def register_nodes(self, node_infos: Sequence[NodeInfo], start: int):
+        for node_info in node_infos:
+            node_key_id = self.mapper.encode([node_info.key])[0]
+            node_length = node_info.indices.shape[0]
+
+            with timer.time("update_node_mapping"):
+                # Append node to node mapping
+                if node_info.key not in self.node_mappings:
+                    n_original_elements = 0
+                    self.node_mappings[node_info.key] = Node(
+                        key=node_info.key,
+                        indices=node_info.indices,
+                        offsets=torch.arange(start, start + node_length, device=self.device),
+                        inv_indices=compute_inv_indices(node_info.indices),
+                    )
+                else:
+                    n_original_elements = self.node_mappings[node_info.key].indices.shape[0]
+                    new_indices = torch.cat(
+                        [self.node_mappings[node_info.key].indices, node_info.indices],
+                        dim=0,
+                    )
+                    self.node_mappings[node_info.key] = Node(
+                        key=node_info.key,
+                        indices=new_indices,
+                        offsets=torch.cat(
+                            [
+                                self.node_mappings[node_info.key].offsets,
+                                torch.arange(start, start + node_length, device=self.device),
+                            ],
+                            dim=0,
+                        ),
+                        inv_indices=compute_inv_indices(new_indices),
+                    )
+
+            with timer.time("update_offset_mapping"):
+                # Update offset mapping
+                self.offset_mapping["indices"] = torch.cat(
+                    [
+                        self.offset_mapping["indices"],
+                        torch.arange(
+                            n_original_elements,
+                            n_original_elements + node_length,
+                            device=self.device,
+                            dtype=torch.long,
+                        ),
+                    ],
+                    dim=0,
+                )
+                self.offset_mapping["keys"] = torch.cat(
+                    [
+                        self.offset_mapping["keys"],
+                        torch.full(
+                            (node_length,),
+                            node_key_id,
+                            device=self.device,
+                            dtype=torch.long,
+                        ),
+                    ],
+                    dim=0,
+                )
+            start += node_length
+        self.node_infos.extend(node_infos)
+
+    def __len__(self) -> int:
+        return sum([len(node_info) for node_info in self.node_infos])
+
+    @timer.time("nodes_to_offsets")
+    def nodes_to_offsets(self, node_infos: Sequence[NodeInfo]) -> torch.Tensor:
+        offsets = torch.empty(sum([len(node_info) for node_info in node_infos]), device=self.device, dtype=torch.long)
+        start = 0
+        for node_info in node_infos:
+            offsets[start : start + len(node_info)] = self.node_mappings[node_info.key].offsets[
+                self.node_mappings[node_info.key].inv_indices[node_info.indices.unbind(dim=1)]
+            ]
+            start += len(node_info)
+        return offsets
+
+    @timer.time("offsets_to_nodes")
+    def offsets_to_nodes(self, offsets: torch.Tensor) -> Sequence[NodeInfo]:
+        keys_encoded = self.offset_mapping["keys"][offsets]
+        indices = self.offset_mapping["indices"][offsets]
+        unique_keys_encoded, inverse_indices = torch.unique_consecutive(keys_encoded, return_inverse=True)
+        unique_keys = self.mapper.decode(unique_keys_encoded.tolist())
+        return [
+            NodeInfo(
+                key=unique_keys[i], indices=self.node_mappings[unique_keys[i]].indices[indices[inverse_indices == i]]
+            )
+            for i in range(len(unique_keys))
+        ]
+
+    @timer.time("Dimension.clone")
+    def clone(self) -> Self:
+        dimension = self.__class__.__new__(self.__class__)
+        dimension.node_infos = list(self.node_infos)
+        dimension.mapper = self.mapper
+        dimension.node_mappings = dict(self.node_mappings)
+        dimension.offset_mapping = dict(self.offset_mapping)
+        dimension.device = self.device
+        return dimension
+
+
 class NodeIndexedTensor:
     def __init__(
         self,
@@ -408,167 +536,34 @@ class NodeIndexedTensor:
     ):
         self.n_dims = n_dims
         self.data = torch.zeros([0] * self.n_dims, dtype=dtype, device=device)
-        self.mappers = tuple(DiscreteMapper() for _ in range(n_dims))
-
-        self.node_infos: tuple[list[NodeInfo], ...] = tuple([] for _ in range(n_dims))
-
-        # NodeIndexedTensor maintains 3 mappings for efficient node retrieval (sometimes with specific index slices), respectively from node key, node indices and in-data offsets.
-
-        # Mapping node keys to nodes.
-        self.node_mappings: tuple[dict[Any, Node], ...] = tuple({} for _ in range(n_dims))
-
-        # Mapping node keys to node inverse indices.
-        self.inv_indices_mappings: tuple[dict[Any, torch.Tensor], ...] = tuple({} for _ in range(n_dims))
-
-        # Mapping in-data offsets to node elements (each element is represented by its node key and index).
-        # - `keys` are discretely encoded node keys.
-        # - `indices` are the indices of the indices of the node elements. (A second-order indices). This second order indices are introduced to handle arbitrary index dimensions.
-        self.offset_mapping: tuple[dict[str, Tensor], ...] = tuple(
-            {
-                "keys": torch.empty(0, device=device, dtype=torch.long),
-                "indices": torch.empty(0, device=device, dtype=torch.long),
-            }
-            for _ in range(n_dims)
-        )
+        self.dimensions = tuple(Dimension([], device=device) for _ in range(self.n_dims))
 
     @classmethod
     @timer.time("from_data")
-    def from_data(cls, data: torch.Tensor, node_infos: tuple[Sequence[NodeInfo], ...]) -> Self:
+    def from_data(cls, data: torch.Tensor, dimensions: tuple[Sequence[NodeInfo] | Dimension, ...]) -> Self:
         self = cls.__new__(cls)
         self.n_dims = data.ndim
         self.data = data
-        self.mappers = tuple(DiscreteMapper() for _ in range(self.n_dims))
-
-        self.node_infos = tuple(list(node_infos_per_dim) for node_infos_per_dim in node_infos)
-
-        # Mapping node keys to nodes.
-        self.node_mappings = tuple({} for _ in range(self.n_dims))
-
-        # Mapping node keys to node inverse indices.
-        self.inv_indices_mappings = tuple({} for _ in range(self.n_dims))
-
-        # Mapping in-data offsets to node elements (each element is represented by its node key and index).
-        # - `keys` are discretely encoded node keys.
-        # - `indices` are the indices of the indices of the node elements. (A second-order indices). This second order indices are introduced to handle arbitrary index dimensions.
-        self.offset_mapping = tuple(
-            {
-                "keys": torch.empty(0, device=self.data.device, dtype=torch.long),
-                "indices": torch.empty(0, device=self.data.device, dtype=torch.long),
-            }
-            for _ in range(self.n_dims)
+        self.dimensions = tuple(
+            dimension.clone() if isinstance(dimension, Dimension) else Dimension(dimension) for dimension in dimensions
         )
-
-        for dim, node_infos_per_dim in enumerate(node_infos):
-            self._register_nodes(node_infos_per_dim, dim, 0)
+        assert all(len(dimension) == data.shape[dim] for dim, dimension in enumerate(self.dimensions)), (
+            "Data length must match dimension length"
+        )
         return self
 
     @classmethod
-    def from_data_and_mappings(
+    def from_dimensions(
         cls,
-        data: torch.Tensor,
-        node_infos: tuple[Sequence[NodeInfo], ...],
-        mappers: tuple[DiscreteMapper, ...],
-        node_mappings: tuple[dict[Any, Node], ...],
-        inv_indices_mappings: tuple[dict[Any, torch.Tensor], ...],
-        offset_mapping: tuple[dict[str, Tensor], ...],
-    ) -> Self:
-        self = cls.__new__(cls)
-        self.n_dims = data.ndim
-        self.data = data
-        self.mappers = mappers
-        self.node_infos = tuple(list(node_infos_per_dim) for node_infos_per_dim in node_infos)
-        self.node_mappings = tuple(dict(node_mappings_per_dim) for node_mappings_per_dim in node_mappings)
-        self.inv_indices_mappings = tuple(
-            dict(inv_indices_mappings_per_dim) for inv_indices_mappings_per_dim in inv_indices_mappings
-        )
-        self.offset_mapping = tuple(dict(offset_mapping_per_dim) for offset_mapping_per_dim in offset_mapping)
-        return self
-
-    @classmethod
-    def from_node_infos(
-        cls,
-        node_infos: tuple[Sequence[NodeInfo], ...],
+        dimensions: tuple[Sequence[NodeInfo] | Dimension, ...],
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
     ) -> Self:
         shape = [
-            sum([node_info.indices.shape[0] for node_info in node_infos_per_dim]) for node_infos_per_dim in node_infos
+            len(dimension) if isinstance(dimension, Dimension) else sum([len(node_info) for node_info in dimension])
+            for dimension in dimensions
         ]
-        return cls.from_data(torch.zeros(shape, dtype=dtype, device=device), node_infos)
-
-    def _register_nodes(self, node_infos: Sequence[NodeInfo], dim: int, start: int):
-        for node_info in node_infos:
-            node_key_id = self.mappers[dim].encode([node_info.key])[0]
-            node_length = node_info.indices.shape[0]
-            node = Node(
-                node_info.key,
-                node_info.indices,
-                torch.arange(start, start + node_length, device=self.data.device),
-            )
-
-            with timer.time("update_node_mapping"):
-                # Append node to node mapping
-                if node.key not in self.node_mappings[dim]:
-                    n_original_elements = 0
-                    self.node_mappings[dim][node.key] = node
-                else:
-                    n_original_elements = self.node_mappings[dim][node.key].indices.shape[0]
-                    self.node_mappings[dim][node.key].offsets = torch.cat(
-                        [self.node_mappings[dim][node.key].offsets, node.offsets],
-                        dim=0,
-                    )
-                    self.node_mappings[dim][node.key].indices = torch.cat(
-                        [self.node_mappings[dim][node.key].indices, node.indices],
-                        dim=0,
-                    )
-
-            with timer.time("update_inverse_indices_mapping"):
-                # Update inverse indices mapping based on new node data in node mapping
-                inv_indices = torch.empty(
-                    [
-                        int(self.node_mappings[dim][node.key].indices[:, i].max() + 1)
-                        for i in range(self.node_mappings[dim][node.key].indices.shape[1])
-                    ],
-                    device=self.data.device,
-                    dtype=torch.long,
-                )
-                inv_indices[self.node_mappings[dim][node.key].indices.unbind(dim=1)] = torch.arange(
-                    self.node_mappings[dim][node.key].indices.shape[0], device=self.data.device
-                )
-                self.inv_indices_mappings[dim][node.key] = inv_indices
-
-            with timer.time("update_offset_mapping"):
-                # Update offset mapping
-                self.offset_mapping[dim]["indices"] = torch.cat(
-                    [
-                        self.offset_mapping[dim]["indices"],
-                        torch.arange(
-                            n_original_elements,
-                            n_original_elements + node_length,
-                            device=self.data.device,
-                            dtype=torch.long,
-                        ),
-                    ],
-                    dim=0,
-                )
-                self.offset_mapping[dim]["keys"] = torch.cat(
-                    [
-                        self.offset_mapping[dim]["keys"],
-                        torch.full(
-                            (node_length,),
-                            node_key_id,
-                            device=self.data.device,
-                            dtype=torch.long,
-                        ),
-                    ],
-                    dim=0,
-                )
-            start += node_length
-
-        if start != self.data.shape[dim]:
-            raise ValueError(
-                f"Registered nodes size {start} does not match data size {self.data.shape[dim]} along dimension {dim}"
-            )
+        return cls.from_data(torch.zeros(shape, dtype=dtype, device=device), dimensions)
 
     def _add_elements(self, node_infos: Sequence[NodeInfo], dim: int):
         start = self.data.shape[dim]
@@ -582,47 +577,11 @@ class NodeIndexedTensor:
             dim=dim,
         )
 
-        self.node_infos = tuple(n if i != dim else n + node_infos for i, n in enumerate(self.node_infos))
+        self.dimensions[dim].register_nodes(node_infos, start)
 
-        self._register_nodes(node_infos, dim, start)
-
-    @timer.time("nodes_to_offsets")
-    def _nodes_to_offsets(self, node_infos: Sequence[NodeInfo], dim: int) -> torch.Tensor:
-        offsets = torch.empty(
-            sum([node_info.indices.shape[0] for node_info in node_infos]), device=self.data.device, dtype=torch.long
-        )
-        start = 0
-        for i, node_info in enumerate(node_infos):
-            key, indices = node_info.key, node_info.indices
-            offsets[start : start + indices.shape[0]] = self.node_mappings[dim][key].offsets[
-                self.inv_indices_mappings[dim][key][indices.unbind(dim=1)]
-            ]
-            start += indices.shape[0]
-        return offsets
-
-    @timer.time("offsets_to_nodes")
-    def _offsets_to_nodes(self, offsets: torch.Tensor, dim: int) -> Sequence[NodeInfo]:
-        """Order-preserving inverse of :meth:`_nodes_to_offsets` at
-        the offset level. Adjacent offsets with the same node key are
-        grouped into a single ``NodeInfo`` entry.
-        """
-
-        keys_encoded = self.offset_mapping[dim]["keys"][offsets]
-        indices = self.offset_mapping[dim]["indices"][offsets]
-
-        # Group consecutive keys and their indices
-        unique_keys_encoded, inverse_indices = torch.unique_consecutive(keys_encoded, return_inverse=True)
-        unique_keys = self.mappers[dim].decode(unique_keys_encoded.tolist())
-        node_infos: Sequence[NodeInfo] = [
-            NodeInfo(
-                key=unique_keys[i],
-                indices=self.node_mappings[dim][unique_keys[i]].indices[indices[inverse_indices == i]],
-            )
-            for i in range(len(unique_keys))
-        ]
-        return node_infos
-
-    def __getitem__(self, key: tuple[Sequence[NodeInfo] | None, ...] | Sequence[NodeInfo] | None) -> Self:
+    def __getitem__(
+        self, key: tuple[Sequence[NodeInfo] | Dimension | None, ...] | Sequence[NodeInfo] | Dimension | None
+    ) -> Self:
         """Index the tensor with NodeInfo selections for each dimension.
 
         Each dimension accepts a ``Sequence[NodeInfo]`` to select specific node
@@ -643,29 +602,34 @@ class NodeIndexedTensor:
         """
         if not isinstance(key, tuple):
             key = (key,)
-        key = cast(tuple[Sequence[NodeInfo] | None, ...], key)
+        key = cast(tuple[Sequence[NodeInfo] | Dimension | None, ...], key)
         if len(key) != self.n_dims:
             raise ValueError(f"Expected {self.n_dims} dimension selectors, got {len(key)}")
 
         data = self.data
         for dim in range(self.n_dims):
-            node_infos = key[dim]
+            dimension = key[dim]
 
-            if node_infos is None:
+            if dimension is None:
                 continue
 
-            offsets = self._nodes_to_offsets(node_infos, dim)
+            offsets = self.dimensions[dim].nodes_to_offsets(
+                dimension.node_infos if isinstance(dimension, Dimension) else dimension
+            )
             with timer.time("index_select"):
                 data = data.index_select(dim, offsets)
 
-        node_infos = tuple(
-            node_infos_per_dim if node_infos_per_dim is not None else self.node_infos[dim]
-            for dim, node_infos_per_dim in enumerate(key)
+        dimensions = tuple(
+            dimension if dimension is not None else self.dimensions[dim] for dim, dimension in enumerate(key)
         )
 
-        return self.__class__.from_data(data=data, node_infos=node_infos)
+        return self.__class__.from_data(data=data, dimensions=dimensions)
 
-    def __setitem__(self, key: tuple[Sequence[NodeInfo] | None, ...] | Sequence[NodeInfo] | None, value: Self | Tensor):
+    def __setitem__(
+        self,
+        key: tuple[Sequence[NodeInfo] | Dimension | None, ...] | Sequence[NodeInfo] | Dimension | None,
+        value: Self | Tensor,
+    ):
         """Assign to a NodeInfo-selected sub-tensor.
 
         Args:
@@ -681,7 +645,7 @@ class NodeIndexedTensor:
         """
         if not isinstance(key, tuple):
             key = (key,)
-        key = cast(tuple[Sequence[NodeInfo] | None, ...], key)
+        key = cast(tuple[Sequence[NodeInfo] | Dimension | None, ...], key)
         if len(key) != self.n_dims:
             raise ValueError(f"Expected {self.n_dims} dimension selectors, got {len(key)}")
 
@@ -689,10 +653,12 @@ class NodeIndexedTensor:
 
         indexers: list[torch.Tensor] = []
         for dim in range(self.n_dims):
-            node_infos = key[dim]
+            dimension = key[dim]
             offsets = (
-                self._nodes_to_offsets(node_infos, dim)
-                if node_infos is not None
+                self.dimensions[dim].nodes_to_offsets(
+                    dimension.node_infos if isinstance(dimension, Dimension) else dimension
+                )
+                if dimension is not None
                 else torch.arange(self.data.shape[dim], device=self.data.device, dtype=torch.long)
             )
             view_shape = [1] * self.n_dims
@@ -704,7 +670,7 @@ class NodeIndexedTensor:
 
     def __add__(self, other: Self):
         data = self.data + other.data
-        return self.__class__.from_data(data, self.node_infos)
+        return self.__class__.from_data(data, self.dimensions)
 
 
 class NodeIndexedVector(NodeIndexedTensor):
@@ -724,14 +690,14 @@ class NodeIndexedVector(NodeIndexedTensor):
 
     def topk(self, k: int, ignore_node_infos: Sequence[NodeInfo] | None = None):
         ignore_indices = (
-            self._nodes_to_offsets(ignore_node_infos, 0)
+            self.dimensions[0].nodes_to_offsets(ignore_node_infos)
             if ignore_node_infos is not None and len(ignore_node_infos) > 0
             else None
         )
         if ignore_indices is not None:
             self.data[ignore_indices] = float("-inf")
         topk_values, topk_indices = torch.topk(self.data, k=k, dim=0)
-        return topk_values, self._offsets_to_nodes(topk_indices, 0)
+        return topk_values, self.dimensions[0].offsets_to_nodes(topk_indices)
 
     @overload
     def matmul(self, other: NodeIndexedMatrix, _check_node_matching: bool = False) -> NodeIndexedVector: ...
@@ -739,15 +705,15 @@ class NodeIndexedVector(NodeIndexedTensor):
     def matmul(self, other: NodeIndexedVector, _check_node_matching: bool = False) -> Number: ...
 
     def matmul(self, other: NodeIndexedMatrix | NodeIndexedVector, _check_node_matching: bool = False):
-        if _check_node_matching:
-            a, b = self.node_infos[0], other.node_infos[0]
-            if len(a) != len(b) or any(not ai == bi for ai, bi in zip(a, b)):
-                raise ValueError(f"Node matching failed: {a} != {b}")
+        # if _check_node_matching:
+        #     a, b = self.node_infos[0], other.node_infos[0]
+        #     if len(a) != len(b) or any(not ai == bi for ai, bi in zip(a, b)):
+        #         raise ValueError(f"Node matching failed: {a} != {b}")
 
         data = self.data @ other.data
 
         if isinstance(other, NodeIndexedMatrix):
-            return NodeIndexedVector.from_data(data, node_infos=(other.node_infos[1],))
+            return NodeIndexedVector.from_data(data, dimensions=(other.dimensions[1],))
         elif isinstance(other, NodeIndexedVector):
             return data.item()
         else:
@@ -771,14 +737,6 @@ class NodeIndexedMatrix(NodeIndexedTensor):
             dtype=dtype,
         )
 
-    @property
-    def target(self) -> dict[Any, Node]:
-        return self.node_mappings[0]
-
-    @property
-    def source(self) -> dict[Any, Node]:
-        return self.node_mappings[1]
-
     def add_target(self, node_infos: Sequence[NodeInfo] | NodeInfo):
         node_infos = node_infos if isinstance(node_infos, Sequence) else [node_infos]
         self._add_elements(node_infos, 0)
@@ -794,16 +752,16 @@ class NodeIndexedMatrix(NodeIndexedTensor):
 
     def matmul(self, other: NodeIndexedVector | NodeIndexedMatrix, _check_node_matching: bool = False):
         if _check_node_matching:
-            a, b = self.node_infos[1], other.node_infos[0]
+            a, b = self.dimensions[1], other.dimensions[0]
             if len(a) != len(b) or any(not ai == bi for ai, bi in zip(a, b)):
                 raise ValueError(f"Node matching failed: {a} != {b}")
 
         data = self.data @ other.data
 
         if isinstance(other, NodeIndexedVector):
-            return NodeIndexedVector.from_data(data, node_infos=(self.node_infos[0],))
+            return NodeIndexedVector.from_data(data, dimensions=(self.dimensions[0],))
         elif isinstance(other, NodeIndexedMatrix):
-            return NodeIndexedMatrix.from_data(data, node_infos=(self.node_infos[0], other.node_infos[1]))
+            return NodeIndexedMatrix.from_data(data, dimensions=(self.dimensions[0], other.dimensions[1]))
         else:
             raise ValueError(f"Invalid type as right operand in NodeIndexedMatrix.matmul: {type(other)}")
 
@@ -814,107 +772,6 @@ class NodeIndexedMatrix(NodeIndexedTensor):
 
     def __matmul__(self, other: NodeIndexedVector | NodeIndexedMatrix):
         return self.matmul(other)
-
-
-# class AttributionGraph:
-#     def __init__(
-#         self,
-#         cache_activations: dict[str, torch.Tensor],
-#         max_features: int | None = None,
-#         device: torch.device | str = "cpu",
-#     ):
-#         self.device = torch.device(device) if isinstance(device, str) else device
-#         self.cache_activations = cache_activations
-#         self.n_tokens = cache_activations["hook_embed"].shape[1]
-#         self.n_logits = cache_activations["logits"].shape[-1]
-#         self.n_active_features = int(
-#             item(
-#                 cast(
-#                     torch.Tensor,
-#                     sum([v[0].gt(0).sum() for k, v in cache_activations.items() if k.endswith(".feature_acts.up")]),
-#                 )
-#             )
-#         )
-#         self.max_features = min(max_features or self.n_active_features, self.n_active_features)
-#         self.n_error = self.n_tokens * len([v for k, v in cache_activations.items() if k.endswith(".error")])
-#         self.matrix = self._create_matrix_with_targets()
-#         self.selected_features: torch.Tensor | None = None
-
-#     def _create_matrix_with_sources(self) -> NodeIndexedMatrix:
-#         source_infos: list[NodeInfo] = (
-#             [
-#                 ((pos, "hook_embed"), torch.tensor(0, dtype=torch.long, device=self.device))
-#                 for pos in range(self.n_tokens)
-#             ]
-#             + [
-#                 ((pos, key), torch.nonzero(self.cache_activations[key][0, pos]))
-#                 for pos in range(self.n_tokens)
-#                 for key in self.cache_activations
-#                 if key.endswith(".feature_acts.down")
-#             ]
-#             + [
-#                 ((pos, key), torch.tensor(0, dtype=torch.long, device=self.device))
-#                 for pos in range(self.n_tokens)
-#                 for key in self.cache_activations
-#                 if key.endswith(".error")
-#             ]
-#         )
-#         return NodeIndexedMatrix.from_node_infos(node_infos=([], source_infos), device=self.device)
-
-#     def bwd_values(self, target_node_infos: list[NodeInfo]) -> torch.Tensor:
-#         values = []
-#         batch_idx = 0
-#         for (pos_id, hook_key), indices in target_node_infos:
-#             local_batch = torch.arange(indices.shape[0], device=self.device) + batch_idx
-#             values.append(
-#                 self.cache_activations[hook_key.replace(".feature_acts.down", ".feature_acts.up")][
-#                     local_batch, pos_id, indices
-#                 ]
-#             )
-#             batch_idx += indices.shape[0]
-#         return torch.cat(values, dim=0)
-
-#     def clear_cache_activation_grads(self) -> None:
-#         """Clear gradients for all cached activations in-place."""
-#         for activation in self.cache_activations.values():
-#             if activation.requires_grad and activation.grad is not None:
-#                 activation.grad = None
-
-#     def calculate_attribution(
-#         self,
-#         target_node_infos: list[NodeInfo],
-#     ):
-#         self.matrix.add_target(target_node_infos)
-#         submatrix = self.matrix.get_submatrix(target_node_infos=target_node_infos)
-#         attribution = torch.zeros_like(submatrix.matrix)  # (batch_size / n_target, n_source)
-#         for source_node in submatrix.source_nodes:
-#             (pos_id, key), indices, matrix_indices = source_node.key, source_node.indices, source_node.matrix_indices
-#             tensor = (
-#                 self.cache_activations[key][:, pos_id, indices]
-#                 if key.endswith(".feature_acts.down")
-#                 else self.cache_activations[key][:, pos_id]
-#             )
-#             grad = torch.zeros_like(tensor) if tensor.grad is None else tensor.grad
-#             contribution = (
-#                 (tensor[: len(target_node_infos)] * grad[: len(target_node_infos)])
-#                 if key.endswith(".feature_acts.down")
-#                 else tensor[: len(target_node_infos)] * grad[: len(target_node_infos)].sum(dim=1, keepdim=True)
-#             ).to(self.device)
-#             attribution[:, matrix_indices] += contribution
-
-#         submatrix.update_matrix(attribution)
-#         return submatrix
-
-
-# def compute_feature_influences(
-#     batch_size: int,
-#     feature_infos: list[NodeInfo],
-#     logits_infos: list[NodeInfo],
-#     selected_node_infos: dict[Any, NodeInfo],
-#     ignored_indices: torch.Tensor | None = None,
-#     max_iter: int = 100,
-# ) -> tuple[list[NodeInfo], torch.Tensor]:
-#     pass
 
 
 @dataclass
@@ -973,15 +830,16 @@ class NodeInfoSet[T: NodeInfo]:
 
 def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
     return NodeIndexedMatrix.from_data(
-        torch.abs(matrix.data) / torch.abs(matrix.data).sum(dim=1, keepdim=True).clamp(min=1e-8), matrix.node_infos
+        data=torch.abs(matrix.data) / torch.abs(matrix.data).sum(dim=1, keepdim=True).clamp(min=1e-8),
+        dimensions=matrix.dimensions,
     )
 
 
 @timer.time("compute_intermediates_attribution")
 def compute_intermediates_attribution(
     attribution: NodeIndexedMatrix,
-    targets: Sequence[NodeInfoRef],
-    intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]],
+    targets: Dimension,
+    intermediates: tuple[Dimension, Dimension],
     max_iter: int,
 ) -> NodeIndexedMatrix:
     with timer.time("normalize_attribution"):
@@ -991,10 +849,10 @@ def compute_intermediates_attribution(
     if len(intermediates) == 0:
         return influence
     with timer.time("select_t2i"):
-        t2i: NodeIndexedMatrix = attribution[targets, [intermediate[1] for intermediate in intermediates]]
+        t2i: NodeIndexedMatrix = attribution[targets, intermediates[1]]
     for _ in range(max_iter):
         with timer.time("select_i2i"):
-            i2i: NodeIndexedMatrix = attribution[[intermediate[0] for intermediate in intermediates], None]
+            i2i: NodeIndexedMatrix = attribution[intermediates[0], None]
         with timer.time("compute_cur_influence"):
             cur_influence = t2i @ i2i
         if not torch.any(cur_influence.data):
@@ -1002,13 +860,7 @@ def compute_intermediates_attribution(
         with timer.time("update_influence"):
             influence += cur_influence
         with timer.time("update_t2i"):
-            t2i = (
-                t2i
-                @ attribution[
-                    [intermediate[0] for intermediate in intermediates],
-                    [intermediate[1] for intermediate in intermediates],
-                ]
-            )
+            t2i = t2i @ attribution[intermediates[0], intermediates[1]]
     return influence
 
 
@@ -1027,8 +879,10 @@ def greedily_collect_attribution(
 
     all_sources = list(sources) + [intermediate[1] for intermediate in intermediates]
 
-    attribution = NodeIndexedMatrix.from_node_infos(
-        node_infos=(targets, all_sources),
+    targets_dimension = Dimension(targets)
+    all_sources_dimension = Dimension(all_sources)
+    attribution = NodeIndexedMatrix.from_dimensions(
+        dimensions=(targets_dimension, all_sources_dimension),
         device=targets[0].ref.device,
         dtype=targets[0].ref.dtype,
     )
@@ -1090,12 +944,23 @@ def greedily_collect_attribution(
         return node_refs
 
     with timer.time("intermediate_attribution"):
-        intermediates_set = NodeInfoSet()
-        reduction_weight: NodeIndexedVector = NodeIndexedVector.from_data(reduction_weight, node_infos=(targets,))
+        collected_intermediates_dimensions = (
+            Dimension(
+                [],
+                device=targets[0].ref.device,
+            ),
+            Dimension(
+                [],
+                device=targets[0].ref.device,
+            ),
+        )
+        reduction_weight: NodeIndexedVector = NodeIndexedVector.from_data(
+            reduction_weight, dimensions=(targets_dimension,)
+        )
         for i in tqdm(range(0, max_intermediates, batch_size)):
             cur_batch_size = min(batch_size, max_intermediates - i)
             intermediates_attribution = compute_intermediates_attribution(
-                attribution, targets, retrieval_from_intermediates(intermediates_set.to_list()), max_iter
+                attribution, targets_dimension, collected_intermediates_dimensions, max_iter
             )
 
             with timer.time("reduce_influence"):
@@ -1105,11 +970,19 @@ def greedily_collect_attribution(
                 )
 
             with timer.time("topk"):
-                _, selected_node_infos = influence.topk(k=cur_batch_size, ignore_node_infos=intermediates_set.to_list())
+                _, selected_node_infos = influence.topk(
+                    k=cur_batch_size, ignore_node_infos=collected_intermediates_dimensions[1].node_infos
+                )
 
             with timer.time("extend_and_add_target"):
-                intermediates_set.extend(selected_node_infos)
+                collected_intermediates_dimensions[0].register_nodes(
+                    selected_node_infos, len(collected_intermediates_dimensions[0])
+                )
+                collected_intermediates_dimensions[1].register_nodes(
+                    selected_node_infos, len(collected_intermediates_dimensions[1])
+                )
                 attribution.add_target(selected_node_infos)
+                print("Dim:", len(attribution.dimensions[0]))
 
             clear_grads(all_sources)
             node_refs = retrieval_from_intermediates(selected_node_infos)
@@ -1129,6 +1002,7 @@ def greedily_collect_attribution(
                     ],
                     dim=1,
                 )
+                print("Dim:", len(attribution.dimensions[0]))
 
     return attribution
 
