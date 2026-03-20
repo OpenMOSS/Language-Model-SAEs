@@ -267,7 +267,8 @@ class AttributionReplica:
         assert self.state.lorsa_activation_matrix is not None and self.state.lorsa_feat_layer is not None
         with _device_context(self.device):
             local_idx = torch.tensor([idx], device=self.device, dtype=torch.long)
-            layer = int(self.state.lorsa_feat_layer[local_idx].item())
+            local_idx_cpu = local_idx.cpu()
+            layer = int(self.state.lorsa_feat_layer[local_idx_cpu].item())
             q_pos = int(self.state.idx_to_pos(local_idx).item())
             k_pos = int(self.state.idx_to_z_pattern(local_idx).argmax(dim=-1).item())
             qk_idx = int(self.state.idx_to_qk_idx(local_idx).item())

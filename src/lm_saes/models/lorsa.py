@@ -908,6 +908,8 @@ class LowRankSparseAttention(
     ) -> Float[torch.Tensor, "batch n_qk_heads d_qk_head seq_len"]:
         """Compute head outputs from pattern and values."""
         v = einops.rearrange(v, "b seq h -> b h seq")
+        if v.dtype != pattern.dtype:
+            v = v.to(pattern.dtype)
         if self.cfg.n_qk_heads != self.cfg.n_ov_heads:
             # (batch, n_qk_heads, d_qk_head, seq_len)
             v = v.view(v.shape[0], self.cfg.n_qk_heads, self.cfg.ov_group_size, v.shape[2])

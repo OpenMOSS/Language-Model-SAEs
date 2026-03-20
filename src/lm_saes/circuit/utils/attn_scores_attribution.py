@@ -195,7 +195,7 @@ def get_residual_stream_components_single_module(
 
     replacement_model = model.lorsas if use_lorsa else model.transcoders
     replacement_model_decoder_biases = (
-        torch.stack([replacement_model[i].b_D for i in range(layer_int)])
+        torch.stack([replacement_model[i].b_D.detach().cpu() for i in range(layer_int)])
         if layer_int > 0
         else torch.zeros(0, replacement_model[0].b_D.shape[0], device=error_vecs.device)
     )
@@ -349,6 +349,8 @@ def get_single_side_QK_components(
         layer,
         model,
     )
+    target_device = model.block_device(layer_int)
+    components = components.update_components(components.components.to(target_device))
     components = probe_linear_equivalent_for_ln(components, model.blocks[layer_int].ln1)
     with torch.no_grad():
         lorsa = model.lorsas[layer_int]
