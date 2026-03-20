@@ -14,6 +14,20 @@ from .logging import get_distributed_logger
 logger = get_distributed_logger("utils.misc")
 
 
+def tensor_id(t: torch.Tensor) -> tuple[int, int, tuple[int, ...], tuple[int, ...]]:
+    """Return a hashable tuple describing a tensor's storage view.
+
+    Combines the first element's ``data_ptr()``, ``storage_offset()``, ``shape``,
+    and ``stride`` so distinct views into the same buffer are distinguished.
+    """
+    return (
+        t.data_ptr(),
+        int(t.storage_offset()),
+        tuple(t.shape),
+        tuple(t.stride()),
+    )
+
+
 def is_master() -> bool:
     return not dist.is_initialized() or dist.get_rank() == 0
 
