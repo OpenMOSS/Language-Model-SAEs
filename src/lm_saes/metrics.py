@@ -28,7 +28,7 @@ class Record(Generic[T]):
 
     def update(self, value: T, count: Tensor | int = 1):
         if isinstance(value, Tensor) and value.dtype in [torch.bfloat16, torch.float16]:
-            value = value.to(torch.float32)
+            value = cast(T, value.to(torch.float32))
         self.count += count
         if self.reduction in ["mean", "sum"]:
             self.value = cast(T, self.value + value) if self.value is not None else value
