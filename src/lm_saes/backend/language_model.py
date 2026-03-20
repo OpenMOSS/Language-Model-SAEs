@@ -51,7 +51,6 @@ from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.discrete import DiscreteMapper
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import ensure_tokenized, pad_and_truncate_tokens, tensor_id
-from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
     from lm_saes.models.lorsa import LowRankSparseAttention
@@ -406,7 +405,6 @@ class NodeInfo:
         return self[:batch_size], self[batch_size:]
 
 
-@timer.time("compute_inv_indices")
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
     inv_indices = torch.empty(
         [int(indices[:, i].max() + 1) for i in range(indices.shape[1])],
@@ -447,90 +445,84 @@ class Dimension:
         node_mappings = dict(self.node_mappings)
         offset_mapping = dict(self.offset_mapping)
 
-        with timer.time("merge_node_infos"):
-            merged_node_infos = defaultdict(
-                lambda: {
-                    "indices": torch.tensor([], device=self.device, dtype=torch.long),
-                    "offsets": torch.tensor([], device=self.device, dtype=torch.long),
-                }
-            )
-
-            start = len(self)
-            acc_node_length = 0
-            for node_info in other:
-                node_length = node_info.indices.shape[0]
-                merged_node_infos[node_info.key]["indices"] = torch.cat(
-                    [merged_node_infos[node_info.key]["indices"], node_info.indices],
-                    dim=0,
-                )
-                merged_node_infos[node_info.key]["offsets"] = torch.cat(
-                    [
-                        merged_node_infos[node_info.key]["offsets"],
-                        torch.arange(
-                            start + acc_node_length, start + acc_node_length + node_length, device=self.device
-                        ),
-                    ],
-                    dim=0,
-                )
-                acc_node_length += node_length
-
-        with timer.time("expand_offset_mapping"):
-            offset_mapping = {
-                "indices": torch.cat(
-                    [offset_mapping["indices"], torch.empty(acc_node_length, device=self.device, dtype=torch.long)],
-                    dim=0,
-                ),
-                "keys": torch.cat(
-                    [offset_mapping["keys"], torch.empty(acc_node_length, device=self.device, dtype=torch.long)],
-                    dim=0,
-                ),
+        merged_node_infos = defaultdict(
+            lambda: {
+                "indices": torch.tensor([], device=self.device, dtype=torch.long),
+                "offsets": torch.tensor([], device=self.device, dtype=torch.long),
             }
+        )
+
+        start = len(self)
+        acc_node_length = 0
+        for node_info in other:
+            node_length = node_info.indices.shape[0]
+            merged_node_infos[node_info.key]["indices"] = torch.cat(
+                [merged_node_infos[node_info.key]["indices"], node_info.indices],
+                dim=0,
+            )
+            merged_node_infos[node_info.key]["offsets"] = torch.cat(
+                [
+                    merged_node_infos[node_info.key]["offsets"],
+                    torch.arange(start + acc_node_length, start + acc_node_length + node_length, device=self.device),
+                ],
+                dim=0,
+            )
+            acc_node_length += node_length
+
+        offset_mapping = {
+            "indices": torch.cat(
+                [offset_mapping["indices"], torch.empty(acc_node_length, device=self.device, dtype=torch.long)],
+                dim=0,
+            ),
+            "keys": torch.cat(
+                [offset_mapping["keys"], torch.empty(acc_node_length, device=self.device, dtype=torch.long)],
+                dim=0,
+            ),
+        }
 
         for key, node_info in merged_node_infos.items():
             node_key_id = self.mapper.encode([key])[0]
 
-            with timer.time("update_node_mapping"):
-                # Append node to node mapping
-                if key not in node_mappings:
-                    n_original_elements = 0
-                    node_mappings = node_mappings | {
-                        key: Node(
-                            key=key,
-                            indices=node_info["indices"],
-                            offsets=node_info["offsets"],
-                            inv_indices=compute_inv_indices(node_info["indices"]),
-                        )
-                    }
-                else:
-                    n_original_elements = node_mappings[key].indices.shape[0]
-                    new_indices = torch.cat(
-                        [node_mappings[key].indices, node_info["indices"]],
-                        dim=0,
+            # Append node to node mapping
+            if key not in node_mappings:
+                n_original_elements = 0
+                node_mappings = node_mappings | {
+                    key: Node(
+                        key=key,
+                        indices=node_info["indices"],
+                        offsets=node_info["offsets"],
+                        inv_indices=compute_inv_indices(node_info["indices"]),
                     )
-                    node_mappings = node_mappings | {
-                        key: Node(
-                            key=key,
-                            indices=new_indices,
-                            offsets=torch.cat(
-                                [
-                                    node_mappings[key].offsets,
-                                    node_info["offsets"],
-                                ],
-                                dim=0,
-                            ),
-                            inv_indices=compute_inv_indices(new_indices),
-                        )
-                    }
-
-            with timer.time("update_offset_mapping"):
-                # Update offset mapping
-                offset_mapping["indices"][node_info["offsets"]] = torch.arange(
-                    n_original_elements,
-                    n_original_elements + node_info["indices"].shape[0],
-                    device=self.device,
-                    dtype=torch.long,
+                }
+            else:
+                n_original_elements = node_mappings[key].indices.shape[0]
+                new_indices = torch.cat(
+                    [node_mappings[key].indices, node_info["indices"]],
+                    dim=0,
                 )
-                offset_mapping["keys"][node_info["offsets"]] = node_key_id
+                node_mappings = node_mappings | {
+                    key: Node(
+                        key=key,
+                        indices=new_indices,
+                        offsets=torch.cat(
+                            [
+                                node_mappings[key].offsets,
+                                node_info["offsets"],
+                            ],
+                            dim=0,
+                        ),
+                        inv_indices=compute_inv_indices(new_indices),
+                    )
+                }
+
+            # Update offset mapping
+            offset_mapping["indices"][node_info["offsets"]] = torch.arange(
+                n_original_elements,
+                n_original_elements + node_info["indices"].shape[0],
+                device=self.device,
+                dtype=torch.long,
+            )
+            offset_mapping["keys"][node_info["offsets"]] = node_key_id
 
         ret = self.__class__(
             node_infos=list(self.node_infos) + list(other),
@@ -548,7 +540,6 @@ class Dimension:
     def __hash__(self) -> int:
         return hash(tuple(self.node_mappings.values()))
 
-    @timer.time("nodes_to_offsets")
     def nodes_to_offsets(self, dimension: Sequence[NodeInfo] | Dimension) -> torch.Tensor:
         if isinstance(dimension, Dimension):
             cache_key = hash(dimension)
@@ -575,7 +566,6 @@ class Dimension:
                 start += len(node_info)
             return offsets
 
-    @timer.time("offsets_to_nodes")
     def offsets_to_nodes(self, offsets: torch.Tensor) -> Sequence[NodeInfo]:
         keys_encoded = self.offset_mapping["keys"][offsets]
         indices = self.offset_mapping["indices"][offsets]
@@ -601,7 +591,6 @@ class NodeIndexedTensor:
         self.dimensions = tuple(Dimension.empty(device=device) for _ in range(self.n_dims))
 
     @classmethod
-    @timer.time("from_data")
     def from_data(cls, data: torch.Tensor, dimensions: tuple[Sequence[NodeInfo] | Dimension, ...]) -> Self:
         self = cls.__new__(cls)
         self.n_dims = data.ndim
@@ -689,8 +678,7 @@ class NodeIndexedTensor:
                 continue
 
             offsets = self.dimensions[dim].nodes_to_offsets(dimension)
-            with timer.time("index_select"):
-                data = data.index_select(dim, offsets)
+            data = data.index_select(dim, offsets)
 
         dimensions = tuple(
             dimension if dimension is not None else self.dimensions[dim] for dim, dimension in enumerate(key)
@@ -906,36 +894,27 @@ def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
     )
 
 
-@timer.time("compute_intermediates_attribution")
 def compute_intermediates_attribution(
     attribution: NodeIndexedMatrix,
     targets: Dimension,
     intermediates: Dimension,
     max_iter: int,
 ) -> NodeIndexedMatrix:
-    with timer.time("normalize_attribution"):
-        attribution = get_normalized_matrix(attribution)
-    with timer.time("select_targets"):
-        influence = attribution[targets, None]
+    attribution = get_normalized_matrix(attribution)
+    influence = attribution[targets, None]
     if len(intermediates) == 0:
         return influence
-    with timer.time("select_t2i"):
-        t2i: NodeIndexedMatrix = attribution[targets, intermediates]
+    t2i: NodeIndexedMatrix = attribution[targets, intermediates]
     for _ in range(max_iter):
-        with timer.time("select_i2i"):
-            i2i: NodeIndexedMatrix = attribution[intermediates, None]
-        with timer.time("compute_cur_influence"):
-            cur_influence = t2i @ i2i
+        i2i: NodeIndexedMatrix = attribution[intermediates, None]
+        cur_influence = t2i @ i2i
         if not torch.any(cur_influence.data):
             break
-        with timer.time("update_influence"):
-            influence += cur_influence
-        with timer.time("update_t2i"):
-            t2i = t2i @ attribution[intermediates, intermediates]
+        influence += cur_influence
+        t2i = t2i @ attribution[intermediates, intermediates]
     return influence
 
 
-@timer.time("greedily_collect_attribution")
 def greedily_collect_attribution(
     targets: Sequence[NodeInfoRef],
     sources: Sequence[NodeInfoRef],
@@ -963,11 +942,9 @@ def greedily_collect_attribution(
 
     queue = NodeInfoQueue(targets)
 
-    @timer.time("values")
     def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
         return [node_info.ref[:, *node_info.indices.unbind(dim=1)] for node_info in node_infos]
 
-    @timer.time("grads")
     def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
         return [
             node_info.ref.grad[:, *node_info.indices.unbind(dim=1)]
@@ -976,31 +953,26 @@ def greedily_collect_attribution(
             for node_info in node_infos
         ]
 
-    @timer.time("clear_grads")
     def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
         for node_info in node_infos:
             node_info.ref.grad = None
 
-    with timer.time("target_attribution"):
-        for target_batch in queue.iter(batch_size):
-            clear_grads(all_sources)
-            root = torch.diag(torch.cat(values(target_batch), dim=1))
-            with timer.time("backward_target"):
-                root.sum().backward(retain_graph=True)
-            with timer.time("fill_attribution_target"):
-                attribution[target_batch, None] = torch.cat(
-                    [
-                        einops.einsum(
-                            value[: root.shape[0]],
-                            grad[: root.shape[0]],
-                            "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                        )
-                        for value, grad in zip(values(all_sources), grads(all_sources))
-                    ],
-                    dim=1,
+    for target_batch in queue.iter(batch_size):
+        clear_grads(all_sources)
+        root = torch.diag(torch.cat(values(target_batch), dim=1))
+        root.sum().backward(retain_graph=True)
+        attribution[target_batch, None] = torch.cat(
+            [
+                einops.einsum(
+                    value[: root.shape[0]],
+                    grad[: root.shape[0]],
+                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
                 )
+                for value, grad in zip(values(all_sources), grads(all_sources))
+            ],
+            dim=1,
+        )
 
-    @timer.time("retrieval_from_intermediates")
     def retrieval_from_intermediates(node_infos: Sequence[NodeInfo]):
         return [
             NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[0].ref)
@@ -1009,87 +981,44 @@ def greedily_collect_attribution(
             if node_info.key == intermediate[0].key
         ]
 
-    with timer.time("intermediate_attribution"):
-        collected_intermediates_dimension = Dimension.empty(device=targets[0].ref.device)
-        reduction_weight: NodeIndexedVector = NodeIndexedVector.from_data(
-            reduction_weight, dimensions=(targets_dimension,)
+    collected_intermediates_dimension = Dimension.empty(device=targets[0].ref.device)
+    reduction_weight: NodeIndexedVector = NodeIndexedVector.from_data(reduction_weight, dimensions=(targets_dimension,))
+    for i in tqdm(range(0, max_intermediates, batch_size)):
+        cur_batch_size = min(batch_size, max_intermediates - i)
+        intermediates_attribution = compute_intermediates_attribution(
+            attribution, targets_dimension, collected_intermediates_dimension, max_iter
         )
-        for i in tqdm(range(0, max_intermediates, batch_size)):
-            cur_batch_size = min(batch_size, max_intermediates - i)
-            intermediates_attribution = compute_intermediates_attribution(
-                attribution, targets_dimension, collected_intermediates_dimension, max_iter
-            )
 
-            with timer.time("reduce_influence"):
-                influence = reduction_weight @ intermediates_attribution[None, source_intermediates_dimension]
+        influence = reduction_weight @ intermediates_attribution[None, source_intermediates_dimension]
 
-            with timer.time("topk"):
-                _, selected_node_infos = influence.topk(
-                    k=cur_batch_size, ignore_node_infos=collected_intermediates_dimension.node_infos
-                )
+        _, selected_node_infos = influence.topk(
+            k=cur_batch_size, ignore_node_infos=collected_intermediates_dimension.node_infos
+        )
 
-            with timer.time("extend"):
-                collected_intermediates_dimension = collected_intermediates_dimension + selected_node_infos
+        collected_intermediates_dimension = collected_intermediates_dimension + selected_node_infos
 
-            clear_grads(all_sources)
-            node_refs = retrieval_from_intermediates(selected_node_infos)
-            root = torch.diag(torch.cat(values(node_refs), dim=1))
+        clear_grads(all_sources)
+        node_refs = retrieval_from_intermediates(selected_node_infos)
+        root = torch.diag(torch.cat(values(node_refs), dim=1))
 
-            with timer.time("backward_intermediate"):
-                root.sum().backward(retain_graph=True)
+        root.sum().backward(retain_graph=True)
 
-            with timer.time("fill_attribution_intermediate"):
-                attribution.add_targets(
-                    selected_node_infos,
-                    torch.cat(
-                        [
-                            einops.einsum(
-                                value[: root.shape[0]],
-                                grad[: root.shape[0]],
-                                "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                            )
-                            for value, grad in zip(values(all_sources), grads(all_sources))
-                        ],
-                        dim=1,
-                    ),
-                )
+        attribution.add_targets(
+            selected_node_infos,
+            torch.cat(
+                [
+                    einops.einsum(
+                        value[: root.shape[0]],
+                        grad[: root.shape[0]],
+                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                    )
+                    for value, grad in zip(values(all_sources), grads(all_sources))
+                ],
+                dim=1,
+            ),
+        )
 
     return attribution
-
-
-# def compute_feature_influences(
-#     graph: AttributionGraph,
-#     max_iter: int = 100,
-# ) -> torch.Tensor:
-
-#     with graph.adjacency_matrix.unwrap():
-#         influences = einops.einsum(
-#             graph.cache_activations["top_p"].to(graph.adjacency_matrix.device),
-#             get_normalized_matrix(
-#                 graph.adjacency_matrix[
-#                     :,
-#                     graph.n_tokens : graph.n_tokens + graph.n_active_features,
-#                 ]
-#             ),
-#             "logits, logits features -> features",
-#         )
-#     if graph.selected_features is None:
-#         return influences
-
-#     with graph.adjacency_matrix.unwrap():
-#         feature_to_feature = get_normalized_matrix(
-#             graph.adjacency_matrix[
-#                 graph.n_logits : graph.selected_features.shape[0] + graph.n_logits,
-#                 graph.n_tokens : graph.n_tokens + graph.n_active_features,
-#             ]
-#         )
-#     prod = influences
-#     for _ in range(max_iter):
-#         prod = prod[graph.selected_features] @ feature_to_feature
-#         if not torch.any(prod):
-#             break
-#         influences += prod
-#     return influences
 
 
 class TransformerLensLanguageModel(LanguageModel):
@@ -1143,7 +1072,6 @@ class TransformerLensLanguageModel(LanguageModel):
             else None
         )
 
-    @timer.time("attribute")
     def attribute(
         self,
         inputs: torch.Tensor | str,
@@ -1211,62 +1139,6 @@ class TransformerLensLanguageModel(LanguageModel):
             top_p, top_idx = torch.topk(probs, max_n_logits)
             cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
             top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
-
-        # cache_activations["logits"] = batch_logits[:, :, top_idx]
-        # cache_activations["top_p"] = top_p
-
-        # graph = AttributionGraph(cache_activations, max_features)
-
-        # for i in range(0, graph.n_logits, batch_size):
-        #     cur_batch_size = min(batch_size, graph.n_logits - i)
-        #     node_infos = [
-        #         (
-        #             (graph.n_tokens - 1, "logits"),
-        #             torch.arange(i, i + cur_batch_size, dtype=torch.long, device=graph.device),
-        #         )
-        #     ]
-        #     bwd_values = graph.bwd_values(node_infos)
-        #     bwd_values -= torch.mean(batch_logits[:cur_batch_size, -1, :], dim=-1).squeeze()
-        #     graph.clear_cache_activation_grads()
-        #     bwd_values.sum().backward(retain_graph=True)
-        #     graph.calculate_attribution(node_infos)
-
-        # logits_infos = [
-        #     ((graph.n_tokens - 1, "logits"), torch.arange(graph.n_logits, dtype=torch.long, device=graph.device))
-        # ]
-
-        # ignored_indices = None
-        # selected_node_infos = {}
-        # for i in tqdm(range(0, graph.max_features, batch_size)):
-        #     cur_batch = min(batch_size, graph.max_features - i)
-        #     features_attributions = compute_feature_influences(
-        #         graph,
-        #         cur_batch,
-        #         logits_infos,
-        #         selected_node_infos,
-        #         ignored_indices,
-        #         max_iter=len(replacement_modules) + 10,
-        #     )
-        #     if graph.selected_features is not None:
-        #         features_attributions[graph.selected_features] = float("-inf")
-        #     _, batch_feature_ids = torch.topk(features_attributions, cur_batch)
-        #     features_target_metadata = graph.get_target_nodes(
-        #         (batch_feature_ids + graph.n_tokens).tolist(), mapping_from="source"
-        #     )
-        #     batch_target_values = torch.stack(
-        #         [tensor[i] for i, (tensor, _) in enumerate(features_target_metadata)]
-        #     ).sum()
-        #     graph.clear_cache_activation_grads()
-        #     batch_target_values.backward(retain_graph=True)
-
-        #     # graph.update_target(features_target_metadata, calculate_attribution(graph.adjacency_matrix, cur_batch))
-        #     graph.selected_features = (
-        #         batch_feature_ids
-        #         if graph.selected_features is None
-        #         else torch.cat([graph.selected_features, batch_feature_ids])
-        #     )
-
-        # return graph
 
         seq_len = cache_activations["hook_embed"].shape[1]
 
@@ -1474,7 +1346,6 @@ class TransformerLensLanguageModel(LanguageModel):
             for offset_ in offsets
         ]
 
-    @timer.time("to_activations")
     @torch.no_grad()
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
