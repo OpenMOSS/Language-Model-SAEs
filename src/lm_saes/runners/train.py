@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from itertools import tee
 from typing import Optional
 
 import torch
@@ -150,6 +151,9 @@ def train_sae(settings: TrainSAESettings) -> None:
         model_name=settings.model_name,
         datasets=datasets,
     )
+    initializer_stream = None
+    if settings.initializer is not None and not isinstance(settings.sae, PretrainedSAE):
+        initializer_stream, activations_stream = tee(activations_stream)
 
     logger.info("Initializing SAE")
 
@@ -184,7 +188,7 @@ def train_sae(settings: TrainSAESettings) -> None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
             settings.sae,
-            activation_stream=activations_stream,
+            activation_stream=initializer_stream,
             device_mesh=device_mesh,
             wandb_logger=wandb_logger,
             model=model,
@@ -375,6 +379,9 @@ def train_crosscoder(settings: TrainCrosscoderSettings) -> None:
         model_name=settings.model_name,
         datasets=datasets,
     )
+    initializer_stream = None
+    if settings.initializer is not None and not isinstance(settings.sae, PretrainedSAE):
+        initializer_stream, activations_stream = tee(activations_stream)
 
     wandb_logger = (
         wandb.init(
@@ -411,7 +418,7 @@ def train_crosscoder(settings: TrainCrosscoderSettings) -> None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
             settings.sae,
-            activation_stream=activations_stream,
+            activation_stream=initializer_stream,
             device_mesh=device_mesh,
             wandb_logger=wandb_logger,
             model=model,
@@ -584,6 +591,9 @@ def train_clt(settings: TrainCLTSettings) -> None:
         model_name=settings.model_name,
         datasets=datasets,
     )
+    initializer_stream = None
+    if settings.initializer is not None and not isinstance(settings.sae, PretrainedSAE):
+        initializer_stream, activations_stream = tee(activations_stream)
 
     wandb_logger = (
         wandb.init(
@@ -617,7 +627,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
             settings.sae,
-            activation_stream=activations_stream,
+            activation_stream=initializer_stream,
             device_mesh=device_mesh,
             wandb_logger=wandb_logger,
             model=model,
@@ -793,6 +803,9 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
         model_name=settings.model_name,
         datasets=datasets,
     )
+    initializer_stream = None
+    if settings.initializer is not None and not isinstance(settings.sae, PretrainedSAE):
+        initializer_stream, activations_stream = tee(activations_stream)
 
     logger.info("Initializing lorsa")
 
@@ -827,7 +840,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
             settings.sae,
-            activation_stream=activations_stream,
+            activation_stream=initializer_stream,
             device_mesh=device_mesh,
             wandb_logger=wandb_logger,
             model=model,
@@ -1004,6 +1017,9 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         model_name=settings.model_name,
         datasets=datasets,
     )
+    initializer_stream = None
+    if settings.initializer is not None and not isinstance(settings.sae, PretrainedSAE):
+        initializer_stream, activations_stream = tee(activations_stream)
 
     wandb_logger = (
         wandb.init(
@@ -1038,7 +1054,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         initializer = Initializer(settings.initializer)
         sae = initializer.initialize_sae_from_config(
             settings.sae,
-            activation_stream=activations_stream,
+            activation_stream=initializer_stream,
             device_mesh=device_mesh,
             wandb_logger=wandb_logger,
             model=model,
@@ -1246,6 +1262,9 @@ def sweep_sae(settings: SweepSAESettings) -> None:
             yield converted_batch
 
     activations_stream = convert_activations_to_2d_mesh(activations_stream, sae_device_mesh)
+    initializer_stream = None
+    if item.initializer is not None and not isinstance(item.sae, PretrainedSAE):
+        initializer_stream, activations_stream = tee(activations_stream)
 
     logger.info("Initializing SAE on 2D sub-mesh")
 
@@ -1265,7 +1284,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         initializer = Initializer(item.initializer)
         sae = initializer.initialize_sae_from_config(
             item.sae,
-            activation_stream=activations_stream,
+            activation_stream=initializer_stream,
             device_mesh=sae_device_mesh,
             model=model,
         )

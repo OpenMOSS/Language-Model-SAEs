@@ -23,6 +23,8 @@ https://transformer-circuits.pub/2025/attribution-graphs/methods.html
 import contextlib
 import time
 import weakref
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, List, Literal, Optional, Tuple, Union
 
@@ -54,6 +56,367 @@ from .utils.transcoder_set import TranscoderSet
 logger = get_distributed_logger("attribution")
 
 TranscoderType = TranscoderSet | CrossLayerTranscoder
+
+
+def _normalize_runtime_device(device: torch.device | str) -> torch.device:
+    device_obj = torch.device(device)
+    if device_obj.type == "cuda" and device_obj.index is None:
+        device_obj = torch.device(f"cuda:{torch.cuda.current_device()}")
+    return device_obj
+
+
+def _device_context(device: torch.device):
+    return torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
+
+
+@dataclass
+class PreparedAttributionState:
+    model: ReplacementModel
+    ctx: "AttributionContext"
+    input_ids: torch.Tensor
+    logits: torch.Tensor
+    lorsa_activation_matrix: torch.Tensor | None
+    lorsa_attention_score: torch.Tensor | None
+    lorsa_attention_pattern: torch.Tensor | None
+    z_attention_pattern: torch.Tensor | None
+    clt_activation_matrix: torch.Tensor
+    error_vecs: torch.Tensor
+    token_vecs: torch.Tensor
+    lorsa_encoder_rows: torch.Tensor | None
+    lorsa_attention_patterns: torch.Tensor | None
+    z_attention_patterns: torch.Tensor | None
+    clt_encoder_rows: torch.Tensor
+    use_lorsa: bool
+    device: torch.device
+    lorsa_feat_layer: torch.Tensor | None
+    lorsa_feat_pos: torch.Tensor | None
+    lorsa_feat_idx: torch.Tensor | None
+    clt_feat_layer: torch.Tensor
+    clt_feat_pos: torch.Tensor
+    clt_feat_idx: torch.Tensor
+    ov_group_sizes: torch.Tensor | None
+
+    @property
+    def n_layers(self) -> int:
+        return self.clt_activation_matrix.shape[0]
+
+    @property
+    def n_pos(self) -> int:
+        return self.clt_activation_matrix.shape[1]
+
+    @property
+    def lorsa_feature_count(self) -> int:
+        return 0 if self.lorsa_activation_matrix is None else self.lorsa_activation_matrix._nnz()
+
+    @property
+    def clt_feature_count(self) -> int:
+        return self.clt_activation_matrix._nnz()
+
+    @property
+    def total_active_feats(self) -> int:
+        return self.lorsa_feature_count + self.clt_feature_count
+
+    @property
+    def logit_offset(self) -> int:
+        if self.use_lorsa:
+            return self.total_active_feats + 2 * self.n_layers * self.n_pos + self.n_pos
+        return self.total_active_feats + self.n_layers * self.n_pos + self.n_pos
+
+    def idx_to_layer(self, idx: torch.Tensor) -> torch.Tensor:
+        idx = idx.to(self.device)
+        if not self.use_lorsa:
+            return self.clt_feat_layer[idx]
+
+        assert self.lorsa_feat_layer is not None
+        result = torch.empty_like(idx)
+        is_lorsa = idx < self.lorsa_feature_count
+        if is_lorsa.any():
+            result[is_lorsa] = 2 * self.lorsa_feat_layer[idx[is_lorsa]]
+        if (~is_lorsa).any():
+            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
+            result[~is_lorsa] = 2 * self.clt_feat_layer[clt_idx] + 1
+        return result
+
+    def idx_to_pos(self, idx: torch.Tensor) -> torch.Tensor:
+        idx = idx.to(self.device)
+        if not self.use_lorsa:
+            return self.clt_feat_pos[idx]
+
+        assert self.lorsa_feat_pos is not None
+        result = torch.empty_like(idx)
+        is_lorsa = idx < self.lorsa_feature_count
+        if is_lorsa.any():
+            result[is_lorsa] = self.lorsa_feat_pos[idx[is_lorsa]]
+        if (~is_lorsa).any():
+            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
+            result[~is_lorsa] = self.clt_feat_pos[clt_idx]
+        return result
+
+    def idx_to_encoder_rows(self, idx: torch.Tensor) -> torch.Tensor:
+        idx = idx.to(self.device)
+        if not self.use_lorsa:
+            return self.clt_encoder_rows[idx]
+
+        assert self.lorsa_encoder_rows is not None
+        result = torch.empty((idx.shape[0], self.token_vecs.shape[-1]), device=self.device, dtype=self.token_vecs.dtype)
+        is_lorsa = idx < self.lorsa_feature_count
+        if is_lorsa.any():
+            result[is_lorsa] = self.lorsa_encoder_rows[idx[is_lorsa]]
+        if (~is_lorsa).any():
+            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
+            result[~is_lorsa] = self.clt_encoder_rows[clt_idx]
+        return result
+
+    def idx_to_pattern(self, idx: torch.Tensor) -> torch.Tensor:
+        idx = idx.to(self.device)
+        pattern_dtype = self.token_vecs.dtype
+        if not self.use_lorsa:
+            return torch.nn.functional.one_hot(self.clt_feat_pos[idx], num_classes=self.n_pos).to(pattern_dtype)
+
+        assert self.lorsa_attention_patterns is not None
+        result = torch.empty((idx.shape[0], self.n_pos), device=self.device, dtype=pattern_dtype)
+        is_lorsa = idx < self.lorsa_feature_count
+        if is_lorsa.any():
+            result[is_lorsa] = self.lorsa_attention_patterns[idx[is_lorsa]].to(pattern_dtype)
+        if (~is_lorsa).any():
+            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
+            result[~is_lorsa] = torch.nn.functional.one_hot(
+                self.clt_feat_pos[clt_idx], num_classes=self.n_pos
+            ).to(pattern_dtype)
+        return result
+
+    def idx_to_z_pattern(self, idx: torch.Tensor) -> torch.Tensor:
+        idx = idx.to(self.device)
+        pattern_dtype = self.token_vecs.dtype
+        if not self.use_lorsa:
+            return torch.nn.functional.one_hot(self.clt_feat_pos[idx], num_classes=self.n_pos).to(pattern_dtype)
+
+        assert self.z_attention_patterns is not None
+        result = torch.empty((idx.shape[0], self.n_pos), device=self.device, dtype=pattern_dtype)
+        is_lorsa = idx < self.lorsa_feature_count
+        if is_lorsa.any():
+            result[is_lorsa] = self.z_attention_patterns[idx[is_lorsa]].to(pattern_dtype)
+        if (~is_lorsa).any():
+            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
+            result[~is_lorsa] = torch.nn.functional.one_hot(
+                self.clt_feat_pos[clt_idx], num_classes=self.n_pos
+            ).to(pattern_dtype)
+        return result
+
+    def idx_to_qk_idx(self, idx: torch.Tensor) -> torch.Tensor:
+        assert self.use_lorsa, "QK tracing requires lorsa features"
+        assert self.lorsa_feat_layer is not None and self.lorsa_feat_idx is not None and self.ov_group_sizes is not None
+        idx = idx.to(self.device)
+        return self.lorsa_feat_idx[idx] // self.ov_group_sizes[self.lorsa_feat_layer[idx]]
+
+
+@dataclass
+class FeatureBatchResult:
+    idx_batch: torch.Tensor
+    rows: torch.Tensor
+    lorsa_pattern: torch.Tensor
+    z_pattern: torch.Tensor
+
+
+@dataclass
+class AttributionReplica:
+    state: PreparedAttributionState
+    offload_handles: list[Callable]
+    owns_model: bool = False
+
+    @property
+    def device(self) -> torch.device:
+        return self.state.device
+
+    def compute_feature_rows(self, idx_batch: torch.Tensor, *, retain_graph: bool = True) -> FeatureBatchResult:
+        with _device_context(self.device):
+            local_idx = idx_batch.to(self.device, non_blocking=self.device.type == "cuda")
+            attention_patterns = self.state.idx_to_pattern(local_idx)
+            rows = self.state.ctx.compute_batch(
+                layers=self.state.idx_to_layer(local_idx),
+                positions=self.state.idx_to_pos(local_idx),
+                inject_values=self.state.idx_to_encoder_rows(local_idx),
+                attention_patterns=attention_patterns,
+                retain_graph=retain_graph,
+            )
+            return FeatureBatchResult(
+                idx_batch=idx_batch.cpu(),
+                rows=rows.cpu(),
+                lorsa_pattern=attention_patterns.cpu(),
+                z_pattern=self.state.idx_to_z_pattern(local_idx).cpu(),
+            )
+
+    def compute_qk_trace(self, idx: int, topk: int) -> tuple[int, Any]:
+        assert self.state.use_lorsa, "QK tracing requires lorsa features"
+        assert self.state.lorsa_activation_matrix is not None and self.state.lorsa_feat_layer is not None
+        with _device_context(self.device):
+            local_idx = torch.tensor([idx], device=self.device, dtype=torch.long)
+            layer = int(self.state.lorsa_feat_layer[local_idx].item())
+            q_pos = int(self.state.idx_to_pos(local_idx).item())
+            k_pos = int(self.state.idx_to_z_pattern(local_idx).argmax(dim=-1).item())
+            qk_idx = int(self.state.idx_to_qk_idx(local_idx).item())
+            result = compute_attn_scores_attribution(
+                self.state.model,
+                self.state.lorsa_activation_matrix,
+                self.state.clt_activation_matrix,
+                layer,
+                q_pos,
+                k_pos,
+                qk_idx,
+                self.state.token_vecs,
+                self.state.error_vecs,
+                self.state.input_ids,
+                topk,
+            )
+        return idx, result
+
+    def cleanup(self) -> None:
+        for reload_handle in self.offload_handles:
+            reload_handle()
+        for _, param in self.state.model._get_requires_grad_bias_params():
+            param.grad = None
+
+
+def _prepare_attribution_state(
+    model: ReplacementModel,
+    prompt: Union[str, torch.Tensor, List[int]],
+    *,
+    batch_size: int,
+    use_lorsa: bool,
+    offload: Literal["cpu", "disk", None],
+    offload_handles: list[Callable],
+) -> PreparedAttributionState:
+    model.sync_runtime_device()
+    device = _normalize_runtime_device(model.runtime_device)
+    input_ids = ensure_tokenized(prompt, model.tokenizer)
+    (
+        logits,
+        lorsa_activation_matrix,
+        lorsa_attention_score,
+        lorsa_attention_pattern,
+        z_attention_pattern,
+        clt_activation_matrix,
+        error_vecs,
+        token_vecs,
+    ) = model.setup_attribution(input_ids, sparse=True)
+
+    if use_lorsa:
+        assert lorsa_activation_matrix is not None
+        lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas)
+        lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = select_encoder_rows_lorsa(
+            lorsa_activation_matrix,
+            lorsa_attention_pattern,
+            z_attention_pattern,
+            model.lorsas,
+        )
+    else:
+        lorsa_decoder_vecs = None
+        lorsa_encoder_rows = None
+        lorsa_attention_patterns = None
+        z_attention_patterns = None
+
+    clt_decoder_vecs = select_scaled_decoder_vecs_transcoder(clt_activation_matrix, model.transcoders)
+    clt_encoder_rows = select_encoder_rows(clt_activation_matrix, model.transcoders)
+
+    ctx = AttributionContext(
+        lorsa_activation_matrix,
+        clt_activation_matrix,
+        error_vecs,
+        token_vecs,
+        lorsa_decoder_vecs,
+        clt_decoder_vecs,
+        model.attn_output_hook,
+        model.mlp_output_hook,
+        use_lorsa=use_lorsa,
+        use_clt=isinstance(model.transcoders, CrossLayerTranscoder),
+    )
+
+    if offload:
+        offload_handles += offload_modules(model.transcoders, offload)
+
+    with ctx.install_hooks(model), _device_context(device):
+        residual = model.forward(input_ids.expand(batch_size, -1), stop_at_layer=model.cfg.n_layers)
+        ctx._resid_activations[-1] = model.ln_final(residual)
+
+    if offload:
+        offload_handles += offload_modules([block.mlp for block in model.blocks], offload)
+        if use_lorsa:
+            offload_handles += offload_modules([block.attn for block in model.blocks], offload)
+
+    lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = (
+        lorsa_activation_matrix.indices() if use_lorsa and lorsa_activation_matrix is not None else (None, None, None)
+    )
+    clt_feat_layer, clt_feat_pos, clt_feat_idx = clt_activation_matrix.indices()
+    ov_group_sizes = (
+        torch.tensor([model.lorsas[i].cfg.ov_group_size for i in range(model.cfg.n_layers)], device=device)
+        if use_lorsa
+        else None
+    )
+
+    return PreparedAttributionState(
+        model=model,
+        ctx=ctx,
+        input_ids=input_ids,
+        logits=logits,
+        lorsa_activation_matrix=lorsa_activation_matrix,
+        lorsa_attention_score=lorsa_attention_score,
+        lorsa_attention_pattern=lorsa_attention_pattern,
+        z_attention_pattern=z_attention_pattern,
+        clt_activation_matrix=clt_activation_matrix,
+        error_vecs=error_vecs,
+        token_vecs=token_vecs,
+        lorsa_encoder_rows=lorsa_encoder_rows,
+        lorsa_attention_patterns=lorsa_attention_patterns,
+        z_attention_patterns=z_attention_patterns,
+        clt_encoder_rows=clt_encoder_rows,
+        use_lorsa=use_lorsa,
+        device=device,
+        lorsa_feat_layer=lorsa_feat_layer,
+        lorsa_feat_pos=lorsa_feat_pos,
+        lorsa_feat_idx=lorsa_feat_idx,
+        clt_feat_layer=clt_feat_layer,
+        clt_feat_pos=clt_feat_pos,
+        clt_feat_idx=clt_feat_idx,
+        ov_group_sizes=ov_group_sizes,
+    )
+
+
+def _build_parallel_replicas(
+    model: ReplacementModel,
+    prompt: Union[str, torch.Tensor, List[int]],
+    *,
+    batch_size: int,
+    use_lorsa: bool,
+    offload: Literal["cpu", "disk", None],
+    parallel_devices: list[str] | None,
+) -> list[AttributionReplica]:
+    primary_device = str(_normalize_runtime_device(model.runtime_device))
+    requested_devices = parallel_devices or []
+
+    devices: list[str] = []
+    for device in [primary_device, *requested_devices]:
+        normalized = str(_normalize_runtime_device(device))
+        if normalized not in devices:
+            devices.append(normalized)
+
+    replicas: list[AttributionReplica] = []
+    models = [model]
+    for device in devices[1:]:
+        models.append(model.clone_to_device(device))
+
+    for idx, replica_model in enumerate(models):
+        offload_handles: list[Callable] = []
+        state = _prepare_attribution_state(
+            replica_model,
+            prompt,
+            batch_size=batch_size,
+            use_lorsa=use_lorsa,
+            offload=offload,
+            offload_handles=offload_handles,
+        )
+        replicas.append(AttributionReplica(state=state, offload_handles=offload_handles, owns_model=idx > 0))
+
+    return replicas
 
 
 class AttributionContext:
@@ -544,6 +907,7 @@ def attribute(
     use_lorsa: bool = True,
     qk_tracing_topk: int = 10,
     list_of_features: Optional[List[Tuple[int, int, int, bool]]] = None,
+    parallel_devices: Optional[List[str]] = None,
     progress_callback: Optional[Callable[[float, float, str], None]] = None,
 ) -> Graph:
     """Compute an attribution graph for *prompt*.
@@ -561,6 +925,9 @@ def attribute(
         verbose: Whether to show progress information.
         update_interval: Number of batches to process before updating the feature ranking.
         list_of_features: list of (layer, feature_idx, pos, is_lorsa) tuples
+        parallel_devices: Optional list of devices such as ["cuda:0", "cuda:1"].
+            When at least two distinct devices are provided, the expensive
+            feature-attribution and QK-tracing phases are sharded across replicas.
         progress_callback: Optional callback for tracking progress (current, total, phase).
 
     Returns:
@@ -583,6 +950,7 @@ def attribute(
             use_lorsa=use_lorsa,
             qk_tracing_topk=qk_tracing_topk,
             list_of_features=list_of_features,
+            parallel_devices=parallel_devices,
             progress_callback=progress_callback,
         )
     finally:
@@ -604,76 +972,47 @@ def _run_attribution(
     use_lorsa: bool = True,
     qk_tracing_topk: int = 10,
     list_of_features=None,
+    parallel_devices: Optional[List[str]] = None,
     progress_callback: Optional[Callable[[float, float, str], None]] = None,
 ):
     start_time = time.time()
-    # Phase 0: precompute
-    logger.info("Phase 0: Precomputing activations and vectors")
+    logger.info("Phase 0/1: Preparing attribution states")
     phase_start = time.time()
-    input_ids = ensure_tokenized(prompt, model.tokenizer)
-    (
-        logits,
-        lorsa_activation_matrix,
-        lorsa_attention_score,
-        lorsa_attention_pattern,
-        z_attention_pattern,
-        clt_activation_matrix,
-        error_vecs,
-        token_vecs,
-    ) = model.setup_attribution(input_ids, sparse=True)
-    # we do not run forward passes in setup_attribution. Just assign some zero-inited tensors and set hooks for them
-    # they only have informative values set in Phase 1: forward pass later
-
-    lorsa_decoder_vecs = select_scaled_decoder_vecs_lorsa(lorsa_activation_matrix, model.lorsas) if use_lorsa else None
-    lorsa_encoder_rows, lorsa_attention_patterns, z_attention_patterns = (
-        select_encoder_rows_lorsa(lorsa_activation_matrix, lorsa_attention_pattern, z_attention_pattern, model.lorsas)
-        if use_lorsa
-        else (None, None, None)
-    )
-
-    clt_decoder_vecs = select_scaled_decoder_vecs_transcoder(clt_activation_matrix, model.transcoders)
-    clt_encoder_rows = select_encoder_rows(clt_activation_matrix, model.transcoders)
-
-    ctx = AttributionContext(
-        lorsa_activation_matrix,
-        clt_activation_matrix,
-        error_vecs,
-        token_vecs,
-        lorsa_decoder_vecs,
-        clt_decoder_vecs,
-        model.attn_output_hook,
-        model.mlp_output_hook,
+    replicas = _build_parallel_replicas(
+        model,
+        prompt,
+        batch_size=batch_size,
         use_lorsa=use_lorsa,
-        use_clt=isinstance(model.transcoders, CrossLayerTranscoder),
+        offload=offload,
+        parallel_devices=parallel_devices,
     )
-    logger.info(f"Precomputation completed in {time.time() - phase_start:.2f}s")
-    if use_lorsa:
-        logger.info(f"Found {lorsa_activation_matrix._nnz() + clt_activation_matrix._nnz()} active features")
+    primary = replicas[0]
+    state = primary.state
+    offload_handles.extend(primary.offload_handles)
+    primary.offload_handles = []
 
-    if offload:
-        offload_handles += offload_modules(model.transcoders, offload)
-
-    # Phase 1: forward pass
-    logger.info("Phase 1: Running forward pass")
-    phase_start = time.time()
-    with ctx.install_hooks(model):
-        residual = model.forward(input_ids.expand(batch_size, -1), stop_at_layer=model.cfg.n_layers)
-        ctx._resid_activations[-1] = model.ln_final(residual)
-    logger.info(f"Forward pass completed in {time.time() - phase_start:.2f}s")
-
-    if offload:
-        offload_handles += offload_modules([block.mlp for block in model.blocks], offload)
-        if use_lorsa:
-            offload_handles += offload_modules([block.attn for block in model.blocks], offload)
+    input_ids = state.input_ids
+    logits = state.logits
+    lorsa_activation_matrix = state.lorsa_activation_matrix
+    lorsa_attention_score = state.lorsa_attention_score
+    lorsa_attention_pattern = state.lorsa_attention_pattern
+    z_attention_pattern = state.z_attention_pattern
+    clt_activation_matrix = state.clt_activation_matrix
+    error_vecs = state.error_vecs
+    token_vecs = state.token_vecs
+    ctx = state.ctx
+    n_layers = state.n_layers
+    n_pos = state.n_pos
+    total_active_feats = state.total_active_feats
+    logger.info(
+        f"Prepared {len(replicas)} attribution replica(s) in {time.time() - phase_start:.2f}s"
+    )
+    if use_lorsa and lorsa_activation_matrix is not None:
+        logger.info(f"Found {total_active_feats} active features")
 
     # Phase 2: build input vector list
     logger.info("Phase 2: Building input vectors")
     phase_start = time.time()
-    n_layers, n_pos, _ = clt_activation_matrix.shape
-    if use_lorsa:
-        total_active_feats = lorsa_activation_matrix._nnz() + clt_activation_matrix._nnz()
-    else:
-        total_active_feats = clt_activation_matrix._nnz()
 
     if list_of_features is not None:
         # Feature tracing: start from specific features instead of logits
@@ -709,12 +1048,9 @@ def _run_attribution(
         )
 
         if offload:
-            offload_handles += offload_modules([model.unembed, model.embed], offload)
+            offload_handles += offload_modules([state.model.unembed, state.model.embed], offload)
 
-        if use_lorsa:
-            logit_offset = total_active_feats + 2 * n_layers * n_pos + n_pos
-        else:
-            logit_offset = total_active_feats + n_layers * n_pos + n_pos
+        logit_offset = state.logit_offset
         n_logits = n_features
         total_nodes = logit_offset + n_logits
 
@@ -731,19 +1067,16 @@ def _run_attribution(
     else:
         logit_idx, logit_p, logit_vecs = compute_salient_logits(
             logits[0, -1],
-            model.unembed.W_U,
+            state.model.unembed.W_U,
             max_n_logits=max_n_logits,
             desired_logit_prob=desired_logit_prob,
         )
         logger.info(f"Selected {len(logit_idx)} logits with cumulative probability {logit_p.sum().item():.4f}")
 
         if offload:
-            offload_handles += offload_modules([model.unembed, model.embed], offload)
+            offload_handles += offload_modules([state.model.unembed, state.model.embed], offload)
 
-        if use_lorsa:
-            logit_offset = total_active_feats + 2 * n_layers * n_pos + n_pos
-        else:
-            logit_offset = total_active_feats + n_layers * n_pos + n_pos
+        logit_offset = state.logit_offset
         n_logits = len(logit_idx)
         total_nodes = logit_offset + n_logits
 
@@ -767,6 +1100,7 @@ def _run_attribution(
         for i, (layer, feature_idx, pos, is_lorsa) in enumerate(list_of_features):
             # Find the row index for this feature in the total nodes
             if is_lorsa:
+                assert lorsa_activation_matrix is not None
                 # For LORSA, find the index in lorsa_activation_matrix
                 indices = lorsa_activation_matrix.indices()
                 mask = (indices[0] == layer) & (indices[1] == pos) & (indices[2] == feature_idx)
@@ -853,69 +1187,6 @@ def _run_attribution(
     # Phase 4: feature attribution
     logger.info("Phase 4: Computing feature attributions")
 
-    lorsa_feat_layer, lorsa_feat_pos = lorsa_activation_matrix.indices()[:2] if use_lorsa else (None, None)
-    clt_feat_layer, clt_feat_pos = clt_activation_matrix.indices()[:2]
-
-    lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = (
-        lorsa_activation_matrix.indices() if use_lorsa else (None, None, None)
-    )
-    clt_feat_layer, clt_feat_pos, clt_feat_idx = clt_activation_matrix.indices()
-
-    def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
-        if use_lorsa:
-            is_lorsa = idx < len(lorsa_feat_layer)
-            return torch.where(
-                is_lorsa.to(lorsa_feat_layer.device),
-                2 * lorsa_feat_layer[idx * is_lorsa],
-                2 * clt_feat_layer[(idx - len(lorsa_feat_layer)) * ~is_lorsa] + 1,
-            )
-        else:
-            return clt_feat_layer[idx]
-
-    def idx_to_pos(idx: torch.Tensor) -> torch.Tensor:
-        if use_lorsa:
-            is_lorsa = idx < len(lorsa_feat_layer)
-            return torch.where(
-                is_lorsa.to(lorsa_feat_pos.device),
-                lorsa_feat_pos[idx * is_lorsa],
-                clt_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa],
-            )
-        else:
-            return clt_feat_pos[idx]
-
-    def idx_to_encoder_rows(idx: torch.Tensor) -> torch.Tensor:
-        if use_lorsa:
-            is_lorsa = idx < len(lorsa_feat_layer)
-            return torch.where(
-                is_lorsa.to(lorsa_encoder_rows.device)[:, None],
-                lorsa_encoder_rows[idx * is_lorsa],
-                clt_encoder_rows[(idx - len(lorsa_feat_layer)) * ~is_lorsa],
-            )
-        else:
-            return clt_encoder_rows[idx]
-
-    def idx_to_pattern(idx: torch.Tensor) -> torch.Tensor:
-        if use_lorsa:
-            is_lorsa = idx < len(lorsa_feat_layer)
-            return torch.where(
-                is_lorsa.to(lorsa_attention_patterns.device)[:, None],
-                lorsa_attention_patterns[idx * is_lorsa],
-                torch.nn.functional.one_hot(clt_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa], num_classes=n_pos),
-            )
-        else:
-            return torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
-
-    def idx_to_z_pattern(idx: torch.Tensor) -> torch.Tensor:
-        if use_lorsa:
-            is_lorsa = idx < len(lorsa_feat_layer)
-            return torch.where(
-                is_lorsa.to(z_attention_patterns.device)[:, None],
-                z_attention_patterns[idx * is_lorsa],
-                torch.nn.functional.one_hot(clt_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa], num_classes=n_pos),
-            )
-        else:
-            return torch.nn.functional.one_hot(clt_feat_pos[idx], num_classes=n_pos)
-
     # DEBUGGING:
     # def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
     #     is_lorsa = idx < len(lorsa_feat_layer)
@@ -946,54 +1217,28 @@ def _run_attribution(
             pending = feature_rank[~visited[feature_rank]][:queue_size]
 
         queue = [pending[i : i + batch_size] for i in range(0, len(pending), batch_size)]
+        if len(replicas) == 1:
+            feature_results = [primary.compute_feature_rows(idx_batch, retain_graph=True) for idx_batch in queue]
+        else:
+            with ThreadPoolExecutor(max_workers=len(replicas)) as executor:
+                futures = [
+                    executor.submit(replicas[i % len(replicas)].compute_feature_rows, idx_batch, retain_graph=True)
+                    for i, idx_batch in enumerate(queue)
+                ]
+                feature_results = [future.result() for future in futures]
 
-        for idx_batch in queue:
+        for result in feature_results:
+            idx_batch = result.idx_batch
             n_visited += len(idx_batch)
-
-            rows = ctx.compute_batch(
-                layers=idx_to_layer(idx_batch),
-                positions=idx_to_pos(idx_batch),
-                inject_values=idx_to_encoder_rows(idx_batch),
-                attention_patterns=idx_to_pattern(idx_batch),
-                retain_graph=n_visited < max_feature_nodes or qk_tracing_topk > 0,
-            )
-
-            # DEBUGGING:
-
-            # Print feature information before attention patterns
-            # for i, idx in enumerate(idx_batch):
-            #     layer = idx_to_layer(idx.unsqueeze(0)).item()
-            #     pos = idx_to_pos(idx.unsqueeze(0)).item()
-            #     is_lorsa = idx < len(lorsa_feat_layer) if use_lorsa else False
-
-            # print(f'attention_patterns {idx_batch} {idx_to_pattern(idx_batch)}')
-            # bias_attributions = []
-            # for param in model._get_requires_grad_bias_params():
-            #     try:
-            #         attribution = (param[1].data * param[1].grad).sum()
-            #         bias_attributions.append(attribution)
-            #     except TypeError as e:
-            #         pass
-            # print(f'bias_contribution: {sum(bias_attributions)}')
-            # print(f'feature_contribution: {rows[0, :total_active_feats].sum()}')
-            # print(f'error_contribution: {rows[0, total_active_feats: total_active_feats + 2 * n_layers * n_pos].sum()}')
-            # print(f'token_contribution: {rows[0, total_active_feats + 2 * n_layers * n_pos: logit_offset].sum()}')
-            # print(f'overall_activation: {idx_to_activation_values(idx_batch)}')
-            # print(idx_batch.squeeze().item() < len(lorsa_feat_layer), torch.allclose(idx_to_activation_values(idx_batch), rows[0, :logit_offset].sum() + sum(bias_attributions), rtol=1e-1))
-            # print("--------------------------------")
-            # for param in model._get_requires_grad_bias_params():
-            #     param[1].grad = None
-
-            # END OF DEBUGGING:
-
-            end = min(st + batch_size, st + rows.shape[0])
-            edge_matrix[st:end, :logit_offset] = rows.cpu()
-            lorsa_pattern[st:end, :] = idx_to_pattern(idx_batch)
-            z_pattern[st:end, :] = idx_to_z_pattern(idx_batch)
-            row_to_node_index[st:end] = idx_batch
-            visited[idx_batch] = True
+            n_rows = min(idx_batch.shape[0], result.rows.shape[0])
+            end = st + n_rows
+            edge_matrix[st:end, :logit_offset] = result.rows[:n_rows]
+            lorsa_pattern[st:end, :] = result.lorsa_pattern[:n_rows]
+            z_pattern[st:end, :] = result.z_pattern[:n_rows]
+            row_to_node_index[st:end] = idx_batch[:n_rows]
+            visited[idx_batch[:n_rows]] = True
             st = end
-            pbar.update(len(idx_batch))
+            pbar.update(int(n_rows))
             if progress_callback:
                 progress_callback(n_visited, max_feature_nodes, "Feature influence computation")
 
@@ -1011,41 +1256,29 @@ def _run_attribution(
     # Phase 6: attribute attention scores
     # trace attention scores for every visited lorsa feature
     if use_lorsa and qk_tracing_topk > 0:
-
-        def idx_to_qk_idx(idx: torch.Tensor) -> torch.Tensor:
-            ov_idx = lorsa_activation_matrix.indices()[2][idx]
-            ov_group_sizes = torch.tensor(
-                [model.lorsas[i].cfg.ov_group_size for i in range(model.cfg.n_layers)], device=ov_idx.device
-            )
-            return ov_idx // ov_group_sizes[lorsa_activation_matrix.indices()[0][idx]]
-
+        assert lorsa_activation_matrix is not None
         selected_lorsa_feature = torch.where(visited[: lorsa_activation_matrix._nnz()])[0]
-        selected_lorsa_feature_layer = lorsa_activation_matrix.indices()[0][selected_lorsa_feature]
-        selected_lorsa_feature_qpos = idx_to_pos(selected_lorsa_feature)
-        # currently we are only interested in the most prominent z pattern contributor for each lorsa feature
-        # these k_poses are not even necessarily ones with the largest attention pattern due to effect from V
-        # This is not enough for explaining the attention scores as a whole.
-        # For now we only use qk tracing to get some sense of how lorsa attention pattern forms
-        # In practice this should tell us something
-        selected_lorsa_feature_kpos = idx_to_z_pattern(selected_lorsa_feature).argmax(dim=-1)
-        selected_lorsa_feature_qk_idx = idx_to_qk_idx(selected_lorsa_feature)
-
         qk_tracing_results = {}
-        for i, idx in enumerate(tqdm(selected_lorsa_feature, desc="Computing attention scores attribution")):
-            qk_tracing_results[idx.item()] = compute_attn_scores_attribution(
-                model,
-                lorsa_activation_matrix,
-                clt_activation_matrix,
-                selected_lorsa_feature_layer[i],
-                selected_lorsa_feature_qpos[i],
-                selected_lorsa_feature_kpos[i],
-                selected_lorsa_feature_qk_idx[i],
-                token_vecs,
-                error_vecs,
-                input_ids,
-                qk_tracing_topk,
-            )
-            if progress_callback:
+        if len(replicas) == 1:
+            tracing_results = [primary.compute_qk_trace(int(idx.item()), qk_tracing_topk) for idx in selected_lorsa_feature]
+        else:
+            with ThreadPoolExecutor(max_workers=len(replicas)) as executor:
+                futures = [
+                    executor.submit(replicas[i % len(replicas)].compute_qk_trace, int(idx.item()), qk_tracing_topk)
+                    for i, idx in enumerate(selected_lorsa_feature)
+                ]
+                tracing_results = []
+                for i, future in enumerate(
+                    tqdm(futures, desc="Computing attention scores attribution")
+                ):
+                    tracing_results.append(future.result())
+                    if progress_callback:
+                        progress_callback(i + 1, len(selected_lorsa_feature), "Computing attention scores attribution")
+
+        for idx, result in tracing_results:
+            qk_tracing_results[idx] = result
+        if progress_callback and len(replicas) == 1:
+            for i in range(len(tracing_results)):
                 progress_callback(i + 1, len(selected_lorsa_feature), "Computing attention scores attribution")
     else:
         qk_tracing_results = None
@@ -1085,7 +1318,7 @@ def _run_attribution(
     total_time = time.time() - start_time
     logger.info(f"Attribution completed in {total_time:.2f}s")
 
-    for name, param in model._get_requires_grad_bias_params():
-        param.grad = None
+    for replica in replicas:
+        replica.cleanup()
 
     return graph

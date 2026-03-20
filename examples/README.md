@@ -4,6 +4,10 @@ The standard SAE-based pipeline of mechanistically interpreting internal represe
 
 Here present example setups of generating, training and analyzing, with variants of SAE architectures, activation functions and whether to use pre-generated activations.
 
+## Complete Replacement Models
+
+For a full small-scale CRM reproduction, see [reproduce_complete_replacement_models](reproduce_complete_replacement_models/README.md). It trains all Pythia-70M MLP transcoders and attention lorsas, assembles a `ReplacementModel`, and runs attribution end-to-end.
+
 ## Use on-the-fly model activations
 
 SAE training requires stream of model activations at certain hook points (i.e. specefic location of model internal representation). Model activations can either be cached ahead-of-time on the disk, or produced on the fly. 

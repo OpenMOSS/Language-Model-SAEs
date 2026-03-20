@@ -310,12 +310,11 @@ class Trainer:
     def _initialize_trainer(
         self,
         sae: SparseDictionary,
-        activation_stream: Iterable[dict[str, Tensor]],
+        first_batch: dict[str, Tensor],
         wandb_logger: Run | None = None,
     ):
-        batch = next(iter(activation_stream))
-        bs = batch["tokens"].numel()
-        if batch["mask"].numel() != batch["mask"].sum():
+        bs = first_batch["tokens"].numel()
+        if first_batch["mask"].numel() != first_batch["mask"].sum():
             logger.warning(
                 "We are training with batches of varying length. So we will not use as many as `self.cfg.total_training_tokens` for training as we assume each batch is full to estimate training steps. `details/n_training_tokens` is accurate in this case."
             )
@@ -325,7 +324,9 @@ class Trainer:
         def calculate_warmup_steps(warmup_steps: float | int) -> int:
             if isinstance(warmup_steps, float):
                 assert 0 <= warmup_steps <= 1.0
-                return int(warmup_steps * self.total_training_steps)
+                if warmup_steps == 0 or self.total_training_steps == 0:
+                    return 0
+                return max(1, int(warmup_steps * self.total_training_steps))
             return warmup_steps
 
         self.lr_warm_up_steps = calculate_warmup_steps(self.cfg.lr_warm_up_steps)
@@ -484,11 +485,15 @@ class Trainer:
                     )
                 )
 
-        l1_coefficient = (
-            min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
-            if self.cfg.l1_coefficient is not None
-            else 1.0
-        )
+        if self.cfg.l1_coefficient is not None:
+            if self.l1_coefficient_warmup_steps <= 0:
+                l1_coefficient = self.cfg.l1_coefficient
+            else:
+                l1_coefficient = (
+                    min(1.0, self.cur_step / self.l1_coefficient_warmup_steps) * self.cfg.l1_coefficient
+                )
+        else:
+            l1_coefficient = 1.0
 
         lp_coefficient = self.cfg.lp_coefficient if self.cfg.lp_coefficient is not None else 0.0
 
@@ -583,9 +588,16 @@ class Trainer:
         # Reset timer at the start of training
         timer.reset()
 
+        try:
+            activation_stream = iter(activation_stream)
+            first_batch = next(activation_stream)
+        except StopIteration:
+            logger.warning("Activation stream is empty. Skipping training.")
+            return True
+
         if self.cfg.from_pretrained_path is None:
             logger.info("Initializing trainer and optimizer")
-            self._initialize_trainer(sae, activation_stream, wandb_logger)
+            self._initialize_trainer(sae, first_batch, wandb_logger)
             self._initialize_optimizer(sae)
 
         # Initialize dead statistics for auxk loss
@@ -600,8 +612,7 @@ class Trainer:
         proc_bar.update(self.cur_step)
 
         try:
-            activation_stream = iter(activation_stream)
-            batch = next(activation_stream)
+            batch = first_batch
             while True:
                 with timer.time("training_iteration"):
                     proc_bar.update(1)

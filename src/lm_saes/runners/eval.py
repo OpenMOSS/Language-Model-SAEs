@@ -146,15 +146,19 @@ def eval_graph(settings: EvalGraphSettings) -> None:
     # Set up logging
     setup_logging(level="INFO")
 
+    primary_device = (
+        settings.eval.parallel_devices[0] if settings.eval.parallel_devices else settings.device
+    )
+
     logger.info("Loading transcoder and lorsa")
     transcoders = CrossLayerTranscoder.from_pretrained(
         settings.transcoders_path,
-        device=settings.device,
+        device=primary_device,
     )
 
     if settings.use_lorsa:
         lorsas = [
-            LowRankSparseAttention.from_pretrained(lorsa_cfg, device=settings.device)
+            LowRankSparseAttention.from_pretrained(lorsa_cfg, device=primary_device)
             for lorsa_cfg in settings.lorsas_path
         ]
         # for lorsa in lorsas:
@@ -163,6 +167,7 @@ def eval_graph(settings: EvalGraphSettings) -> None:
         lorsas = None
 
     logger.info("Loading replacement model")
+    settings.model_cfg.device = primary_device
     replacement_model = ReplacementModel.from_pretrained(
         settings.model_cfg,
         transcoders,  # type: ignore[reportArgumentType]

@@ -54,6 +54,9 @@ class GraphEvalConfig(BaseConfig):
     offload: Literal[None, "disk", "cpu"] = None
     # Offload various parts of the model during attribution to save memory. Can be 'disk', 'cpu', or None (keep on GPU)
 
+    parallel_devices: list[str] | None = None
+    # Optional replica devices for multi-GPU attribution, e.g. ["cuda:0", "cuda:1"].
+
     start_from: int = 0
 
 
@@ -202,6 +205,7 @@ class GraphEval:
                 max_feature_nodes=self.cfg.max_feature_nodes,
                 offload=self.cfg.offload,
                 use_lorsa=use_lorsa,
+                parallel_devices=self.cfg.parallel_devices,
             )
 
             replacement_score, completeness_score = compute_graph_scores(graph, use_lorsa=use_lorsa)

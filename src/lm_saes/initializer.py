@@ -1,3 +1,4 @@
+from itertools import tee
 from typing import Dict, Iterable, List, Literal, cast
 
 import torch
@@ -183,6 +184,7 @@ class Initializer:
             cfg,
             device_mesh=device_mesh,
         )
+        init_stream = activation_stream
 
         sae = self.initialize_parameters(sae)
         if sae.cfg.norm_activation == "dataset-wise":
@@ -190,10 +192,8 @@ class Initializer:
                 assert activation_stream is not None, (
                     "Activation iterator must be provided for dataset-wise normalization"
                 )
-
-                activation_norm = calculate_activation_norm(
-                    activation_stream, cfg.associated_hook_points, device_mesh=device_mesh
-                )
+                norm_stream, init_stream = tee(activation_stream)
+                activation_norm = calculate_activation_norm(norm_stream, cfg.associated_hook_points, device_mesh=device_mesh)
             sae.set_dataset_average_activation_norm(activation_norm)
 
         if isinstance(sae, LowRankSparseAttention) and self.cfg.initialize_lorsa_with_mhsa:
@@ -220,8 +220,8 @@ class Initializer:
                 )
             )
 
-        assert activation_stream is not None, "Activation iterator must be provided for initialization search"
-        activation_batch = next(iter(activation_stream))  # type: ignore
+        assert init_stream is not None, "Activation iterator must be provided for initialization search"
+        activation_batch = next(iter(init_stream))  # type: ignore
 
         if (
             isinstance(sae, SparseAutoEncoder)

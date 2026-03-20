@@ -1,3 +1,4 @@
+import copy
 from collections import defaultdict
 from contextlib import contextmanager
 from functools import partial
@@ -291,6 +292,40 @@ class ReplacementModel(HookedTransformer):
         self._configure_gradient_flow()
         self._deduplicate_attention_buffers()
         self.setup()
+
+    @property
+    def runtime_device(self) -> torch.device:
+        return next(self.parameters()).device
+
+    def sync_runtime_device(self, device: torch.device | str | None = None) -> "ReplacementModel":
+        device_obj = torch.device(device) if device is not None else self.runtime_device
+        if device_obj.type == "cuda" and device_obj.index is None:
+            device_obj = torch.device(f"cuda:{torch.cuda.current_device()}")
+
+        self.cfg.device = str(device_obj)
+        setattr(self, "device", device_obj)
+
+        for module in self.modules():
+            cfg = getattr(module, "cfg", None)
+            if cfg is not None and hasattr(cfg, "device"):
+                cfg.device = str(device_obj)
+
+        return self
+
+    def clone_to_device(self, device: torch.device | str) -> "ReplacementModel":
+        target_device = torch.device(device)
+        if target_device.type == "cuda" and target_device.index is None:
+            target_device = torch.device(f"cuda:{torch.cuda.current_device()}")
+
+        replica = copy.deepcopy(self)
+        nn.Module.to(replica, device=target_device, dtype=self.cfg.dtype)
+        replica.sync_runtime_device(target_device)
+        replica.reset_hooks(including_permanent=True)
+        replica._configure_gradient_flow()
+        replica._deduplicate_attention_buffers()
+        replica.setup()
+        replica.eval()
+        return replica
 
     def _configure_gradient_flow(self):
         def stop_gradient(acts, hook):
