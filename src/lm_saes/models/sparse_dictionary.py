@@ -22,7 +22,7 @@ import safetensors.torch as safe
 import torch
 import torch.distributed.checkpoint as dcp
 import torch.distributed.tensor
-from huggingface_hub import create_repo, hf_hub_download, snapshot_download, upload_folder
+from huggingface_hub import create_repo, file_exists, hf_hub_download, snapshot_download, upload_folder
 from jaxtyping import Float
 from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
@@ -1074,6 +1074,14 @@ class SparseDictionary(HookedRootModule, ABC):
         **kwargs,
     ):
         """Load the sparse dictionary from HuggingFace Hub."""
+
+        prefix_exists = execute_and_broadcast(
+            lambda: file_exists(repo_id=repo_id, filename=f"{name}/config.json", token=token),
+            device_mesh,
+        )
+
+        if not prefix_exists:
+            raise FileNotFoundError(f"Sparse dictionary {name} does not exist in repo {repo_id}")
 
         allow_patterns = [f"{name}/*"]
 
