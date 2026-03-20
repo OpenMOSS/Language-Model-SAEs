@@ -50,7 +50,7 @@ from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.discrete import DiscreteMapper
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import ensure_tokenized, pad_and_truncate_tokens
+from lm_saes.utils.misc import ensure_tokenized, pad_and_truncate_tokens, tensor_id
 from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
@@ -378,7 +378,7 @@ class Node:
     """Inverse indices of elements. Should be of shape `(n_elements, d_index)`."""
 
     def __hash__(self) -> int:
-        return hash((self.key, self.indices.data_ptr()))
+        return hash((self.key, tensor_id(self.indices)))
 
 
 @dataclass
