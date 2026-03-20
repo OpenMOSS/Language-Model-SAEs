@@ -30,7 +30,7 @@ python examples/reproduce_complete_replacement_models/run_pythia70m_crm.py \
   --eval-prompt "The capital of France is"
 ```
 
-For multi-GPU attribution / graph tracing, point the evaluation stage at multiple replica devices:
+For true multi-GPU model-parallel attribution / graph tracing, point the evaluation stage at multiple devices:
 
 ```bash
 python examples/reproduce_complete_replacement_models/run_pythia70m_crm.py \
@@ -38,7 +38,7 @@ python examples/reproduce_complete_replacement_models/run_pythia70m_crm.py \
   --parallel-devices cuda:0 cuda:1 cuda:2 cuda:3
 ```
 
-This shards the expensive feature-attribution and QK-tracing phases across replicas. It does not pool VRAM across cards.
+This loads a single `ReplacementModel` across multiple GPUs for one attribution run. It uses shared VRAM across cards instead of launching independent replicas.
 
 ## Outputs
 

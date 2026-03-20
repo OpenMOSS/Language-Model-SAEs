@@ -58,21 +58,20 @@ def select_scaled_decoder_vecs_transcoder(
     suitable as ``inject_values`` during gradient overrides.
     """
     if activations._nnz() == 0:
-        return torch.zeros(0, transcoders.W_D.shape[2], device=activations.device)
+        return torch.zeros(0, transcoders.cfg.d_model, device=activations.device)
     if isinstance(transcoders, TranscoderSet):
         rows: List[torch.Tensor] = [
-            transcoders.W_D[layer, row.coalesce().indices()[1]] for layer, row in enumerate(activations)
+            transcoders.get_decoder_vectors(layer, layer, row.coalesce().indices()[1]) for layer, row in enumerate(activations)
         ]
-        return torch.cat(rows) * activations.values()[:, None]
+        return torch.cat([row.cpu() for row in rows]) * activations.values().cpu()[:, None]
     else:  # CLT
         rows: List[torch.Tensor] = []
         feature_act_rows = [activations[layer_from].coalesce() for layer_from in range(transcoders.cfg.n_layers)]
         for layer_to in range(transcoders.cfg.n_layers):
             for layer_from in range(layer_to + 1):
                 _, feat_idx = feature_act_rows[layer_from].indices()
-                rows.append(
-                    transcoders.W_D[layer_to][layer_from, feat_idx] * feature_act_rows[layer_from].values()[:, None]
-                )
+                rows.append(transcoders.get_decoder_vectors(layer_to, layer_from, feat_idx))
+                rows[-1] = rows[-1].cpu() * feature_act_rows[layer_from].values().cpu()[:, None]
         return torch.cat(rows)
 
 
@@ -81,8 +80,8 @@ def select_scaled_decoder_vecs_lorsa(activations: torch.sparse.Tensor, lorsas: L
     """Return encoder rows for **active** features only."""
     if activations._nnz() == 0:
         return torch.zeros(0, lorsas[0].W_O.shape[1], device=activations.device)
-    rows: List[torch.Tensor] = [lorsas[layer].W_O[row.coalesce().indices()[1]] for layer, row in enumerate(activations)]
-    return torch.cat(rows) * activations.values()[:, None]
+    rows: List[torch.Tensor] = [lorsas[layer].W_O[row.coalesce().indices()[1]].cpu() for layer, row in enumerate(activations)]
+    return torch.cat(rows) * activations.values().cpu()[:, None]
 
 
 @torch.no_grad()
@@ -91,9 +90,7 @@ def select_encoder_rows(activations: torch.sparse.Tensor, transcoders: Transcode
     rows: List[torch.Tensor] = []
     for layer, row in enumerate(activations):
         _, feat_idx = row.coalesce().indices()
-
-        # this is only for list of plts. We do this for now to reduce mem overhead
-        rows.append(transcoders[layer].W_E.T[feat_idx])
+        rows.append(transcoders.get_encoder_rows(layer, feat_idx).cpu())
     return torch.cat(rows)
 
 
@@ -113,12 +110,12 @@ def select_encoder_rows_lorsa(
 
         qk_idx = head_idx // (lorsas[layer].cfg.n_ov_heads // lorsas[layer].cfg.n_qk_heads)
         pattern = attention_pattern[layer, qk_idx, qpos]
-        patterns.append(pattern)
+        patterns.append(pattern.cpu())
 
         z_pattern = z_attention_pattern[layer, head_idx, qpos]
-        z_patterns.append(z_pattern)
+        z_patterns.append(z_pattern.cpu())
 
-        rows.append(lorsas[layer].W_V[head_idx])
+        rows.append(lorsas[layer].W_V[head_idx].cpu())
     return torch.cat(rows), torch.cat(patterns), torch.cat(z_patterns)
 
 

@@ -26,6 +26,9 @@ class BaseModelConfig(BaseModel):
     device: str = Field(default="cpu", exclude=True)
     """ The device to use for the model. """
 
+    n_devices: int = Field(default=1, exclude=True)
+    """ Number of CUDA devices used for pipeline/model-parallel inference. """
+
     dtype: Annotated[
         torch.dtype,
         BeforeValidator(lambda v: convert_str_to_torch_dtype(v) if isinstance(v, str) else v),

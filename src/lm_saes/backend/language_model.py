@@ -43,6 +43,7 @@ from transformers import (
     BatchFeature,
     Qwen2_5_VLForConditionalGeneration,
 )
+from transformer_lens.utilities import devices as tl_devices
 
 from lm_saes.backend.run_with_cache_until import run_with_cache_until
 from lm_saes.config import BaseModelConfig
@@ -1154,6 +1155,7 @@ class TransformerLensLanguageModel(LanguageModel):
                 cfg.model_name,
                 use_flash_attn=cfg.use_flash_attn,
                 device=self.device,
+                n_devices=cfg.n_devices,
                 cache_dir=cfg.cache_dir,
                 hf_model=hf_model,
                 hf_config=hf_model.config,
@@ -1163,6 +1165,29 @@ class TransformerLensLanguageModel(LanguageModel):
             if hf_model and not cfg.tokenizer_only
             else None
         )
+        if self.model is not None and cfg.n_devices > 1:
+            self._move_model_modules_to_pipeline_devices()
+
+    def _move_model_modules_to_pipeline_devices(self) -> None:
+        assert self.model is not None
+        if self.model.cfg.n_layers == 0:
+            return
+
+        first_device = tl_devices.get_device_for_block_index(0, self.model.cfg)
+        last_device = tl_devices.get_device_for_block_index(self.model.cfg.n_layers - 1, self.model.cfg)
+
+        self.model.embed.to(first_device)
+        self.model.hook_embed.to(first_device)
+        if self.model.cfg.positional_embedding_type != "rotary":
+            self.model.pos_embed.to(first_device)
+            self.model.hook_pos_embed.to(first_device)
+
+        for layer, block in enumerate(self.model.blocks):
+            block.to(tl_devices.get_device_for_block_index(layer, self.model.cfg))
+
+        if hasattr(self.model, "ln_final"):
+            self.model.ln_final.to(last_device)
+        self.model.unembed.to(last_device)
 
     def attribute(
         self,

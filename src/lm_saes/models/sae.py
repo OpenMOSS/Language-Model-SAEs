@@ -330,14 +330,20 @@ class SparseAutoEncoder(
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
-            hidden_pre = hidden_pre * self.decoder_norm()
+            decoder_norm = self.decoder_norm()
+            if decoder_norm.device != hidden_pre.device:
+                decoder_norm = decoder_norm.to(hidden_pre.device)
+            hidden_pre = hidden_pre * decoder_norm
 
         feature_acts = self.activation_function(hidden_pre)
         feature_acts = self.hook_feature_acts(feature_acts)
 
         if self.cfg.sparsity_include_decoder_norm:
-            feature_acts = feature_acts / self.decoder_norm()
-            hidden_pre = hidden_pre / self.decoder_norm()
+            decoder_norm = self.decoder_norm()
+            if decoder_norm.device != hidden_pre.device:
+                decoder_norm = decoder_norm.to(hidden_pre.device)
+            feature_acts = feature_acts / decoder_norm
+            hidden_pre = hidden_pre / decoder_norm
 
         if return_hidden_pre:
             return feature_acts, hidden_pre

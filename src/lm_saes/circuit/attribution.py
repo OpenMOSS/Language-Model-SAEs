@@ -124,90 +124,106 @@ class PreparedAttributionState:
 
     def idx_to_layer(self, idx: torch.Tensor) -> torch.Tensor:
         idx = idx.to(self.device)
+        idx_cpu = idx.cpu()
         if not self.use_lorsa:
-            return self.clt_feat_layer[idx]
+            return self.clt_feat_layer[idx_cpu].to(self.device)
 
         assert self.lorsa_feat_layer is not None
         result = torch.empty_like(idx)
         is_lorsa = idx < self.lorsa_feature_count
         if is_lorsa.any():
-            result[is_lorsa] = 2 * self.lorsa_feat_layer[idx[is_lorsa]]
+            result[is_lorsa] = 2 * self.lorsa_feat_layer[idx_cpu[is_lorsa.cpu()]].to(self.device)
         if (~is_lorsa).any():
-            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
-            result[~is_lorsa] = 2 * self.clt_feat_layer[clt_idx] + 1
+            clt_idx = idx_cpu[~is_lorsa.cpu()] - self.lorsa_feature_count
+            result[~is_lorsa] = 2 * self.clt_feat_layer[clt_idx].to(self.device) + 1
         return result
 
     def idx_to_pos(self, idx: torch.Tensor) -> torch.Tensor:
         idx = idx.to(self.device)
+        idx_cpu = idx.cpu()
         if not self.use_lorsa:
-            return self.clt_feat_pos[idx]
+            return self.clt_feat_pos[idx_cpu].to(self.device)
 
         assert self.lorsa_feat_pos is not None
         result = torch.empty_like(idx)
         is_lorsa = idx < self.lorsa_feature_count
         if is_lorsa.any():
-            result[is_lorsa] = self.lorsa_feat_pos[idx[is_lorsa]]
+            result[is_lorsa] = self.lorsa_feat_pos[idx_cpu[is_lorsa.cpu()]].to(self.device)
         if (~is_lorsa).any():
-            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
-            result[~is_lorsa] = self.clt_feat_pos[clt_idx]
+            clt_idx = idx_cpu[~is_lorsa.cpu()] - self.lorsa_feature_count
+            result[~is_lorsa] = self.clt_feat_pos[clt_idx].to(self.device)
         return result
 
     def idx_to_encoder_rows(self, idx: torch.Tensor) -> torch.Tensor:
         idx = idx.to(self.device)
+        idx_cpu = idx.cpu()
         if not self.use_lorsa:
-            return self.clt_encoder_rows[idx]
+            return self.clt_encoder_rows[idx_cpu].to(self.device)
 
         assert self.lorsa_encoder_rows is not None
         result = torch.empty((idx.shape[0], self.token_vecs.shape[-1]), device=self.device, dtype=self.token_vecs.dtype)
         is_lorsa = idx < self.lorsa_feature_count
         if is_lorsa.any():
-            result[is_lorsa] = self.lorsa_encoder_rows[idx[is_lorsa]]
+            result[is_lorsa] = self.lorsa_encoder_rows[idx_cpu[is_lorsa.cpu()]].to(self.device)
         if (~is_lorsa).any():
-            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
-            result[~is_lorsa] = self.clt_encoder_rows[clt_idx]
+            clt_idx = idx_cpu[~is_lorsa.cpu()] - self.lorsa_feature_count
+            result[~is_lorsa] = self.clt_encoder_rows[clt_idx].to(self.device)
         return result
 
     def idx_to_pattern(self, idx: torch.Tensor) -> torch.Tensor:
         idx = idx.to(self.device)
+        idx_cpu = idx.cpu()
         pattern_dtype = self.token_vecs.dtype
         if not self.use_lorsa:
-            return torch.nn.functional.one_hot(self.clt_feat_pos[idx], num_classes=self.n_pos).to(pattern_dtype)
+            return torch.nn.functional.one_hot(self.clt_feat_pos[idx_cpu], num_classes=self.n_pos).to(
+                device=self.device, dtype=pattern_dtype
+            )
 
         assert self.lorsa_attention_patterns is not None
         result = torch.empty((idx.shape[0], self.n_pos), device=self.device, dtype=pattern_dtype)
         is_lorsa = idx < self.lorsa_feature_count
         if is_lorsa.any():
-            result[is_lorsa] = self.lorsa_attention_patterns[idx[is_lorsa]].to(pattern_dtype)
+            result[is_lorsa] = self.lorsa_attention_patterns[idx_cpu[is_lorsa.cpu()]].to(
+                device=self.device, dtype=pattern_dtype
+            )
         if (~is_lorsa).any():
-            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
+            clt_idx = idx_cpu[~is_lorsa.cpu()] - self.lorsa_feature_count
             result[~is_lorsa] = torch.nn.functional.one_hot(
                 self.clt_feat_pos[clt_idx], num_classes=self.n_pos
-            ).to(pattern_dtype)
+            ).to(device=self.device, dtype=pattern_dtype)
         return result
 
     def idx_to_z_pattern(self, idx: torch.Tensor) -> torch.Tensor:
         idx = idx.to(self.device)
+        idx_cpu = idx.cpu()
         pattern_dtype = self.token_vecs.dtype
         if not self.use_lorsa:
-            return torch.nn.functional.one_hot(self.clt_feat_pos[idx], num_classes=self.n_pos).to(pattern_dtype)
+            return torch.nn.functional.one_hot(self.clt_feat_pos[idx_cpu], num_classes=self.n_pos).to(
+                device=self.device, dtype=pattern_dtype
+            )
 
         assert self.z_attention_patterns is not None
         result = torch.empty((idx.shape[0], self.n_pos), device=self.device, dtype=pattern_dtype)
         is_lorsa = idx < self.lorsa_feature_count
         if is_lorsa.any():
-            result[is_lorsa] = self.z_attention_patterns[idx[is_lorsa]].to(pattern_dtype)
+            result[is_lorsa] = self.z_attention_patterns[idx_cpu[is_lorsa.cpu()]].to(
+                device=self.device, dtype=pattern_dtype
+            )
         if (~is_lorsa).any():
-            clt_idx = idx[~is_lorsa] - self.lorsa_feature_count
+            clt_idx = idx_cpu[~is_lorsa.cpu()] - self.lorsa_feature_count
             result[~is_lorsa] = torch.nn.functional.one_hot(
                 self.clt_feat_pos[clt_idx], num_classes=self.n_pos
-            ).to(pattern_dtype)
+            ).to(device=self.device, dtype=pattern_dtype)
         return result
 
     def idx_to_qk_idx(self, idx: torch.Tensor) -> torch.Tensor:
         assert self.use_lorsa, "QK tracing requires lorsa features"
         assert self.lorsa_feat_layer is not None and self.lorsa_feat_idx is not None and self.ov_group_sizes is not None
-        idx = idx.to(self.device)
-        return self.lorsa_feat_idx[idx] // self.ov_group_sizes[self.lorsa_feat_layer[idx]]
+        idx_cpu = idx.cpu()
+        return (
+            self.lorsa_feat_idx[idx_cpu].to(self.device)
+            // self.ov_group_sizes[self.lorsa_feat_layer[idx_cpu].to(self.ov_group_sizes.device)]
+        )
 
 
 @dataclass
@@ -390,6 +406,9 @@ def _build_parallel_replicas(
     offload: Literal["cpu", "disk", None],
     parallel_devices: list[str] | None,
 ) -> list[AttributionReplica]:
+    if getattr(model.cfg, "n_devices", 1) > 1:
+        parallel_devices = None
+
     primary_device = str(_normalize_runtime_device(model.runtime_device))
     requested_devices = parallel_devices or []
 
@@ -470,7 +489,7 @@ class AttributionContext:
         else:
             self._resid_activations: List[torch.Tensor | None] = [None] * (n_layers + 1)
 
-        self._batch_buffer: torch.Tensor | None = None
+        self._batch_buffers: dict[torch.device, torch.Tensor] = {}
         self.n_layers: int = n_layers
         self.use_lorsa = use_lorsa
 
@@ -533,11 +552,11 @@ class AttributionContext:
         """
 
         proxy = weakref.proxy(self)
-
         def _hook_fn(grads: torch.Tensor, hook: HookPoint) -> None:
-            proxy._batch_buffer[write_index] += einsum(
-                grads.to(output_vecs.dtype)[read_index],
-                output_vecs,
+            vecs = output_vecs.to(grads.device, non_blocking=grads.device.type == "cuda")
+            proxy._batch_buffers[grads.device][write_index] += einsum(
+                grads.to(vecs.dtype)[read_index],
+                vecs,
                 "batch position d_model, position d_model -> position batch",
             )
 
@@ -839,12 +858,15 @@ class AttributionContext:
             assert resid_activation is not None, "Residual activations are not cached"
 
         batch_size = self._resid_activations[0].shape[0]
-        self._batch_buffer = torch.zeros(
-            self._row_size,
-            batch_size,
-            dtype=inject_values.dtype,
-            device=inject_values.device,
-        )
+        self._batch_buffers = {
+            resid_activation.device: torch.zeros(
+                self._row_size,
+                batch_size,
+                dtype=inject_values.dtype,
+                device=resid_activation.device,
+            )
+            for resid_activation in self._resid_activations
+        }
 
         # Custom gradient injection (per-layer registration)
         batch_idx = torch.arange(len(layers), device=layers.device)
@@ -864,26 +886,32 @@ class AttributionContext:
             mask = layers == layer
             if not mask.any():
                 continue
+            resid_device = self._resid_activations[int(layer)].device
             fn = partial(
                 _inject,
                 batch_indices=batch_idx[mask],
                 pos_indices=positions[mask],
-                patterns=attention_patterns[mask] if attention_patterns is not None else None,
-                values=inject_values[mask],
+                patterns=attention_patterns[mask].to(resid_device) if attention_patterns is not None else None,
+                values=inject_values[mask].to(resid_device),
             )
             handles.append(self._resid_activations[int(layer)].register_hook(fn))
 
         try:
             last_layer = max(layers_in_batch)
-            sum(self._resid_activations[: last_layer + 1]).backward(
-                gradient=torch.zeros_like(self._resid_activations[0]),
+            self._resid_activations[last_layer].backward(
+                gradient=torch.zeros_like(self._resid_activations[last_layer]),
                 retain_graph=retain_graph,
             )
         finally:
             for h in handles:
                 h.remove()
 
-        buf, self._batch_buffer = self._batch_buffer, None
+        buf = None
+        for partial_buf in self._batch_buffers.values():
+            partial_cpu = partial_buf.cpu()
+            buf = partial_cpu if buf is None else buf + partial_cpu
+        assert buf is not None
+        self._batch_buffers = {}
         # debug: batch size > 1
         # if len(layers_in_batch) > 1:
         #     print('layers', layers)
@@ -926,8 +954,9 @@ def attribute(
         update_interval: Number of batches to process before updating the feature ranking.
         list_of_features: list of (layer, feature_idx, pos, is_lorsa) tuples
         parallel_devices: Optional list of devices such as ["cuda:0", "cuda:1"].
-            When at least two distinct devices are provided, the expensive
-            feature-attribution and QK-tracing phases are sharded across replicas.
+            If ``model.cfg.n_devices > 1``, the single-run model-parallel layout
+            on the model takes precedence. Otherwise this can still be used for
+            replica-style parallel tracing.
         progress_callback: Optional callback for tracking progress (current, total, phase).
 
     Returns:

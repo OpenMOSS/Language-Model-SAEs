@@ -55,7 +55,7 @@ class GraphEvalConfig(BaseConfig):
     # Offload various parts of the model during attribution to save memory. Can be 'disk', 'cpu', or None (keep on GPU)
 
     parallel_devices: list[str] | None = None
-    # Optional replica devices for multi-GPU attribution, e.g. ["cuda:0", "cuda:1"].
+    # Optional multi-GPU devices for single-run model parallel attribution, e.g. ["cuda:0", "cuda:1"].
 
     start_from: int = 0
 

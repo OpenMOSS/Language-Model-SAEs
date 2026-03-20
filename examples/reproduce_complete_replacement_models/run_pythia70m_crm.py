@@ -1,6 +1,7 @@
 import argparse
 import gc
 import json
+import math
 import os
 import shutil
 from dataclasses import asdict, dataclass
@@ -357,9 +358,21 @@ def train_lorsa_layer(
     return resolve_saved_model_dir(result_dir)
 
 
-def load_transcoder_set(transcoder_dirs: list[Path], device: str) -> TranscoderSet:
+def infer_layer_devices(model_cfg: LanguageModelConfig, n_layers: int) -> list[str]:
+    if model_cfg.n_devices <= 1:
+        return [model_cfg.device] * n_layers
+    base_index = torch.device(model_cfg.device).index or 0
+    layers_per_device = max(1, math.ceil(n_layers / model_cfg.n_devices))
+    return [
+        f"cuda:{min(base_index + layer // layers_per_device, base_index + model_cfg.n_devices - 1)}"
+        for layer in range(n_layers)
+    ]
+
+
+def load_transcoder_set(transcoder_dirs: list[Path], model_cfg: LanguageModelConfig) -> TranscoderSet:
+    layer_devices = infer_layer_devices(model_cfg, len(transcoder_dirs))
     transcoders = {
-        layer: SparseAutoEncoder.from_pretrained(str(path), device=device, dtype=torch.float32)
+        layer: SparseAutoEncoder.from_pretrained(str(path), device=layer_devices[layer], dtype=torch.float32)
         for layer, path in enumerate(transcoder_dirs)
     }
     first = transcoders[0]
@@ -372,8 +385,12 @@ def load_transcoder_set(transcoder_dirs: list[Path], device: str) -> TranscoderS
     return TranscoderSet(config, transcoders)
 
 
-def load_lorsas(lorsa_dirs: list[Path], device: str) -> list[LowRankSparseAttention]:
-    return [LowRankSparseAttention.from_pretrained(str(path), device=device, dtype=torch.float32) for path in lorsa_dirs]
+def load_lorsas(lorsa_dirs: list[Path], model_cfg: LanguageModelConfig) -> list[LowRankSparseAttention]:
+    layer_devices = infer_layer_devices(model_cfg, len(lorsa_dirs))
+    return [
+        LowRankSparseAttention.from_pretrained(str(path), device=layer_devices[layer], dtype=torch.float32)
+        for layer, path in enumerate(lorsa_dirs)
+    ]
 
 
 def build_replacement_model(
@@ -381,8 +398,8 @@ def build_replacement_model(
     transcoder_dirs: list[Path],
     lorsa_dirs: list[Path],
 ) -> ReplacementModel:
-    transcoders = load_transcoder_set(transcoder_dirs, model_cfg.device)
-    lorsas = load_lorsas(lorsa_dirs, model_cfg.device)
+    transcoders = load_transcoder_set(transcoder_dirs, model_cfg)
+    lorsas = load_lorsas(lorsa_dirs, model_cfg)
     model = ReplacementModel.from_pretrained(model_cfg, transcoders, lorsas, use_lorsa=True)
     model.eval()
     return model
@@ -440,6 +457,7 @@ def main() -> None:
     model_cfg = LanguageModelConfig(
         model_name=args.model_name,
         device=primary_device,
+        n_devices=len(args.parallel_devices) if args.parallel_devices else 1,
         dtype=torch.float16,
     )
     spec = derive_model_spec(model_cfg)

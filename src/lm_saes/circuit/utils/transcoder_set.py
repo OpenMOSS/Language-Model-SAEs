@@ -66,6 +66,22 @@ class TranscoderSet(nn.Module):
     def __iter__(self) -> Iterator[SparseAutoEncoder]:
         return iter(self.transcoders)  # type: ignore
 
+    def move_to_layer_devices(self, layer_devices: list[torch.device], dtype: torch.dtype | None = None) -> None:
+        for layer, transcoder in enumerate(self.transcoders):
+            transcoder.to(layer_devices[layer], dtype or transcoder.cfg.dtype)
+            transcoder.cfg.device = str(layer_devices[layer])
+
+    def get_decoder_bias(self, layer: int) -> torch.Tensor:
+        return self.transcoders[layer].b_D  # type: ignore
+
+    def get_encoder_rows(self, layer: int, feature_indices: torch.Tensor) -> torch.Tensor:
+        transcoder = self.transcoders[layer]
+        return transcoder.W_E.T[feature_indices]  # type: ignore
+
+    def get_decoder_vectors(self, layer_to: int, layer_from: int, feature_indices: torch.Tensor) -> torch.Tensor:
+        assert layer_to == layer_from, "Per-layer transcoders only decode back to the same layer"
+        return self.transcoders[layer_to].W_D[feature_indices]  # type: ignore
+
     def apply_activation_function(self, layer_id: int, features: torch.Tensor) -> torch.Tensor:
         """Apply activation function for a specific layer.
 
@@ -142,9 +158,30 @@ class TranscoderSet(nn.Module):
         ), "feature_acts must be a list of sparse tensors"
 
         return torch.stack(
-            [transcoder.decode_coo(feature_acts[i], **kwargs) for i, transcoder in enumerate(self.transcoders)],
+            [
+                transcoder.decode_coo(
+                    feature_acts[i].to(next(transcoder.parameters()).device)
+                    if feature_acts[i].device != next(transcoder.parameters()).device
+                    else feature_acts[i],
+                    **kwargs,
+                )
+                for i, transcoder in enumerate(self.transcoders)
+            ],
             dim=0,
         )
+
+    def decode_layer(
+        self,
+        feature_acts_by_layer: list[torch.Tensor],
+        layer_to: int,
+        **kwargs,
+    ) -> torch.Tensor:
+        transcoder = self.transcoders[layer_to]
+        feature_acts = feature_acts_by_layer[layer_to]
+        target_device = next(transcoder.parameters()).device
+        if feature_acts.device != target_device:
+            feature_acts = feature_acts.to(target_device)
+        return transcoder.decode_coo(feature_acts, **kwargs)  # type: ignore
 
     def compute_attribution_components(
         self,

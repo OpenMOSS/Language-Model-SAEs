@@ -725,13 +725,19 @@ class LowRankSparseAttention(
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
-            hidden_pre = hidden_pre * self.decoder_norm()
+            decoder_norm = self.decoder_norm()
+            if decoder_norm.device != hidden_pre.device:
+                decoder_norm = decoder_norm.to(hidden_pre.device)
+            hidden_pre = hidden_pre * decoder_norm
 
         feature_acts = self.activation_function(hidden_pre)
 
         if self.cfg.sparsity_include_decoder_norm:
-            feature_acts = feature_acts / self.decoder_norm()
-            hidden_pre = hidden_pre / self.decoder_norm()
+            decoder_norm = self.decoder_norm()
+            if decoder_norm.device != hidden_pre.device:
+                decoder_norm = decoder_norm.to(hidden_pre.device)
+            feature_acts = feature_acts / decoder_norm
+            hidden_pre = hidden_pre / decoder_norm
 
         return_values: list[torch.Tensor] = [feature_acts]
         if return_hidden_pre:
@@ -745,7 +751,10 @@ class LowRankSparseAttention(
     @override
     def decode(self, feature_acts, **kwargs):
         """Decode head activations to output."""
+        target_device = self.W_O.device if not isinstance(self.W_O, DTensor) else self.W_O.device
         if feature_acts.layout == torch.sparse_coo:
+            if feature_acts.device != target_device:
+                feature_acts = feature_acts.to(target_device)
             return (
                 torch.sparse.mm(
                     feature_acts.to(torch.float32),
@@ -753,6 +762,8 @@ class LowRankSparseAttention(
                 ).to(self.cfg.dtype)
                 + self.b_D
             )
+        if feature_acts.device != target_device:
+            feature_acts = feature_acts.to(target_device)
         out = torch.einsum("bps,sd->bpd", feature_acts, self.W_O)
         if self.cfg.use_decoder_bias:
             out = out + self.b_D

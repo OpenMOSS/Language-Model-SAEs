@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
+from transformer_lens.utilities import devices as tl_devices
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from lm_saes.backend.language_model import LanguageModelConfig
@@ -193,6 +194,7 @@ class ReplacementModel(HookedTransformer):
             model_cfg.model_name,
             use_flash_attn=model_cfg.use_flash_attn,
             device=model_cfg.device,
+            n_devices=model_cfg.n_devices,
             cache_dir=model_cfg.cache_dir,
             hf_model=hf_model,
             hf_config=hf_model.config if hf_model is not None else None,
@@ -264,7 +266,6 @@ class ReplacementModel(HookedTransformer):
         use_lorsa: bool = True,
     ):
         # Configure Transcoders
-        transcoders.to(self.cfg.device, self.cfg.dtype)
         self.add_module("transcoders", transcoders)
         self.d_transcoder = transcoders.cfg.d_sae
         self.mlp_input_hook = mlp_input_hook
@@ -277,8 +278,6 @@ class ReplacementModel(HookedTransformer):
         # Configure Lorsa if needed
         self.use_lorsa = use_lorsa
         if use_lorsa and lorsas is not None:
-            for lorsa in lorsas:
-                lorsa.to(self.cfg.device, self.cfg.dtype)
             self.add_module("lorsas", nn.ModuleList(lorsas))
             self.d_lorsa = lorsas[0].cfg.d_sae
             self.attn_input_hook = attn_input_hook
@@ -289,13 +288,64 @@ class ReplacementModel(HookedTransformer):
 
         self.unembed = ReplacementUnembed(self.unembed)
 
+        self._place_replacement_modules()
+
         self._configure_gradient_flow()
         self._deduplicate_attention_buffers()
         self.setup()
 
+    def _place_replacement_modules(self) -> None:
+        if getattr(self.cfg, "n_devices", 1) <= 1:
+            self.transcoders.to(self.cfg.device, self.cfg.dtype)
+            if self.use_lorsa:
+                for lorsa in self.lorsas:
+                    lorsa.to(self.cfg.device, self.cfg.dtype)
+            self._move_base_modules_to_pipeline_devices()
+            return
+
+        self._move_base_modules_to_pipeline_devices()
+
+        layer_devices = [self.block_device(layer) for layer in range(self.cfg.n_layers)]
+        if isinstance(self.transcoders, TranscoderSet):
+            self.transcoders.move_to_layer_devices(layer_devices, dtype=self.cfg.dtype)
+        elif isinstance(self.transcoders, CrossLayerTranscoder):
+            self.transcoders.shard_for_inference(layer_devices, dtype=self.cfg.dtype)
+        else:
+            self.transcoders.to(self.first_device(), self.cfg.dtype)
+
+        if self.use_lorsa:
+            for layer, lorsa in enumerate(self.lorsas):
+                lorsa.to(layer_devices[layer], self.cfg.dtype)
+                lorsa.cfg.device = str(layer_devices[layer])
+
     @property
     def runtime_device(self) -> torch.device:
+        return self.first_device()
+
+    def first_device(self) -> torch.device:
+        if getattr(self.cfg, "n_devices", 1) > 1 and self.cfg.n_layers > 0:
+            return tl_devices.get_device_for_block_index(0, self.cfg)
         return next(self.parameters()).device
+
+    def last_device(self) -> torch.device:
+        if getattr(self.cfg, "n_devices", 1) > 1 and self.cfg.n_layers > 0:
+            return tl_devices.get_device_for_block_index(self.cfg.n_layers - 1, self.cfg)
+        return next(self.parameters()).device
+
+    def block_device(self, layer: int) -> torch.device:
+        if getattr(self.cfg, "n_devices", 1) > 1:
+            return tl_devices.get_device_for_block_index(layer, self.cfg)
+        return next(self.blocks[layer].parameters()).device
+
+    def hook_device(self, hook_name: str) -> torch.device:
+        if hook_name == "hook_embed":
+            return self.first_device()
+        if hook_name == "unembed.hook_pre":
+            return self.last_device()
+        if hook_name.startswith("blocks."):
+            layer = int(hook_name.split(".")[1])
+            return self.block_device(layer)
+        return self.runtime_device
 
     def sync_runtime_device(self, device: torch.device | str | None = None) -> "ReplacementModel":
         device_obj = torch.device(device) if device is not None else self.runtime_device
@@ -312,6 +362,26 @@ class ReplacementModel(HookedTransformer):
 
         return self
 
+    def _move_base_modules_to_pipeline_devices(self) -> None:
+        if getattr(self.cfg, "n_devices", 1) <= 1 or self.cfg.n_layers == 0:
+            return
+
+        first_device = self.first_device()
+        last_device = self.last_device()
+
+        self.embed.to(first_device)
+        self.hook_embed.to(first_device)
+        if self.cfg.positional_embedding_type != "rotary":
+            self.pos_embed.to(first_device)
+            self.hook_pos_embed.to(first_device)
+
+        for layer, block in enumerate(self.blocks):
+            block.to(self.block_device(layer))
+
+        if hasattr(self, "ln_final"):
+            self.ln_final.to(last_device)
+        self.unembed.to(last_device)
+
     def clone_to_device(self, device: torch.device | str) -> "ReplacementModel":
         target_device = torch.device(device)
         if target_device.type == "cuda" and target_device.index is None:
@@ -326,6 +396,14 @@ class ReplacementModel(HookedTransformer):
         replica.setup()
         replica.eval()
         return replica
+
+    def transcoder_decoder_bias(self, layer: int) -> torch.Tensor:
+        if hasattr(self.transcoders, "get_decoder_bias"):
+            return self.transcoders.get_decoder_bias(layer)
+        return self.transcoders.b_D[layer]
+
+    def lora_decoder_bias(self, layer: int) -> torch.Tensor:
+        return self.lorsas[layer].b_D
 
     def _configure_gradient_flow(self):
         def stop_gradient(acts, hook):
@@ -384,7 +462,7 @@ class ReplacementModel(HookedTransformer):
             partial(
                 add_skip_connection,
                 grad_hook=subblock.hook_out_grad,
-                replacement_bias=self.transcoders.b_D[layer],
+                replacement_bias=self.transcoder_decoder_bias(layer),
             ),
             is_permanent=True,
         )
@@ -400,7 +478,7 @@ class ReplacementModel(HookedTransformer):
                 partial(
                     add_skip_connection,
                     grad_hook=subblock.hook_out_grad,
-                    replacement_bias=self.lorsas[layer].b_D,
+                    replacement_bias=self.lora_decoder_bias(layer),
                 ),
                 is_permanent=True,
             )
@@ -413,6 +491,8 @@ class ReplacementModel(HookedTransformer):
         embeddings for each layer - This just keeps one copy
         of each and shares it across all layers.
         """
+        if getattr(self.cfg, "n_devices", 1) > 1:
+            return
 
         attn_masks = {}
         if not self.use_lorsa:
@@ -655,6 +735,7 @@ class ReplacementModel(HookedTransformer):
 
         tokens = ensure_tokenized(inputs, self.tokenizer)
         zero_bos = zero_bos and self.maybe_zero_bos(tokens)
+        is_model_parallel = getattr(self.cfg, "n_devices", 1) > 1
 
         # cache activations and MLP in
         (activation_matrix, lorsa_attention_score, lorsa_attention_pattern, z_attention_pattern, activation_hooks) = (
@@ -670,18 +751,11 @@ class ReplacementModel(HookedTransformer):
 
         mlp_out_cache, mlp_out_caching_hooks, _ = self.get_caching_hooks(lambda name: self.mlp_output_hook in name)
 
-        if self.use_lorsa:
-            error_vectors = torch.zeros(
-                [self.cfg.n_layers * 2, len(tokens), self.cfg.d_model],
-                device=self.cfg.device,
-                dtype=self.cfg.dtype,
-            )
-        else:
-            error_vectors = torch.zeros(
-                [self.cfg.n_layers, len(tokens), self.cfg.d_model],
-                device=self.cfg.device,
-                dtype=self.cfg.dtype,
-            )
+        error_vectors = torch.zeros(
+            [self.cfg.n_layers * 2 if self.use_lorsa else self.cfg.n_layers, len(tokens), self.cfg.d_model],
+            device="cpu" if is_model_parallel else self.cfg.device,
+            dtype=self.cfg.dtype,
+        )
 
         # note: activation_hooks must come before error_hooks
         if self.use_lorsa:
@@ -698,33 +772,63 @@ class ReplacementModel(HookedTransformer):
             lorsa_activation_matrix = None
             clt_activation_matrix = activation_matrix
 
-        if self.use_lorsa:
-            lorsa_reconstruction = torch.stack(
-                [self.lorsas[layer].decode(lorsa_activation_matrix[layer]) for layer in range(self.cfg.n_layers)]
+        if is_model_parallel:
+            lorsa_activation_layers = (
+                [tensor.coalesce().cpu() if sparse else tensor.cpu() for tensor in lorsa_activation_matrix]
+                if self.use_lorsa and lorsa_activation_matrix is not None
+                else None
             )
+            clt_activation_layers = [tensor.coalesce().cpu() if sparse else tensor.cpu() for tensor in clt_activation_matrix]
 
-        clt_reconstruction = self.transcoders.decode(clt_activation_matrix)
+            if self.use_lorsa and lorsa_activation_layers is not None and attn_out_cache is not None:
+                for layer in range(self.cfg.n_layers):
+                    attn_key = f"blocks.{layer}.{self.attn_output_hook}"
+                    attn_out = attn_out_cache[attn_key].detach().squeeze(0).cpu()
+                    recon = self.lorsas[layer].decode(lorsa_activation_layers[layer]).detach().cpu()
+                    error_vectors[layer] = attn_out - recon
 
-        if self.use_lorsa:
-            error_vectors[: self.cfg.n_layers] = torch.cat(list(attn_out_cache.values()), dim=0) - lorsa_reconstruction
-            error_vectors[self.cfg.n_layers :] = torch.cat(list(mlp_out_cache.values()), dim=0) - clt_reconstruction
+            for layer in range(self.cfg.n_layers):
+                mlp_key = f"blocks.{layer}.{self.mlp_output_hook}"
+                mlp_out = mlp_out_cache[mlp_key].detach().squeeze(0).cpu()
+                recon = self.transcoders.decode_layer(clt_activation_layers, layer).detach().cpu()
+                error_vectors[layer + (self.cfg.n_layers if self.use_lorsa else 0)] = mlp_out - recon
+
+            if self.use_lorsa and lorsa_activation_layers is not None:
+                lorsa_activation_matrix = torch.stack(lorsa_activation_layers)
+                lorsa_attention_pattern = torch.stack([tensor.cpu() for tensor in lorsa_attention_pattern])
+                z_attention_pattern = torch.stack([tensor.cpu() for tensor in z_attention_pattern])
+            clt_activation_matrix = torch.stack(clt_activation_layers)
         else:
-            error_vectors = torch.cat(list(mlp_out_cache.values()), dim=0) - clt_reconstruction
+            if self.use_lorsa:
+                lorsa_reconstruction = torch.stack(
+                    [self.lorsas[layer].decode(lorsa_activation_matrix[layer]) for layer in range(self.cfg.n_layers)]
+                )
+
+            clt_reconstruction = self.transcoders.decode(clt_activation_matrix)
+
+            if self.use_lorsa:
+                error_vectors[: self.cfg.n_layers] = torch.cat(list(attn_out_cache.values()), dim=0) - lorsa_reconstruction
+                error_vectors[self.cfg.n_layers :] = torch.cat(list(mlp_out_cache.values()), dim=0) - clt_reconstruction
+            else:
+                error_vectors = torch.cat(list(mlp_out_cache.values()), dim=0) - clt_reconstruction
 
         if zero_bos:
             error_vectors[:, 0] = 0
 
-        if self.use_lorsa:
-            lorsa_activation_matrix = torch.stack(lorsa_activation_matrix)
-            lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
-            z_attention_pattern = torch.stack(z_attention_pattern)
-        clt_activation_matrix = torch.stack(clt_activation_matrix)
+        if not is_model_parallel:
+            if self.use_lorsa:
+                lorsa_activation_matrix = torch.stack(lorsa_activation_matrix)
+                lorsa_attention_pattern = torch.stack(lorsa_attention_pattern)
+                z_attention_pattern = torch.stack(z_attention_pattern)
+            clt_activation_matrix = torch.stack(clt_activation_matrix)
         if sparse:
             if self.use_lorsa:
                 lorsa_activation_matrix = lorsa_activation_matrix.coalesce()
             clt_activation_matrix = clt_activation_matrix.coalesce()
 
-        token_vectors = self.W_E[tokens].detach()  # (n_pos, d_model)
+        token_vectors = self.W_E[tokens.to(self.first_device())].detach()
+        if is_model_parallel:
+            token_vectors = token_vectors.cpu()
         return (
             logits,
             lorsa_activation_matrix,

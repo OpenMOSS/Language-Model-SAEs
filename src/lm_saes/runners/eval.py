@@ -1,5 +1,6 @@
 """Module for evaluating SAE models."""
 
+import math
 import os
 from typing import Optional
 
@@ -149,17 +150,30 @@ def eval_graph(settings: EvalGraphSettings) -> None:
     primary_device = (
         settings.eval.parallel_devices[0] if settings.eval.parallel_devices else settings.device
     )
+    if settings.eval.parallel_devices:
+        settings.model_cfg.n_devices = len(settings.eval.parallel_devices)
 
     logger.info("Loading transcoder and lorsa")
+    transcoder_device = "cpu" if settings.model_cfg.n_devices > 1 else primary_device
     transcoders = CrossLayerTranscoder.from_pretrained(
         settings.transcoders_path,
-        device=primary_device,
+        device=transcoder_device,
     )
 
     if settings.use_lorsa:
+        n_layers = len(settings.lorsas_path)
+
+        def layer_device(layer: int) -> str:
+            if settings.model_cfg.n_devices <= 1:
+                return primary_device
+            layers_per_device = max(1, math.ceil(n_layers / settings.model_cfg.n_devices))
+            base_index = torch.device(primary_device).index or 0
+            device_index = min(base_index + layer // layers_per_device, base_index + settings.model_cfg.n_devices - 1)
+            return f"cuda:{device_index}"
+
         lorsas = [
-            LowRankSparseAttention.from_pretrained(lorsa_cfg, device=primary_device)
-            for lorsa_cfg in settings.lorsas_path
+            LowRankSparseAttention.from_pretrained(lorsa_cfg, device=layer_device(layer))
+            for layer, lorsa_cfg in enumerate(settings.lorsas_path)
         ]
         # for lorsa in lorsas:
         #     lorsa.cfg.skip_bos = False

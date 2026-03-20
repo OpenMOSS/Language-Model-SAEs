@@ -32,6 +32,7 @@ from lm_saes.models.sparse_dictionary import (
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
+from lm_saes.utils.math import topk
 from lm_saes.utils.tensor_specs import TensorSpecs
 from lm_saes.utils.timer import timer
 
@@ -490,7 +491,85 @@ class CrossLayerTranscoder(
         Returns:
             Decoder weights for all source layers to the specified target layer
         """
+        if hasattr(self, "_sharded_decoder_weights"):
+            return self._sharded_decoder_weights[layer_to]
         return self.W_D[layer_to]
+
+    def get_decoder_bias(self, layer: int) -> torch.Tensor:
+        return self.b_D[layer]
+
+    def get_encoder_rows(self, layer: int, feature_indices: torch.Tensor) -> torch.Tensor:
+        if hasattr(self, "_sharded_encoder_weights"):
+            return self._sharded_encoder_weights[layer].T[feature_indices]
+        return self.W_E[layer].T[feature_indices]
+
+    def get_decoder_vectors(self, layer_to: int, layer_from: int, feature_indices: torch.Tensor) -> torch.Tensor:
+        decoder_weights = self.get_decoder_weights(layer_to)
+        return decoder_weights[layer_from, feature_indices]
+
+    def move_to_layer_devices(self, layer_devices: list[torch.device], dtype: torch.dtype | None = None) -> None:
+        self.shard_for_inference(layer_devices, dtype=dtype)
+
+    @torch.no_grad()
+    def shard_for_inference(self, layer_devices: list[torch.device], dtype: torch.dtype | None = None) -> None:
+        dtype = dtype or self.cfg.dtype
+        self._layer_devices = list(layer_devices)
+        self.cfg.device = str(layer_devices[0])
+        self._sharded_encoder_weights = [
+            self.W_E[layer].detach().to(layer_devices[layer], dtype=dtype) for layer in range(self.cfg.n_layers)
+        ]
+        self._sharded_encoder_biases = [
+            self.b_E[layer].detach().to(layer_devices[layer], dtype=dtype) for layer in range(self.cfg.n_layers)
+        ]
+        self._sharded_decoder_weights = []
+        for layer_to, device in enumerate(layer_devices):
+            self.W_D[layer_to] = nn.Parameter(self.W_D[layer_to].detach().to(device, dtype=dtype), requires_grad=False)
+            self.b_D[layer_to] = nn.Parameter(self.b_D[layer_to].detach().to(device, dtype=dtype), requires_grad=True)
+            self._sharded_decoder_weights.append(self.W_D[layer_to])
+
+    def encode_layer(
+        self,
+        x: torch.Tensor,
+        layer_id: int,
+        apply_activation_function: bool = True,
+        return_hidden_pre: bool | None = None,
+        **kwargs,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        if return_hidden_pre is None:
+            return_hidden_pre = not apply_activation_function
+
+        if hasattr(self, "_sharded_encoder_weights"):
+            W_E = self._sharded_encoder_weights[layer_id]
+            b_E = self._sharded_encoder_biases[layer_id]
+            if x.device != W_E.device:
+                x = x.to(W_E.device)
+            hidden_pre = torch.einsum("...d,ds->...s", x, W_E) + b_E
+
+            if self.cfg.sparsity_include_decoder_norm:
+                hidden_pre = hidden_pre * self.decoder_norm_per_feature(layer=layer_id)[layer_id].to(hidden_pre.device)
+
+            act_fn = self.cfg.act_fn.lower()
+            if act_fn == "jumprelu":
+                assert isinstance(self.activation_function, JumpReLU)
+                thresholds = self.activation_function.log_jumprelu_threshold[layer_id].exp().to(hidden_pre.device)
+                feature_acts = hidden_pre * hidden_pre.gt(thresholds)
+            elif act_fn == "relu":
+                feature_acts = hidden_pre * hidden_pre.gt(0).to(hidden_pre.dtype)
+            elif act_fn == "topk":
+                feature_acts = topk(hidden_pre, k=self.current_k, dim=-1)
+            else:
+                feature_acts = self.activation_function(hidden_pre)
+
+            if not apply_activation_function:
+                return hidden_pre
+            if return_hidden_pre:
+                return feature_acts, hidden_pre
+            return feature_acts
+
+        result = self.encode_single_layer(x, layer=layer_id, return_hidden_pre=return_hidden_pre, **kwargs)
+        if not apply_activation_function and isinstance(result, tuple):
+            return result[1]
+        return result
 
     @overload
     def encode(
@@ -705,6 +784,8 @@ class CrossLayerTranscoder(
         """Decode features for a single output layer using upper triangular pattern."""
         decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
         feature_acts_per_layer = feature_acts[..., : layer_to + 1, :]
+        if feature_acts_per_layer.device != decoder_weights.device:
+            feature_acts_per_layer = feature_acts_per_layer.to(decoder_weights.device)
         contribution = feature_acts_per_layer.permute(1, 0, 2) @ decoder_weights
         return contribution.sum(0)
 
@@ -739,6 +820,8 @@ class CrossLayerTranscoder(
         )
 
         for i in range(layer_to + 1):
+            if feature_acts[i].device != decoder_weights.device:
+                feature_acts[i] = feature_acts[i].to(decoder_weights.device)
             contribution = contribution + torch.sparse.mm(
                 feature_acts[i].to(torch.float32),
                 decoder_weights[i].to(torch.float32),
@@ -769,11 +852,12 @@ class CrossLayerTranscoder(
             assert fa.ndim == 2
 
         decoder_weights = self.get_decoder_weights(layer_to)  # (layer_to+1, d_sae, d_model)
+        decoder_device = decoder_weights.device
 
         total_contribution = torch.zeros(
             *feature_acts[0].shape[:-1],
             decoder_weights.shape[-1],
-            device=feature_acts[0].device,
+            device=decoder_device,
             dtype=feature_acts[0].dtype,
         )  # shape (seq_len, d_model)
 
@@ -782,6 +866,8 @@ class CrossLayerTranscoder(
 
         for layer_from in range(layer_to + 1):
             sparse_tensor = feature_acts[layer_from]
+            if sparse_tensor.device != decoder_device:
+                sparse_tensor = sparse_tensor.to(decoder_device)
             seq_indices = sparse_tensor.indices()[0]  # Sequence position indices
             feature_indices = sparse_tensor.indices()[1]  # Feature indices
             values = sparse_tensor.values()  # Active values
@@ -796,6 +882,26 @@ class CrossLayerTranscoder(
             total_contribution.index_add_(0, seq_indices, scaled_decoder_vecs)
 
         return total_contribution
+
+    def decode_layer(
+        self,
+        feature_acts_by_layer: list[torch.Tensor],
+        layer_to: int,
+        **kwargs,
+    ) -> torch.Tensor:
+        decoder_weights = self.get_decoder_weights(layer_to)
+        if (
+            isinstance(feature_acts_by_layer, list)
+            and isinstance(feature_acts_by_layer[0], torch.Tensor)
+            and feature_acts_by_layer[0].layout == torch.sparse_coo
+        ):
+            contribution = self._decode_single_output_layer_coo(feature_acts_by_layer, layer_to)
+        else:
+            contribution = self._decode_single_output_layer_dense(
+                torch.stack(feature_acts_by_layer, dim=0).permute(1, 0, 2),  # type: ignore[arg-type]
+                layer_to,
+            )
+        return contribution + self.get_decoder_bias(layer_to).to(decoder_weights.device)
 
     @override
     def decoder_norm(self, keepdim: bool = False):
