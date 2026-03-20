@@ -270,9 +270,9 @@ def test_offsets_to_nodes_then_to_offsets_round_trip():
 
 
 def test_duality_with_merged_node():
-    # Register "a" in two separate add_elements calls so the merge path is exercised.
+    # Register "a" in two separate extend calls so the merge path is exercised.
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 3)],))
-    t._add_elements([_ni("a", 7)], dim=0)
+    t.extend([_ni("a", 7)], dim=0)
     # a: offsets 0,1,2 for logical 0,3,7
     offsets = t.dimensions[0].nodes_to_offsets([_ni("a", 0, 3, 7)])
     assert torch.equal(offsets, torch.tensor([0, 1, 2]))
@@ -419,26 +419,26 @@ def test_setitem_accepts_dimension_key():
 
 
 # ---------------------------------------------------------------------------
-# _add_elements
+# extend
 # ---------------------------------------------------------------------------
 
 
 def test_add_elements_expands_size():
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 1)],))
-    t._add_elements([_ni("b", 5, 6)], dim=0)
+    t.extend([_ni("b", 5, 6)], dim=0)
     assert t.data.shape == (4,)
 
 
 def test_add_elements_new_node_gets_correct_offsets_and_indices():
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 1)],))
-    t._add_elements([_ni("b", 5, 6)], dim=0)
+    t.extend([_ni("b", 5, 6)], dim=0)
     assert torch.equal(t.dimensions[0].node_mappings["b"].offsets, torch.tensor([2, 3]))
     assert torch.equal(t.dimensions[0].node_mappings["b"].indices, torch.tensor([[5], [6]]))
 
 
 def test_add_elements_existing_node_is_merged():
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0)],))
-    t._add_elements([_ni("a", 7)], dim=0)
+    t.extend([_ni("a", 7)], dim=0)
     assert t.data.shape == (2,)
     assert torch.equal(t.dimensions[0].node_mappings["a"].offsets, torch.tensor([0, 1]))
     assert torch.equal(t.dimensions[0].node_mappings["a"].indices, torch.tensor([[0], [7]]))
@@ -449,7 +449,7 @@ def test_add_elements_preserves_existing_values():
         data=torch.tensor([5.0, 6.0]),
         dimensions=([_ni("a", 0, 1)],),
     )
-    t._add_elements([_ni("b", 9)], dim=0)
+    t.extend([_ni("b", 9)], dim=0)
     assert torch.equal(t.data[:2], torch.tensor([5.0, 6.0]))
     assert t.data[2].item() == 0.0
 
@@ -459,7 +459,7 @@ def test_add_elements_newly_added_node_is_addressable():
         data=torch.tensor([5.0, 6.0]),
         dimensions=([_ni("a", 0, 1)],),
     )
-    t._add_elements([_ni("b", 9)], dim=0)
+    t.extend([_ni("b", 9)], dim=0)
     t[[_ni("b", 9)]] = torch.tensor([42.0])
     result = t[[_ni("b", 9)]]
     assert torch.equal(result.data, torch.tensor([42.0]))
@@ -574,7 +574,7 @@ def test_matrix_add_target_then_addressable():
         data=data,
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
-    m.add_target([_ni("r2", 10)])
+    m.add_targets([_ni("r2", 10)])
     m[[_ni("r2", 10)], None] = torch.tensor([[7.0, 8.0, 9.0]])
     result = m[[_ni("r2", 10)], None]
     assert torch.equal(result.data, torch.tensor([[7.0, 8.0, 9.0]]))

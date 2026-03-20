@@ -22,7 +22,7 @@ def tensor_id(t: torch.Tensor) -> tuple[int, int, tuple[int, ...], tuple[int, ..
     """
     return (
         t.data_ptr(),
-        t.storage_offset(),
+        int(t.storage_offset()),
         tuple(t.shape),
         tuple(t.stride()),
     )
