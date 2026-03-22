@@ -45,7 +45,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.backend.run_with_cache_until import run_with_cache_until
+from lm_saes.backend.tl_addons import run_with_cache_until
 from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.discrete import DiscreteMapper
