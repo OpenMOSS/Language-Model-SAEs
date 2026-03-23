@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from functools import partial
 from itertools import accumulate
 from typing import (
     TYPE_CHECKING,
@@ -36,7 +35,6 @@ from torch.distributed.tensor.experimental import local_map
 from torch.types import Number
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
-from transformer_lens.hook_points import HookPoint
 from transformers import (
     AutoModelForCausalLM,
     AutoProcessor,
@@ -45,7 +43,8 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.backend.tl_addons import run_with_cache_until
+from lm_saes.backend.hooks import apply_saes, detach_at
+from lm_saes.backend.tl_addons import run_with_cache_until, run_with_ref_cache
 from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.discrete import DiscreteMapper
@@ -54,6 +53,8 @@ from lm_saes.utils.misc import ensure_tokenized, pad_and_truncate_tokens, tensor
 
 if TYPE_CHECKING:
     from lm_saes.models.lorsa import LowRankSparseAttention
+    from lm_saes.models.molt import MixtureOfLinearTransform
+    from lm_saes.models.sae import SparseAutoEncoder
     from lm_saes.models.sparse_dictionary import SparseDictionary
 
 
@@ -257,109 +258,6 @@ class LanguageModel(ABC):
     def pad_token_id(self) -> int | None:
         """The ID of the padding token."""
         pass
-
-
-def replacement_hookin_fn_builder(replacement_module: SparseDictionary) -> Callable:
-    from lm_saes.models.lorsa import LowRankSparseAttention
-    from lm_saes.models.sae import SparseAutoEncoder
-
-    if isinstance(replacement_module, SparseAutoEncoder):
-
-        def sae_hookin_fn(
-            x: torch.Tensor,
-            hook: HookPoint,
-            replacement_module: SparseDictionary,
-            cache_activations: dict[str, torch.Tensor],
-        ):
-            assert hook.name in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
-            cache_activations[hook.name + ".x"] = x
-            cache_activations[hook.name + ".feature_acts.up"] = replacement_module.encode(
-                cache_activations[hook.name + ".x"]
-            )
-            cache_activations[hook.name + ".feature_acts.down"] = (
-                cache_activations[hook.name + ".feature_acts.up"].detach().requires_grad_(True)
-            )
-            return x
-
-        return sae_hookin_fn
-
-    elif isinstance(replacement_module, LowRankSparseAttention):
-
-        def lorsa_hookin_fn(
-            x: torch.Tensor,
-            hook: HookPoint,
-            replacement_module: LowRankSparseAttention,
-            cache_activations: dict[str, torch.Tensor],
-        ):
-            assert hook.name in replacement_module.cfg.hooks_in, "Hook point must be in hook points in"
-            cache_activations[hook.name + ".x"] = x
-            encode_result = replacement_module.encode(
-                cache_activations[hook.name + ".x"],
-                return_hidden_pre=False,
-                return_attention_pattern=True,
-                return_attention_score=True,
-            )
-            cache_activations[hook.name + ".attn_pattern"] = encode_result[1].detach()
-            cache_activations[hook.name + ".feature_acts.up"] = encode_result[0]  # batch, seq_len, d_sae
-            cache_activations[hook.name + ".feature_acts.down"] = (
-                cache_activations[hook.name + ".feature_acts.up"].detach().requires_grad_(True)
-            )
-
-            return x
-
-        return lorsa_hookin_fn
-
-    else:
-        # TODO: handle other replacement modules such as CLT
-        raise ValueError(f"Unsupported replacement module type: {type(replacement_module)}")
-
-
-def replacement_hookout_fn_builder(replacement_module: SparseDictionary) -> Callable:
-    # if isinstance(replacement_module, CrossLayerTranscoder):
-    #     raise NotImplementedError("CLT hookout function builder not implemented")
-
-    # else:
-
-    def hookout_fn(
-        x: torch.Tensor,
-        hook: HookPoint,
-        replacement_module: SparseDictionary,
-        cache_activations: dict[str, torch.Tensor],
-        update_error_cache: bool = False,
-    ):
-        assert hook.name in replacement_module.cfg.hooks_out, "Hook point must be in hook points out"
-        hook_in = replacement_module.cfg.hooks_in[0]  # TODO: handle multiple hook points in for CLT
-        reconstructed = replacement_module.decode(cache_activations[hook_in + ".feature_acts.down"])
-        cache_activations[hook.name + ".reconstructed"] = reconstructed
-        assert hook.name + ".error" in cache_activations or update_error_cache, (
-            "There must be an error cache for the hook point"
-        )
-        if update_error_cache:
-            error = (x - reconstructed).detach().requires_grad_(True)
-            cache_activations[hook.name + ".error"] = error
-        else:
-            error = cache_activations[hook.name + ".error"]
-        return error + reconstructed
-
-    return hookout_fn
-
-
-def detach_hook_builder(models: TransformerLensLanguageModel) -> list[tuple[str, Callable]]:
-    def detach_hook_fn(x: torch.Tensor, hook: HookPoint):
-        return x.detach()
-
-    assert models.model is not None, "model must be initialized"
-    detach_hooks = []
-    for block in models.model.blocks:
-        for module_name in ["ln1", "ln2", "ln1_post", "ln2_post"]:
-            if hasattr(block, module_name) and isinstance(getattr(block, module_name), torch.nn.Module):
-                detach_hooks.append((getattr(block, module_name).hook_scale.name, detach_hook_fn))
-        if hasattr(block, "attn") and isinstance(block.attn, torch.nn.Module):
-            assert isinstance(block.attn.hook_pattern, HookPoint), "attn must be an instance of AbstractAttention"
-            detach_hooks.append((block.attn.hook_pattern.name, detach_hook_fn))
-
-    detach_hooks.append(("ln_final.hook_scale", detach_hook_fn))
-    return detach_hooks
 
 
 @dataclass(frozen=True)
@@ -1081,58 +979,51 @@ class TransformerLensLanguageModel(LanguageModel):
         batch_size: int = 512,
         max_features: int | None = None,
     ):
+        from lm_saes.models.lorsa import LowRankSparseAttention
+
         assert self.model is not None, "model must be initialized"
-        cache_activations: dict[str, torch.Tensor] = {}
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
-        fwd_hooks_in: list[tuple[str, Callable]] = [
-            (
-                hook_in,
-                partial(
-                    replacement_hookin_fn_builder(replacement_module),
-                    replacement_module=replacement_module,
-                    cache_activations=cache_activations,
-                ),
-            )
-            for replacement_module in replacement_modules
-            for hook_in in replacement_module.cfg.hooks_in
-        ]
-        fwd_hooks_out: list[tuple[str, Callable]] = [
-            (
-                hook_out,
-                partial(
-                    replacement_hookout_fn_builder(replacement_module),
-                    replacement_module=replacement_module,
-                    cache_activations=cache_activations,
-                    update_error_cache=True,
-                ),
-            )
-            for replacement_module in replacement_modules
-            for hook_out in replacement_module.cfg.hooks_out
-        ]
 
-        def token_fwd_hook_fn(
-            x: torch.Tensor,
-            hook: Any,
-            cache_activations: dict[str, torch.Tensor],
-        ):
-            cache_activations["hook_embed"] = x
-            cache_activations["hook_embed"].retain_grad()
-            return x
+        assert all(
+            isinstance(replacement_module, SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform)
+            for replacement_module in replacement_modules
+        ), (
+            "Currently only support sparse dictionaries that guarantee the hook points in happen before the hook points out."
+        )
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
+            list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
+        )
 
-        token_fwd_hooks: list[tuple[str, Callable]] = [
-            (
-                "hook_embed",
-                partial(token_fwd_hook_fn, cache_activations=cache_activations),
-            )
-        ]
-        detach_hooks: list[tuple[str, Callable]] = detach_hook_builder(self)
-        with self.hooks(
-            fwd_hooks=cast(
-                list[tuple[str | Callable, Callable]],
-                fwd_hooks_in + fwd_hooks_out + token_fwd_hooks + detach_hooks,
-            )
-        ):
-            batch_logits = self.forward(einops.repeat(tokens, "n -> b n", b=batch_size))
+        with self.apply_saes(cast(list[SparseDictionary], replacement_modules)):
+            with self.detach_at(
+                ["hook_embed"]
+                + [replacement_module.cfg.hook_point_out + ".error" for replacement_module in replacement_modules]
+                + [
+                    replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts"
+                    for replacement_module in replacement_modules
+                ]
+                + [
+                    replacement_module.cfg.hook_point_out + ".sae.hook_attn_pattern"
+                    for replacement_module in replacement_modules
+                    if isinstance(replacement_module, LowRankSparseAttention)
+                ]
+            ):
+                batch_logits, cache = self.run_with_ref_cache(
+                    einops.repeat(tokens, "n -> b n", b=batch_size),
+                    names_filter=["hook_embed.post"]
+                    + [
+                        replacement_module.cfg.hook_point_out + ".error.post"
+                        for replacement_module in replacement_modules
+                    ]
+                    + [
+                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"
+                        for replacement_module in replacement_modules
+                    ]
+                    + [
+                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"
+                        for replacement_module in replacement_modules
+                    ],
+                )
 
         with torch.no_grad():
             probs = torch.softmax(batch_logits[0, -1], dim=-1)
@@ -1140,7 +1031,7 @@ class TransformerLensLanguageModel(LanguageModel):
             cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
             top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
 
-        seq_len = cache_activations["hook_embed"].shape[1]
+        seq_len = cache["hook_embed"].shape[1]
 
         targets: list[NodeInfoRef] = [
             NodeInfoRef(
@@ -1153,34 +1044,32 @@ class TransformerLensLanguageModel(LanguageModel):
         sources: list[NodeInfoRef] = [
             NodeInfoRef(
                 key="hook_embed",
-                ref=cache_activations["hook_embed"],
+                ref=cache["hook_embed"],
                 indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
             )
         ] + [
             NodeInfoRef(
-                key=hook_out + ".error",
-                ref=cache_activations[hook_out + ".error"],
+                key=replacement_module.cfg.hook_point_out + ".error",
+                ref=cache[replacement_module.cfg.hook_point_out + ".error.post"],
                 indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
             )
             for replacement_module in replacement_modules
-            for hook_out in replacement_module.cfg.hooks_out
         ]
 
         intermediates: list[tuple[NodeInfoRef, NodeInfoRef]] = [
             (
                 NodeInfoRef(
-                    key=hook_in + ".feature_acts",
-                    ref=cache_activations[hook_in + ".feature_acts.up"],
-                    indices=cache_activations[hook_in + ".feature_acts.up"][0].nonzero(),
+                    key=replacement_module.cfg.hook_point_in + ".sae.hook_feature_acts",
+                    ref=cache[replacement_module.cfg.hook_point_in + ".sae.hook_feature_acts.pre"],
+                    indices=cache[replacement_module.cfg.hook_point_in + ".sae.hook_feature_acts.pre"][0].nonzero(),
                 ),
                 NodeInfoRef(
-                    key=hook_in + ".feature_acts",
-                    ref=cache_activations[hook_in + ".feature_acts.down"],
-                    indices=cache_activations[hook_in + ".feature_acts.up"][0].nonzero(),
+                    key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
+                    ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
+                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0].nonzero(),
                 ),
             )
             for replacement_module in replacement_modules
-            for hook_in in replacement_module.cfg.hooks_in
         ]
 
         max_intermediates = max_features if max_features is not None else len(intermediates)
@@ -1317,6 +1206,27 @@ class TransformerLensLanguageModel(LanguageModel):
             clear_contexts=clear_contexts,
         ):
             yield self
+
+    @contextmanager
+    def apply_saes(self, saes: list[SparseDictionary]):
+        assert self.model is not None, "model must be initialized"
+        with apply_saes(self.model, saes):
+            yield self
+
+    @contextmanager
+    def detach_at(self, hook_points: list[str]):
+        assert self.model is not None, "model must be initialized"
+        with detach_at(self.model, hook_points):
+            yield self
+
+    def run_with_ref_cache(self, *args, **kwargs) -> Any:
+        assert self.model is not None, "model must be initialized"
+        if self.device_mesh is None:
+            return run_with_ref_cache(self.model, *args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, run_with_ref_cache(self.model, *args, **kwargs))
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         if any(key in ["images", "videos"] for key in raw):

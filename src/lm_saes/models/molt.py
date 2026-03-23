@@ -5,6 +5,7 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
+from sae_lens.saes.sae import HookPoint
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from typing_extensions import override
@@ -264,6 +265,11 @@ class MixtureOfLinearTransform(
                     )
                 )
 
+        self.hook_hidden_pre = HookPoint()
+        self.hook_feature_acts = HookPoint()
+        self.hook_reconstructed = HookPoint()
+        self.setup()
+
     def dim_maps(self) -> dict[str, DimMap]:
         """Return dimension maps for distributed training.
 
@@ -518,12 +524,14 @@ class MixtureOfLinearTransform(
     ]:
         # Standard encoder: ϕ(et ⋅ x − bt)
         hidden_pre = x @ self.W_E + self.b_E
+        hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
             hidden_pre = hidden_pre * self.decoder_norm()
 
         feature_acts = self.activation_function(hidden_pre)
+        feature_acts = self.hook_feature_acts(feature_acts)
 
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
@@ -703,6 +711,7 @@ class MixtureOfLinearTransform(
         else:
             reconstruction = self._decode_single_gpu(feature_acts, x)
 
+        reconstruction = self.hook_reconstructed(reconstruction)
         return reconstruction
 
     @override

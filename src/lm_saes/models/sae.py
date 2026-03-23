@@ -131,6 +131,7 @@ class SparseAutoEncoder(
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
         self.hook_reconstructed = HookPoint()
+        self.setup()
 
     @override
     def encoder_norm(self, keepdim: bool = False):

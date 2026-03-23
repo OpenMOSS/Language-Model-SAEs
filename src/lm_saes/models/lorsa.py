@@ -228,6 +228,12 @@ class LowRankSparseAttention(
             self.register_buffer("rotary_sin", sin)
             self.register_buffer("rotary_cos", cos)
 
+        self.hook_hidden_pre = HookPoint()
+        self.hook_feature_acts = HookPoint()
+        self.hook_reconstructed = HookPoint()
+        self.hook_attn_pattern = HookPoint()
+        self.setup()
+
     @property
     def W_D(self) -> torch.Tensor:
         return self.W_O
@@ -718,16 +724,20 @@ class LowRankSparseAttention(
             k = k.permute(2, 0, 3, 1)  # (n_qk_heads, batch, d_qk_head, seq_len)
             scores = torch.einsum("nbqd,nbdk->nbqk", q, k) / self.attn_scale
             scores = self._apply_causal_mask(scores)
-            pattern = F.softmax(scores, dim=-1)
+            # Hook called on (batch, n_qk_heads, q_pos, k_pos); permute back for internal use
+            pattern = self.hook_attn_pattern(F.softmax(scores, dim=-1).permute(1, 0, 2, 3)).permute(1, 0, 2, 3)
 
             # Head outputs
             hidden_pre = self._compute_head_outputs(pattern, v)
+
+        hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
             hidden_pre = hidden_pre * self.decoder_norm()
 
         feature_acts = self.activation_function(hidden_pre)
+        feature_acts = self.hook_feature_acts(feature_acts)
 
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
@@ -746,16 +756,18 @@ class LowRankSparseAttention(
     def decode(self, feature_acts, **kwargs):
         """Decode head activations to output."""
         if feature_acts.layout == torch.sparse_coo:
-            return (
+            out = (
                 torch.sparse.mm(
                     feature_acts.to(torch.float32),
                     self.W_O.to(torch.float32),
                 ).to(self.cfg.dtype)
                 + self.b_D
             )
+            return self.hook_reconstructed(out)
         out = torch.einsum("bps,sd->bpd", feature_acts, self.W_O)
         if self.cfg.use_decoder_bias:
             out = out + self.b_D
+        out = self.hook_reconstructed(out)
         if isinstance(out, DTensor):
             out = DimMap({"data": 0}).redistribute(out)
         return out
