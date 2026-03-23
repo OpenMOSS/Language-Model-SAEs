@@ -919,6 +919,19 @@ def greedily_collect_attribution(
     return attribution
 
 
+def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
+
+    assert models.model is not None, "model must be initialized"
+    detach_hooks = []
+    for i, block in enumerate(models.model.blocks):
+        for module_name in ["ln1", "ln2", "ln1_post", "ln2_post"]:
+            if hasattr(block, module_name) and isinstance(getattr(block, module_name), torch.nn.Module):
+                detach_hooks.append(f"blocks.{i}.{module_name}.hook_scale")
+
+    detach_hooks.append("ln_final.hook_scale")
+    return detach_hooks
+
+
 class TransformerLensLanguageModel(LanguageModel):
     def __init__(self, cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None):
         self.cfg = cfg
@@ -970,16 +983,15 @@ class TransformerLensLanguageModel(LanguageModel):
             else None
         )
 
-    def attribute(
+    def _collect_cache(
         self,
         inputs: torch.Tensor | str,
         replacement_modules: list[SparseDictionary],
-        max_n_logits: int = 10,
-        desired_logit_prob: float = 0.95,
-        batch_size: int = 512,
-        max_features: int | None = None,
     ):
         from lm_saes.models.lorsa import LowRankSparseAttention
+        from lm_saes.models.molt import MixtureOfLinearTransform
+        from lm_saes.models.sae import SparseAutoEncoder
+        from lm_saes.models.sparse_dictionary import SparseDictionary
 
         assert self.model is not None, "model must be initialized"
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
@@ -1007,9 +1019,11 @@ class TransformerLensLanguageModel(LanguageModel):
                     for replacement_module in replacement_modules
                     if isinstance(replacement_module, LowRankSparseAttention)
                 ]
+                + [f"blocks.{i}.attn.hook_pattern" for i in range(self.model.cfg.n_layers)]
+                + ln_detach_hooks(self)
             ):
-                batch_logits, cache = self.run_with_ref_cache(
-                    einops.repeat(tokens, "n -> b n", b=batch_size),
+                logits, cache = self.run_with_ref_cache(
+                    tokens,
                     names_filter=["hook_embed.post"]
                     + [
                         replacement_module.cfg.hook_point_out + ".error.post"
@@ -1025,13 +1039,29 @@ class TransformerLensLanguageModel(LanguageModel):
                     ],
                 )
 
+        return logits, cache
+
+    def attribute(
+        self,
+        inputs: torch.Tensor | str,
+        replacement_modules: list[SparseDictionary],
+        max_n_logits: int = 10,
+        desired_logit_prob: float = 0.95,
+        batch_size: int = 512,
+        max_features: int | None = None,
+    ):
+        tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
+        batch_logits, cache = self._collect_cache(einops.repeat(tokens, "n -> b n", b=batch_size), replacement_modules)
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
+            list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
+        )
         with torch.no_grad():
             probs = torch.softmax(batch_logits[0, -1], dim=-1)
             top_p, top_idx = torch.topk(probs, max_n_logits)
             cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
             top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
 
-        seq_len = cache["hook_embed"].shape[1]
+        seq_len = cache["hook_embed.post"].shape[1]
 
         targets: list[NodeInfoRef] = [
             NodeInfoRef(
@@ -1044,7 +1074,7 @@ class TransformerLensLanguageModel(LanguageModel):
         sources: list[NodeInfoRef] = [
             NodeInfoRef(
                 key="hook_embed",
-                ref=cache["hook_embed"],
+                ref=cache["hook_embed.post"],
                 indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
             )
         ] + [
@@ -1053,15 +1083,15 @@ class TransformerLensLanguageModel(LanguageModel):
                 ref=cache[replacement_module.cfg.hook_point_out + ".error.post"],
                 indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
             )
-            for replacement_module in replacement_modules
+            for (replacement_module) in replacement_modules
         ]
 
         intermediates: list[tuple[NodeInfoRef, NodeInfoRef]] = [
             (
                 NodeInfoRef(
-                    key=replacement_module.cfg.hook_point_in + ".sae.hook_feature_acts",
-                    ref=cache[replacement_module.cfg.hook_point_in + ".sae.hook_feature_acts.pre"],
-                    indices=cache[replacement_module.cfg.hook_point_in + ".sae.hook_feature_acts.pre"][0].nonzero(),
+                    key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
+                    ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"],
+                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"][0].nonzero(),
                 ),
                 NodeInfoRef(
                     key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",

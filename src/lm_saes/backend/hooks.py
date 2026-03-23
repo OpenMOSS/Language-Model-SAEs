@@ -7,14 +7,15 @@ from transformer_lens.hook_points import HookedRootModule, HookPoint
 from lm_saes.backend.tl_addons import mount_hooked_modules
 
 if TYPE_CHECKING:
-    from lm_saes.models.lorsa import LowRankSparseAttention
-    from lm_saes.models.molt import MixtureOfLinearTransform
-    from lm_saes.models.sae import SparseAutoEncoder
     from lm_saes.models.sparse_dictionary import SparseDictionary
 
 
 @contextmanager
-def apply_saes(model: HookedRootModule, saes: list[SparseDictionary]):
+def apply_saes(model: HookedRootModule, saes: list["SparseDictionary"]):
+    from lm_saes.models.lorsa import LowRankSparseAttention
+    from lm_saes.models.molt import MixtureOfLinearTransform
+    from lm_saes.models.sae import SparseAutoEncoder
+
     """
     Apply the sparse dictionaries to the model.
     """
@@ -44,7 +45,7 @@ def apply_saes(model: HookedRootModule, saes: list[SparseDictionary]):
         def hook_out(tensor: torch.Tensor, hook: HookPoint):
             nonlocal x
             assert x is not None, "hook_in must be called before hook_out."
-            reconstructed = sae.forward(x)
+            reconstructed = sae.decode(x)
             x = None
             return reconstructed + hook_error(tensor - reconstructed)
 

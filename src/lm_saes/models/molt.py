@@ -5,9 +5,9 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
-from sae_lens.saes.sae import HookPoint
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
 from lm_saes.models.protocols import DatasetNormStandardizable, NormComputing, NormConstrainable
