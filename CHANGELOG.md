@@ -1,3 +1,44 @@
+## v2.0.0b21 (2026-03-26)
+
+### Feat
+
+- **attribution**: Implement `qk_trace` on TransformerLensLanguageModel to attribute attention scores to upstream features via second-order gradients. Bias trace is not yet included.
+- **backend**: add tl addons
+- **language-model**: WIP refactor attribute with Matrix pipeline
+- **language-model**: introduce Matrix and Node classes for enhanced matrix operations
+
+### Fix
+
+- **metrics**: use cast(T, ...) to resolve Pyright type error
+- **metrics**: improve the precision of accumulater to fp32
+- **sparse-dictionary**: move file existence check after snapshot download to support HF_HUB_OFFLINE case
+- **sparse-dictionary**: add file existence check for hf loading
+- **language-model**: fix bug in attribution
+- **language-model**: ruff & type errors
+- **language-model**: NodeIndexedTensor index error
+- **language-model**: remove unnecessary for-loop
+- **language-model**: fix bug in WIP hook-based replacement model
+- remove abstract_sae file
+- **util**: move is_primary_rank to distributed utils to avoid circular import
+
+### Refactor
+
+- **backend**: update apply_saes function and add ln_detach_hooks utility
+- **language-model**: refactor sae/detach hooks
+- **language-model**: implemnet attribution with NodeIndexedTensor
+- **language-model**: better organize most parts (WIP)
+- **language-model**: refactor Matrix to NodeIndexedTensor
+- **language-model**: rename hook functions and enhance AdjacencyMatrix class
+- **language-model**: enhance hook functions and introduce detach_hook_fn_builder
+- move all sparse dictionary models into subfolder; split base class methods into protocols
+- **language-model**: enhance hook functions to utilize HookPoint and improve type hints
+- **language-model**: update hook functions to use SparseDictionary instead of AbstractSparseAutoEncoder
+- **sparse-dictionary**: add hooks_in and hooks_out properties to SparseDictionaryConfig
+- **language-model**: introduce EdgeMatrix class for cleaner attribute implementation (untested)
+- **language-model**: complete attribute method implementation (untested)
+- **language-model**: WIP hook-based replacement model refactor in TransformerLensLanguageModel
+- rename abstract_sae to sparse_dictionary
+
 ## v2.0.0b20 (2026-03-02)
 
 ### Refactor
