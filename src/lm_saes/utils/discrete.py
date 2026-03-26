@@ -96,6 +96,13 @@ class KeyedDiscreteMapper:
         """Initialize a new PythonKeyedDiscreteMapper with empty mappers."""
         self.mappers: dict[str, DiscreteMapper] = {}
 
+    def add_mapper(self, key: str, mapper: DiscreteMapper) -> None:
+        assert key not in self.mappers, "Key already exists"
+        self.mappers[key] = mapper
+
+    def get_mapper(self, key: str) -> DiscreteMapper:
+        return self.mappers[key]
+
     def encode(self, key: str, values: list[str], group: Optional[torch.distributed.ProcessGroup] = None) -> list[int]:
         """Encode a list of strings using the mapper associated with the given key.
 

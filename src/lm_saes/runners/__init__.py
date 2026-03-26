@@ -1,7 +1,7 @@
 """Runner module for executing various operations on language models and SAEs."""
 
 from .analyze import (
-    AnalyzeCrossCoderSettings,
+    AnalyzeCrosscoderSettings,
     AnalyzeSAESettings,
     DirectLogitAttributeSettings,
     analyze_crosscoder,
@@ -10,7 +10,7 @@ from .analyze import (
 )
 from .autointerp import AutoInterpSettings, auto_interp
 from .eval import (
-    EvaluateCrossCoderSettings,
+    EvaluateCrosscoderSettings,
     EvaluateSAESettings,
     evaluate_crosscoder,
     evaluate_sae,
@@ -26,7 +26,7 @@ from .train import (
     SweepingItem,
     SweepSAESettings,
     TrainCLTSettings,
-    TrainCrossCoderSettings,
+    TrainCrosscoderSettings,
     TrainLorsaSettings,
     TrainMOLTSettings,
     TrainSAESettings,
@@ -48,7 +48,7 @@ __all__ = [
     "check_activation_consistency",
     "TrainSAESettings",
     "train_sae",
-    "TrainCrossCoderSettings",
+    "TrainCrosscoderSettings",
     "train_crosscoder",
     "TrainCLTSettings",
     "train_clt",
@@ -57,12 +57,12 @@ __all__ = [
     "sweep_sae",
     "AnalyzeSAESettings",
     "analyze_sae",
-    "AnalyzeCrossCoderSettings",
+    "AnalyzeCrosscoderSettings",
     "analyze_crosscoder",
     "AutoInterpSettings",
     "auto_interp",
     "load_config",
-    "EvaluateCrossCoderSettings",
+    "EvaluateCrosscoderSettings",
     "evaluate_crosscoder",
     "EvaluateSAESettings",
     "evaluate_sae",

@@ -7,9 +7,11 @@ import torch.nn as nn
 from jaxtyping import Float
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from lm_saes.abstract_sae import (
+from lm_saes.models.protocols import DatasetNormStandardizable, NormComputing, NormConstrainable
+from lm_saes.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
@@ -116,9 +118,22 @@ class MOLTConfig(SparseDictionaryConfig):
     def associated_hook_points(self) -> list[str]:
         return [self.hook_point_in, self.hook_point_out]
 
+    @property
+    def hooks_in(self) -> list[str]:
+        return [self.hook_point_in]
+
+    @property
+    def hooks_out(self) -> list[str]:
+        return [self.hook_point_out]
+
 
 @register_sae_model("molt")
-class MixtureOfLinearTransform(SparseDictionary):
+class MixtureOfLinearTransform(
+    SparseDictionary,
+    NormComputing,
+    NormConstrainable,
+    DatasetNormStandardizable,
+):
     """Mixture of Linear Transforms (MOLT) model.
 
     MOLT is a sparse autoencoder variant that uses d_sae linear transforms,
@@ -249,6 +264,11 @@ class MixtureOfLinearTransform(SparseDictionary):
                         placements=self.dim_maps()["b_D"].placements(device_mesh),
                     )
                 )
+
+        self.hook_hidden_pre = HookPoint()
+        self.hook_feature_acts = HookPoint()
+        self.hook_reconstructed = HookPoint()
+        self.setup()
 
     def dim_maps(self) -> dict[str, DimMap]:
         """Return dimension maps for distributed training.
@@ -422,6 +442,7 @@ class MixtureOfLinearTransform(SparseDictionary):
 
     @override
     @timer.time("standardize_parameters_of_dataset_norm")
+    @torch.no_grad()
     def standardize_parameters_of_dataset_norm(self) -> None:
         # Similar to SAE standardization
         assert self.cfg.norm_activation == "dataset-wise"
@@ -445,11 +466,6 @@ class MixtureOfLinearTransform(SparseDictionary):
             self.V_matrices[rank_str].data.mul_(scale_factor**0.5)
 
         self.cfg.norm_activation = "inference"
-
-    @override
-    @timer.time("init_encoder_with_decoder_transpose")
-    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        raise NotImplementedError("init_encoder_with_decoder_transpose does not make sense for MOLT")
 
     @overload
     def encode(
@@ -508,6 +524,7 @@ class MixtureOfLinearTransform(SparseDictionary):
     ]:
         # Standard encoder: ϕ(et ⋅ x − bt)
         hidden_pre = x @ self.W_E + self.b_E
+        hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
@@ -520,8 +537,8 @@ class MixtureOfLinearTransform(SparseDictionary):
             hidden_pre = hidden_pre / self.decoder_norm()
 
         if return_hidden_pre:
-            return feature_acts, hidden_pre
-        return feature_acts
+            return self.hook_feature_acts(feature_acts), hidden_pre
+        return self.hook_feature_acts(feature_acts)
 
     def _decode_single_gpu(
         self,
@@ -632,16 +649,19 @@ class MixtureOfLinearTransform(SparseDictionary):
             # Step 3: U @ (weighted V @ x)
             reconstruction_local += torch.einsum("... c r, c d r -> ... d", weighted_Vx, U_local)
 
-        # Add decoder bias prior to creating DTensor to avoid distributed broadcasting issues
+        # All-reduce(sum) within model parallel shards
+        model_group = mesh.get_group("model")
+        torch.distributed.all_reduce(reconstruction_local, op=torch.distributed.ReduceOp.SUM, group=model_group)
+
+        # Add decoder bias after model-parallel reduction.
+        #
+        # IMPORTANT: b_D is replicated across the model-parallel group, so adding it before the all-reduce
+        # would incorrectly scale it by model_parallel_size.
         if self.cfg.use_decoder_bias:
             bias_local = self.b_D.to_local() if isinstance(self.b_D, DTensor) else self.b_D
             while bias_local.ndim < reconstruction_local.ndim:
                 bias_local = bias_local.unsqueeze(0)  # align dimensions for broadcasting
             reconstruction_local = reconstruction_local + bias_local
-
-        # All-reduce(sum) within model parallel shards
-        model_group = mesh.get_group("model")
-        torch.distributed.all_reduce(reconstruction_local, op=torch.distributed.ReduceOp.SUM, group=model_group)
 
         # Convert to DTensor with proper sharding (sharding along data dimension, replicated along model dimension)
         reconstruction_dt = DTensor.from_local(
@@ -690,6 +710,7 @@ class MixtureOfLinearTransform(SparseDictionary):
         else:
             reconstruction = self._decode_single_gpu(feature_acts, x)
 
+        reconstruction = self.hook_reconstructed(reconstruction)
         return reconstruction
 
     @override
@@ -763,7 +784,7 @@ class MixtureOfLinearTransform(SparseDictionary):
     ) -> tuple[torch.Tensor, dict[str, Any], dict[str, Any]]:
         x = batch[self.cfg.hook_point_in]
         encoder_kwargs = {}
-        decoder_kwargs = {"original_x": x}  # Pass original input to decoder for MoLT
+        decoder_kwargs = {"original_x": x}  # Pass original input to decoder for MOLT
         return x, encoder_kwargs, decoder_kwargs
 
     @override

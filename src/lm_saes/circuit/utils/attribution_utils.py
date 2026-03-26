@@ -4,8 +4,8 @@ from typing import List, Tuple, Union
 
 import torch
 
-from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.models.clt import CrossLayerTranscoder
+from lm_saes.models.lorsa import LowRankSparseAttention
 
 from .transcoder_set import TranscoderSet
 
@@ -183,6 +183,7 @@ def select_feature_activations(
     return torch.stack(activations)
 
 
+# TODO: remove this function
 def ensure_tokenized(prompt: Union[str, torch.Tensor, List[int]], tokenizer) -> torch.Tensor:
     """Convert *prompt* → 1-D tensor of token ids (no batch dim)."""
 

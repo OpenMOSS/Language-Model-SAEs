@@ -6,10 +6,10 @@ from torch import Tensor
 from torch.types import Number
 from transformer_lens import HookedTransformer
 
-from lm_saes.abstract_sae import SparseDictionary
-from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.models.lorsa import LowRankSparseAttention
+from lm_saes.models.sae import SparseAutoEncoder
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.optim import compute_grad_norm
-from lm_saes.sae import SparseAutoEncoder
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.tensor_specs import apply_token_mask, reduce
@@ -27,6 +27,8 @@ class Record(Generic[T]):
         self.reduction = reduction
 
     def update(self, value: T, count: Tensor | int = 1):
+        if isinstance(value, Tensor) and value.dtype in [torch.bfloat16, torch.float16]:
+            value = cast(T, value.to(torch.float32))
         self.count += count
         if self.reduction in ["mean", "sum"]:
             self.value = cast(T, self.value + value) if self.value is not None else value

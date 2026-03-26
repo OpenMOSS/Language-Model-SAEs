@@ -21,7 +21,6 @@ from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.config import BaseConfig
 from lm_saes.metrics import (
     ExplainedVarianceMetric,
@@ -34,13 +33,14 @@ from lm_saes.metrics import (
     Metric,
     ModelSpecificMetric,
 )
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.optim import SparseAdam, clip_grad_norm, get_scheduler
+from lm_saes.utils.distributed import is_primary_rank
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.misc import (
     convert_str_to_torch_dtype,
     convert_torch_dtype_to_str,
-    is_primary_rank,
 )
 from lm_saes.utils.tensor_specs import apply_token_mask
 from lm_saes.utils.timer import timer

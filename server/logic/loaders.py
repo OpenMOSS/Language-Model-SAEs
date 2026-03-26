@@ -2,8 +2,8 @@ from functools import lru_cache
 
 from datasets import Dataset
 
-from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.backend import LanguageModel
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.resource_loaders import load_dataset_shard, load_model
 from server.config import (
     LRU_CACHE_SIZE_DATASETS,

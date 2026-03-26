@@ -7,7 +7,17 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement
 
-from lm_saes.utils.misc import is_primary_rank
+
+def is_primary_rank(device_mesh: DeviceMesh | None, dim_name: str = "sweep") -> bool:
+    """Check if the current rank is the primary rank for the given mesh dimension."""
+    if device_mesh is None:
+        return True
+    coord = device_mesh.get_coordinate()
+    mesh_dim_names = device_mesh.mesh_dim_names
+    if coord is None or mesh_dim_names is None:
+        return False
+    coord = [c for i, c in enumerate(coord) if dim_name not in mesh_dim_names or i != mesh_dim_names.index(dim_name)]
+    return all(c == 0 for c in coord)
 
 
 def all_gather_dict(

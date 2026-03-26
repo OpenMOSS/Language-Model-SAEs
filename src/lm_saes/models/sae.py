@@ -11,13 +11,21 @@ from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from lm_saes.abstract_sae import (
+from lm_saes.activation_functions import JumpReLU
+from lm_saes.models.protocols import (
+    ActiveSubspaceInitializable,
+    DatasetNormStandardizable,
+    EncoderBiasInitializable,
+    EncoderInitializable,
+    NormComputing,
+    NormConstrainable,
+)
+from lm_saes.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
-from lm_saes.activation_functions import JumpReLU
 from lm_saes.utils.distributed import DimMap
 
 
@@ -32,9 +40,25 @@ class SAEConfig(SparseDictionaryConfig):
     def associated_hook_points(self) -> list[str]:
         return [self.hook_point_in, self.hook_point_out]
 
+    @property
+    def hooks_in(self) -> list[str]:
+        return [self.hook_point_in]
+
+    @property
+    def hooks_out(self) -> list[str]:
+        return [self.hook_point_out]
+
 
 @register_sae_model("sae")
-class SparseAutoEncoder(SparseDictionary):
+class SparseAutoEncoder(
+    SparseDictionary,
+    NormComputing,
+    NormConstrainable,
+    DatasetNormStandardizable,
+    EncoderInitializable,
+    ActiveSubspaceInitializable,
+    EncoderBiasInitializable,
+):
     def __init__(self, cfg: SAEConfig, device_mesh: DeviceMesh | None = None):
         super(SparseAutoEncoder, self).__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg
@@ -107,6 +131,7 @@ class SparseAutoEncoder(SparseDictionary):
         self.hook_hidden_pre = HookPoint()
         self.hook_feature_acts = HookPoint()
         self.hook_reconstructed = HookPoint()
+        self.setup()
 
     @override
     def encoder_norm(self, keepdim: bool = False):
@@ -309,15 +334,14 @@ class SparseAutoEncoder(SparseDictionary):
             hidden_pre = hidden_pre * self.decoder_norm()
 
         feature_acts = self.activation_function(hidden_pre)
-        feature_acts = self.hook_feature_acts(feature_acts)
 
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
             hidden_pre = hidden_pre / self.decoder_norm()
 
         if return_hidden_pre:
-            return feature_acts, hidden_pre
-        return feature_acts
+            return self.hook_feature_acts(feature_acts), hidden_pre
+        return self.hook_feature_acts(feature_acts)
 
     def decode(
         self,
@@ -440,7 +464,7 @@ class SparseAutoEncoder(SparseDictionary):
         demeaned_label = label - label.mean(dim=0)
         U, S, V = torch.svd(demeaned_label.T.to(torch.float32))
         proj_weight = U[:, :d_active_subspace]  # [d_model, d_active_subspace]
-        self.W_D.copy_(self.W_D.data[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
+        self.W_D.copy_(self.W_D[:, :d_active_subspace] @ proj_weight.T.to(self.cfg.dtype))
 
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)

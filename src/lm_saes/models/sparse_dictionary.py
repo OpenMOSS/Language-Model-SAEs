@@ -34,18 +34,16 @@ from transformer_lens.hook_points import HookedRootModule
 from lm_saes.activation_functions import JumpReLU
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.config import BaseModelConfig
+from lm_saes.models.protocols import DatasetNormStandardizable, NormComputing
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
-from lm_saes.utils.distributed import DimMap, distributed_topk, item, mesh_dim_size
+from lm_saes.utils.distributed import DimMap, distributed_topk, is_primary_rank, item, mesh_dim_size
 from lm_saes.utils.distributed.utils import execute_and_broadcast
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.math import topk
-from lm_saes.utils.misc import (
-    is_primary_rank,
-)
 from lm_saes.utils.tensor_specs import TensorSpecs, apply_token_mask
 from lm_saes.utils.timer import timer
 
-logger = get_distributed_logger("abstract_sae")
+logger = get_distributed_logger("sparse_dictionary")
 
 
 SAE_TYPE_TO_CONFIG_CLASS: dict[str, Any] = {}
@@ -91,7 +89,7 @@ def register_sae_model(name):
 
 class SparseDictionaryConfig(BaseModelConfig, ABC):
     """
-    Base class for sparse dictionary configs with common settings that are able to apply to various sparse dictionary variants. This class should not be used directly but only as a base config class for other sparse dictionary variants like SAEConfig, CrossCoderConfig, etc.
+    Base class for sparse dictionary configs with common settings that are able to apply to various sparse dictionary variants. This class should not be used directly but only as a base config class for other sparse dictionary variants like SAEConfig, CrosscoderConfig, etc.
     """
 
     sae_type: str
@@ -110,7 +108,7 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
     """The activation function to use for the sparse dictionary. Currently supported activation functions are `relu`, `jumprelu`, `topk`, `batchtopk`, `batchlayertopk`, and `layertopk`.
     
     - `relu`: ReLU activation function. Used in the most vanilla SAE settings.
-    - `jumprelu`: JumpReLU activation function, adding a trainable element-wise threshold that pre-activations must pass to be activated, which is formally defined as :math:`f(x) = \\max(0, x - \\theta)` where :math:`\\theta` is the threshold. Proposed in [Jumping Ahead: Improving Reconstruction Fidelity with JumpReLU Sparse Autoencoders](https://arxiv.org/abs/2407.14435).
+    - `jumprelu`: JumpReLU activation function, adding a trainable element-wise threshold that pre-activations must pass to be activated, which is formally defined as $f(x) = \\max(0, x - \\theta)$ where $\\theta$ is the threshold. Proposed in [Jumping Ahead: Improving Reconstruction Fidelity with JumpReLU Sparse Autoencoders](https://arxiv.org/abs/2407.14435).
     - `topk`: TopK activation function. Retains the top K activations per sample, zeroing out the rest. Proposed in [Scaling and evaluating sparse autoencoders](https://openreview.net/forum?id=tcsZt9ZNKD).
     - `batchtopk`: BatchTopK activation function. Batch TopK relaxes TopK function to batch-level, ing the top `k * batch_size` activations per batch and zeroing out the rest. This allows more adaptive allocation of latents on each sample. Proposed in [BatchTopK Sparse Autoencoders](https://arxiv.org/abs/2412.06410).
     - `batchlayertopk`: (For CrossLayerTranscoder only) Extension of BatchTopK to layer-and-batch-aware, retaining the top `k * batch_size * n_layers` activations per batch and layer and zeroing out the rest.
@@ -118,17 +116,18 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
     """
 
     norm_activation: Literal["token-wise", "batch-wise", "dataset-wise", "inference"] = "dataset-wise"
-    """The activation normalization strategy to use for the input/label activations. During call of `normalize_activations` (which will be called by the Trainer during training), the input/label activations will be normalized to an average norm of :math:`\\sqrt{d_{model}}`. This allows easier hyperparameter (mostly learning rate) transfer between different scale of model activations, since the MSE loss without normalization is proportional to the square of the activation norm.
+    """The activation normalization strategy to use for the input/label activations. During call of [`normalize_activations`][lm_saes.models.sparse_dictionary.SparseDictionary.normalize_activations] (which will be called by the Trainer during training), the input/label activations will be normalized to an average norm of $\\sqrt{d_\\text{model}}$. This allows easier hyperparameter (mostly learning rate) transfer between different scale of model activations, since the MSE loss without normalization is proportional to the square of the activation norm.
     
     Different activation normalization strategy determines in what view the norm is *averaged*, with the following options:
+    
     - `token-wise`: Norm is directly computed for activation from each token. No averaging is performed.
     - `batch-wise`: Norm is computed for each batch, then averaged over the batch dimension.
     - `dataset-wise`: Norm is computed from several samples from the activation. Compared to `batch-wise`, `dataset-wise` gives a fixed value of average norm for all activations, preserving the linearity of pre-activation encoding and decoding.
-    - `inference`: No normalization is performed. A inference mode is produced after calling `standardize_parameters_of_dataset_norm` method, which folds the dataset-wise average norm into the weights and biases of the model. Switching to `inference` mode doesn't affect the encoding and decoding as a whole, that is, the reconstructed activations keep the same as the denormalized reconstructed activations in `dataset-wise` mode. However, the feature activations will reflect the activation scale. This allows real magnitude of feature activations to present during inference.
+    - `inference`: No normalization is performed. A inference mode is produced after calling [`standardize_parameters_of_dataset_norm`][lm_saes.models.sparse_dictionary.SparseDictionary.standardize_parameters_of_dataset_norm] method, which folds the dataset-wise average norm into the weights and biases of the model. Switching to `inference` mode doesn't affect the encoding and decoding as a whole, that is, the reconstructed activations keep the same as the denormalized reconstructed activations in `dataset-wise` mode. However, the feature activations will reflect the activation scale. This allows real magnitude of feature activations to present during inference.
     """
 
     sparsity_include_decoder_norm: bool = True
-    """Whether to include the decoder norm term in feature activation gating. If true, the pre-activation hidden states will be scaled by the decoder norm before applying the activation function, and then scale back after the activation function. Formally, considering activation function :math:`f(x)`, an activation gating function :math:`g(x)` is defined as :math:`g(x) = f(x) / x` (element-wise division). When `sparsity_include_decoder_norm` is True, we replace :math:`f(x)` with :math:`x * g(x * || W_\text{dec} ||)`. This effectively suppresses the training dynamics that model tries to increase the decoder norm in exchange of a smaller feature activation magnitude, resulting in lower sparsity loss (L1 norm)."""
+    """Whether to include the decoder norm term in feature activation gating. If true, the pre-activation hidden states will be scaled by the decoder norm before applying the activation function, and then scale back after the activation function. Formally, considering activation function $f(x)$, an activation gating function $g(x)$ is defined as $g(x) = f(x) / x$ (element-wise division). When `sparsity_include_decoder_norm` is True, we replace $f(x)$ with $x \\cdot g(x \\cdot \\| W_\\text{dec} \\|)$. This effectively suppresses the training dynamics that model tries to increase the decoder norm in exchange of a smaller feature activation magnitude, resulting in lower sparsity loss (L1 norm)."""
 
     top_k: int = 50
     """The k value to use for the topk family of activation functions. For vanilla TopK, the L0 norm of the feature activations will be exactly equal to `top_k`."""
@@ -140,7 +139,7 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
     """The sparsity threshold for the Triton SpMM kernel. Only when feature activation sparsity reaches this threshold, the Triton SpMM kernel will be used for the sparse matrix multiplication. This is useful for JumpReLU or TopK with a k annealing schedule, where the sparsity is not guaranteed throughout the training."""
 
     jumprelu_threshold_window: float = 2.0
-    """The window size for the JumpReLU threshold. When pre-activations are element-wise in the window-neighborhood of the threshold, the threshold will begin to receive gradient. See [Anthropic's Circuits Update - January 2025](https://transformer-circuits.pub/2025/january-update/index.html#DL) for more details on how JumpReLU is optimized (where they refer to this window as :math:`\\epsilon`)."""
+    """The window size for the JumpReLU threshold. When pre-activations are element-wise in the window-neighborhood of the threshold, the threshold will begin to receive gradient. See [Anthropic's Circuits Update - January 2025](https://transformer-circuits.pub/2025/january-update/index.html#DL) for more details on how JumpReLU is optimized (where they refer to this window as $\\epsilon$)."""
 
     @property
     def d_sae(self) -> int:
@@ -190,12 +189,30 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
         """List of hook points used by the sparse dictionary, including all input and label hook points. This is used to retrieve useful data from the input activation source."""
         raise NotImplementedError("Subclasses must implement this method")
 
+    @property
+    @abstractmethod
+    def hooks_in(self) -> list[str]:
+        """List of hook points used by the sparse dictionary, including all input hook points. This is used to retrieve useful data from the input activation source."""
+        raise NotImplementedError("Subclasses must implement this method")
+
+    @property
+    @abstractmethod
+    def hooks_out(self) -> list[str]:
+        """List of hook points used by the sparse dictionary, including all output hook points. This is used to retrieve useful data from the output activation source."""
+        raise NotImplementedError("Subclasses must implement this method")
+
 
 class SparseDictionary(HookedRootModule, ABC):
     """Abstract base class for all sparse dictionary models.
 
     This class defines the public interface for all sparse dictionary implementations.
-    Concrete implementations should inherit from this class and implement the required methods.
+    Concrete implementations should inherit from this class and selectively implement the
+    following optional mixins based on the capabilities they support:
+
+    - [`NormComputing`][lm_saes.models.protocols.NormComputing]: Weight norm computation (`encoder_norm`, `decoder_norm`, `decoder_bias_norm`)
+    - [`NormConstrainable`][lm_saes.models.protocols.NormConstrainable]: Weight norm constraints (`set_decoder_to_fixed_norm`, `set_encoder_to_fixed_norm`, `transform_to_unit_decoder_norm`)
+    - [`DatasetNormStandardizable`][lm_saes.models.protocols.DatasetNormStandardizable]: Dataset norm standardization (`standardize_parameters_of_dataset_norm`)
+    - [`EncoderInitializable`][lm_saes.models.protocols.EncoderInitializable]: Encoder initialization from decoder (`init_encoder_with_decoder_transpose`)
     """
 
     specs: type[TensorSpecs] = TensorSpecs
@@ -229,30 +246,6 @@ class SparseDictionary(HookedRootModule, ABC):
         This should be set by the Trainer during training.
         """
         self.current_k = current_k
-
-    @abstractmethod
-    @torch.no_grad()
-    def set_decoder_to_fixed_norm(self, value: float, force_exact: bool):
-        """Set the decoder to a fixed norm."""
-        raise NotImplementedError("Subclasses must implement this method")
-
-    @abstractmethod
-    @torch.no_grad()
-    def set_encoder_to_fixed_norm(self, value: float):
-        """Set the encoder to a fixed norm."""
-        raise NotImplementedError("Subclasses must implement this method")
-
-    @abstractmethod
-    @torch.no_grad()
-    def transform_to_unit_decoder_norm(self):
-        """Transform the model to have unit decoder norm."""
-        raise NotImplementedError("Subclasses must implement this method")
-
-    @abstractmethod
-    @torch.no_grad()
-    def standardize_parameters_of_dataset_norm(self):
-        """Standardize the parameters of the model to account for dataset_norm during inference."""
-        raise NotImplementedError("Subclasses must implement this method")
 
     @torch.no_grad()
     def full_state_dict(self):  # should be overridden by subclasses
@@ -374,7 +367,7 @@ class SparseDictionary(HookedRootModule, ABC):
         ],
     ]:
         """Encode input tensor through the sparse dictionary.
-        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        Ensure that the input activations are normalized by calling [`normalize_activations`][lm_saes.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
         """
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -407,7 +400,7 @@ class SparseDictionary(HookedRootModule, ABC):
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
         """Forward pass through the sparse dictionary.
-        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        Ensure that the input activations are normalized by calling [`normalize_activations`][lm_saes.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
         """
         feature_acts = self.encode(x, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **decoder_kwargs)
@@ -463,7 +456,7 @@ class SparseDictionary(HookedRootModule, ABC):
         self, batch: dict[str, torch.Tensor], *, return_scale_factor: bool = False
     ) -> dict[str, torch.Tensor] | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         """Normalize the input activations.
-        This should be called before calling `encode` or `compute_loss`.
+        This should be called before calling [`encode`][lm_saes.models.sparse_dictionary.SparseDictionary.encode] or [`compute_loss`][lm_saes.models.sparse_dictionary.SparseDictionary.compute_loss].
         """
 
         scale_factors = {
@@ -483,15 +476,9 @@ class SparseDictionary(HookedRootModule, ABC):
         self, batch: dict[str, torch.Tensor], scale_factors: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
         """Denormalize the input activations.
-        This should be called after calling `encode` or `compute_loss`.
+        This should be called after calling [`encode`][lm_saes.models.sparse_dictionary.SparseDictionary.encode] or [`compute_loss`][lm_saes.models.sparse_dictionary.SparseDictionary.compute_loss].
         """
         return {k: v / scale_factors[k] for k, v in batch.items()}
-
-    @abstractmethod
-    @torch.no_grad()
-    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        """Initialize the encoder with the transpose of the decoder."""
-        raise NotImplementedError("Subclasses must implement this method")
 
     def get_parameters(self) -> list[dict[str, Any]]:
         """Get the parameters of the model for optimization."""
@@ -599,6 +586,9 @@ class SparseDictionary(HookedRootModule, ABC):
 
         model.load_full_state_dict(state_dict, strict=strict_loading)
         if fold_activation_scale:
+            assert isinstance(model, DatasetNormStandardizable), (
+                f"{type(model).__name__} does not support dataset norm standardization (DatasetNormStandardizable)"
+            )
             model.standardize_parameters_of_dataset_norm()
         return model
 
@@ -610,14 +600,14 @@ class SparseDictionary(HookedRootModule, ABC):
         device_mesh: DeviceMesh | None = None,
         fold_activation_scale: bool = True,
         strict_loading: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> Self:
         """Load a pretrained sparse dictionary. This method will automatically determine whether pretrained_name_or_path is a path to a local directory or a name on HuggingFace Hub.
 
         Args:
             pretrained_name_or_path (str): If loading from local directory, this is the path to the local directory. If loading sparse dictionary from HuggingFace Hub, this is the format <repo_id>:<name>. If loading SAELens compatible format sparse dictionary, this is the format <release>:<sae_id>.
             device_mesh (DeviceMesh | None): The device mesh to use for the model. If None, the model will be loaded on the current device.
-            fold_activation_scale (bool): Whether to fold the dataset-wise average activation norm into the weights and biases of the model. See `standardize_parameters_of_dataset_norm` method for more details.
+            fold_activation_scale (bool): Whether to fold the dataset-wise average activation norm into the weights and biases of the model. See [`standardize_parameters_of_dataset_norm`][lm_saes.models.sparse_dictionary.SparseDictionary.standardize_parameters_of_dataset_norm] method for more details.
             strict_loading (bool): Whether to strictly load the state dictionary. If False, the state dictionary will be loaded with a relaxed strictness, allowing for missing keys or extra keys.
             **kwargs: Additional keyword arguments to pass to the constructor.
 
@@ -663,7 +653,7 @@ class SparseDictionary(HookedRootModule, ABC):
 
             from sae_lens import SAE
 
-            from lm_saes.sae import SparseAutoEncoder
+            from lm_saes.models.sae import SparseAutoEncoder
 
             assert cls is SparseDictionary or cls is SparseAutoEncoder, (
                 f"SAELens only supports vanilla SAE architecture, but got {cls.__name__}"
@@ -675,40 +665,14 @@ class SparseDictionary(HookedRootModule, ABC):
         else:
             raise ValueError(f"Unsupported pretrained type: {sae_type}")
 
-    @abstractmethod
-    def encoder_norm(self, keepdim: bool = False) -> torch.Tensor:
-        """Compute the norm of the encoder."""
-        raise NotImplementedError("Subclasses must implement this method")
-
-    @abstractmethod
-    def decoder_norm(self, keepdim: bool = False) -> torch.Tensor:
-        """Compute the norm of the decoder."""
-        raise NotImplementedError("Subclasses must implement this method")
-
-    def decoder_norm_full(self, keepdim: bool = False) -> torch.Tensor:
-        """Compute the full norm of the decoder."""
-        decoder_norm = self.decoder_norm(keepdim=keepdim)
-        if not isinstance(decoder_norm, DTensor):
-            return decoder_norm
-        else:
-            return decoder_norm.full_tensor()
-
-    @abstractmethod
-    def decoder_bias_norm(self) -> torch.Tensor:
-        """Compute the norm of the decoder bias."""
-        if self.cfg.use_decoder_bias:
-            raise NotImplementedError("Subclasses must implement this method")
-        else:
-            raise ValueError("Decoder bias norm is not supported for models without decoder bias")
-
     @torch.no_grad()
     def log_statistics(self):
-        log_dict = {
-            "metrics/encoder_norm": item(self.encoder_norm().mean()),
-            "metrics/decoder_norm": item(self.decoder_norm().mean()),
-        }
-        if self.cfg.use_decoder_bias:
-            log_dict["metrics/decoder_bias_norm"] = item(self.decoder_bias_norm().mean())
+        log_dict: dict[str, Any] = {}
+        if isinstance(self, NormComputing):
+            log_dict["metrics/encoder_norm"] = item(self.encoder_norm().mean())
+            log_dict["metrics/decoder_norm"] = item(self.decoder_norm().mean())
+            if self.cfg.use_decoder_bias:
+                log_dict["metrics/decoder_bias_norm"] = item(self.decoder_bias_norm().mean())
         if "topk" in self.cfg.act_fn:
             log_dict["sparsity/k"] = self.current_k
         if isinstance(self.activation_function, JumpReLU):
@@ -870,7 +834,7 @@ class SparseDictionary(HookedRootModule, ABC):
         dict[str, Any],
     ]:
         """Compute the loss for the sparse dictionary.
-        Ensure that the input activations are normalized by calling `normalize_activations` before calling this method.
+        Ensure that the input activations are normalized by calling [`normalize_activations`][lm_saes.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
         """
         x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)
 
@@ -890,6 +854,7 @@ class SparseDictionary(HookedRootModule, ABC):
             loss = l_rec
 
             if sparsity_loss_type is not None:
+                assert isinstance(self, NormComputing), "NormComputing is required for sparsity loss computation"
                 with timer.time("sparsity_loss_calculation"):
                     if sparsity_loss_type == "power":
                         l_s = torch.norm(feature_acts * self.decoder_norm(), p=p, dim=-1)
@@ -929,8 +894,8 @@ class SparseDictionary(HookedRootModule, ABC):
 
             # Lp loss calculation: λ_P * Σ_i ReLU(exp(t) - f_i(x)) ||W_{d,i}||_2
             if lp_coefficient > 0.0 and isinstance(self.activation_function, JumpReLU):
+                assert isinstance(self, NormComputing), "NormComputing is required for Lp loss computation"
                 with timer.time("lp_loss_calculation"):
-                    # ReLU(exp(lp_threshold) - hidden_pre) * decoder_norm
                     jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
                     l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre) * self.decoder_norm()
                     l_p = lp_coefficient * l_p.sum(dim=-1)
@@ -959,8 +924,10 @@ class SparseDictionary(HookedRootModule, ABC):
                         self.current_k = min(k_aux, int(item(is_dead.sum())))
 
                     if self.current_k > 0:
-                        # Scale feature activations by decoder norm if configured
                         if self.cfg.sparsity_include_decoder_norm:
+                            assert isinstance(self, NormComputing), (
+                                "NormComputing is required when sparsity_include_decoder_norm is True"
+                            )
                             dead_hidden_pre = hidden_pre * is_dead * self.decoder_norm()
                         else:
                             dead_hidden_pre = hidden_pre * is_dead
@@ -968,6 +935,7 @@ class SparseDictionary(HookedRootModule, ABC):
                         dead_feature_acts = self.activation_function(dead_hidden_pre)
 
                         if self.cfg.sparsity_include_decoder_norm:
+                            assert isinstance(self, NormComputing)
                             dead_feature_acts = dead_feature_acts / self.decoder_norm()
                             dead_hidden_pre = dead_hidden_pre / self.decoder_norm()
 
@@ -1034,16 +1002,9 @@ class SparseDictionary(HookedRootModule, ABC):
 
         Returns:
             Dictionary of metric names to values. Should include model-specific metrics
-            (e.g., per-layer metrics for CLT, per-head metrics for CrossCoder).
+            (e.g., per-layer metrics for CLT, per-head metrics for Crosscoder).
         """
         return {}
-
-    def init_W_D_with_active_subspace(self, batch: dict[str, torch.Tensor], d_active_subspace: int):
-        """Initialize the W and D parameters with the active subspace."""
-        raise NotImplementedError("Subclasses must implement this method")
-
-    def init_encoder_bias_with_mean_hidden_pre(self, batch: dict[str, torch.Tensor]):
-        raise NotImplementedError("Subclasses must implement this method")
 
     def dim_maps(self) -> dict[str, DimMap]:
         """Return a dictionary mapping parameter names to dimension maps.
@@ -1121,6 +1082,10 @@ class SparseDictionary(HookedRootModule, ABC):
             device_mesh,
         )
         local_path = os.path.join(snapshot_path, name)
+
+        if not (Path(local_path) / "config.json").exists():
+            raise FileNotFoundError(f"Sparse dictionary {name} does not exist in repo {repo_id}")
+
         return cls.from_local(
             local_path,
             device_mesh=device_mesh,

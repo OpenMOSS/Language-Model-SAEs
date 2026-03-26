@@ -1,5 +1,3 @@
-from .abstract_sae import SparseDictionary, SparseDictionaryConfig
-from .abstract_sae import SparseDictionaryConfig as BaseSAEConfig  # backward compat
 from .activation import (
     ActivationFactory,
     ActivationFactoryActivationsSource,
@@ -17,32 +15,41 @@ from .analysis import (
     FeatureAnalyzer,
     FeatureAnalyzerConfig,
 )
-from .backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
+from .backend.language_model import HuggingFaceLanguageModel, LanguageModelConfig, TransformerLensLanguageModel
 from .circuit import ReplacementModel, attribute
-from .clt import CLTConfig, CrossLayerTranscoder
 from .config import DatasetConfig
-from .crosscoder import CrossCoder, CrossCoderConfig
 from .database import MongoClient, MongoDBConfig
 from .evaluator import EvalConfig, Evaluator
 from .initializer import Initializer, InitializerConfig
-from .lorsa import LorsaConfig, LowRankSparseAttention
-from .molt import MixtureOfLinearTransform, MOLTConfig
+from .models.clt import CLTConfig, CrossLayerTranscoder
+from .models.crosscoder import Crosscoder, CrosscoderConfig
+from .models.lorsa import LorsaConfig, LowRankSparseAttention
+from .models.molt import MixtureOfLinearTransform, MOLTConfig
+from .models.protocols import (
+    DatasetNormStandardizable,
+    EncoderInitializable,
+    NormComputing,
+    NormConstrainable,
+)
+from .models.sae import SAEConfig, SparseAutoEncoder
+from .models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
+from .models.sparse_dictionary import SparseDictionaryConfig as BaseSAEConfig  # backward compat
 from .resource_loaders import load_dataset, load_model
 from .runners import (
-    AnalyzeCrossCoderSettings,
+    AnalyzeCrosscoderSettings,
     AnalyzeSAESettings,
     AutoInterpSettings,
     CheckActivationConsistencySettings,
     ConvertTopKToJumpReLUSettings,
     DirectLogitAttributeSettings,
-    EvaluateCrossCoderSettings,
+    EvaluateCrosscoderSettings,
     EvaluateSAESettings,
     GenerateActivationsSettings,
     PretrainedSAE,
     SweepingItem,
     SweepSAESettings,
     TrainCLTSettings,
-    TrainCrossCoderSettings,
+    TrainCrosscoderSettings,
     TrainLorsaSettings,
     TrainMOLTSettings,
     TrainSAESettings,
@@ -62,7 +69,6 @@ from .runners import (
     train_molt,
     train_sae,
 )
-from .sae import SAEConfig, SparseAutoEncoder
 from .trainer import Trainer, TrainerConfig, WandbConfig
 from .utils.logging import setup_logging
 
@@ -72,13 +78,18 @@ __all__ = [
     "SparseDictionary",
     "SparseDictionaryConfig",
     "BaseSAEConfig",  # backward compat alias
+    "NormComputing",
+    "NormConstrainable",
+    "DatasetNormStandardizable",
+    "EncoderInitializable",
     "CLTConfig",
     "CrossLayerTranscoder",
-    "CrossCoderConfig",
-    "CrossCoder",
+    "CrosscoderConfig",
+    "Crosscoder",
     "SparseAutoEncoder",
     "JumpReLU",
     "LanguageModelConfig",
+    "HuggingFaceLanguageModel",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",
     "ActivationFactoryDatasetSource",
@@ -89,7 +100,7 @@ __all__ = [
     "load_dataset",
     "load_model",
     "FeatureAnalyzer",
-    "EvaluateCrossCoderSettings",
+    "EvaluateCrosscoderSettings",
     "evaluate_crosscoder",
     "EvaluateSAESettings",
     "Evaluator",
@@ -118,12 +129,12 @@ __all__ = [
     "FeatureAnalyzerConfig",
     "MongoDBConfig",
     "MongoClient",
-    "AnalyzeCrossCoderSettings",
+    "AnalyzeCrosscoderSettings",
     "analyze_crosscoder",
     "AutoInterpSettings",
     "SweepingItem",
     "SweepSAESettings",
-    "TrainCrossCoderSettings",
+    "TrainCrosscoderSettings",
     "auto_interp",
     "sweep_sae",
     "train_crosscoder",

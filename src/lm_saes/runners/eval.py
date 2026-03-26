@@ -8,14 +8,14 @@ import wandb
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.circuit.replacement_model import ReplacementModel
-from lm_saes.clt import CrossLayerTranscoder
-from lm_saes.crosscoder import CrossCoder
 from lm_saes.evaluator import EvalConfig, Evaluator, GraphEval, GraphEvalConfig
-from lm_saes.lorsa import LowRankSparseAttention
+from lm_saes.models.clt import CrossLayerTranscoder
+from lm_saes.models.crosscoder import Crosscoder
+from lm_saes.models.lorsa import LowRankSparseAttention
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.trainer import WandbConfig
 from lm_saes.utils.distributed import mesh_rank
 from lm_saes.utils.logging import get_distributed_logger, setup_logging
@@ -179,11 +179,11 @@ def eval_graph(settings: EvalGraphSettings) -> None:
     )
 
 
-class EvaluateCrossCoderSettings(BaseSettings):
-    """Settings for evaluating a CrossCoder model."""
+class EvaluateCrosscoderSettings(BaseSettings):
+    """Settings for evaluating a Crosscoder model."""
 
     sae: PretrainedSAE
-    """Path to a pretrained CrossCoder model"""
+    """Path to a pretrained Crosscoder model"""
 
     sae_name: str
     """Name of the SAE model. Use as identifier for the SAE model in the database."""
@@ -205,18 +205,18 @@ class EvaluateCrossCoderSettings(BaseSettings):
 
 
 @torch.no_grad()
-def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
-    """Evaluate a CrossCoder model. The key difference to evaluate_sae is that the activation factories are a list of ActivationFactoryConfig, one for each head; and the evaluating contains a device mesh transformation from head parallelism to model (feature) parallelism.
+def evaluate_crosscoder(settings: EvaluateCrosscoderSettings) -> None:
+    """Evaluate a Crosscoder model. The key difference to evaluate_sae is that the activation factories are a list of ActivationFactoryConfig, one for each head; and the evaluating contains a device mesh transformation from head parallelism to model (feature) parallelism.
 
     Args:
-        settings: Configuration settings for CrossCoder evaluation
+        settings: Configuration settings for Crosscoder evaluation
     """
     # Set up logging
     setup_logging(level="INFO")
 
     parallel_size = len(settings.activation_factories)
 
-    logger.info(f"Analyzing CrossCoder with {parallel_size} parallel size")
+    logger.info(f"Analyzing Crosscoder with {parallel_size} parallel size")
 
     device_mesh = init_device_mesh(
         device_type=settings.device_type,
@@ -224,13 +224,13 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
         mesh_dim_names=("head",),
     )
 
-    logger.info("Device meshes initialized for CrossCoder analysis")
+    logger.info("Device meshes initialized for Crosscoder analysis")
 
-    logger.info("Setting up activation factory for CrossCoder head")
+    logger.info("Setting up activation factory for Crosscoder head")
     activation_factory = ActivationFactory(settings.activation_factories[device_mesh.get_local_rank("head")])
 
-    logger.info("Loading CrossCoder model")
-    sae = CrossCoder.from_pretrained(
+    logger.info("Loading Crosscoder model")
+    sae = Crosscoder.from_pretrained(
         settings.sae.pretrained_name_or_path,
         device_mesh=device_mesh,
         device=settings.sae.device,
@@ -240,7 +240,7 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
     )
 
     assert len(settings.activation_factories) * len(settings.activation_factories[0].hook_points) == sae.cfg.n_heads, (
-        "Total number of hook points must match the number of heads in the CrossCoder"
+        "Total number of hook points must match the number of heads in the Crosscoder"
     )
 
     wandb_logger = (
@@ -259,9 +259,9 @@ def evaluate_crosscoder(settings: EvaluateCrossCoderSettings) -> None:
     if wandb_logger is not None:
         logger.info("WandB logger initialized")
 
-    logger.info("Processing activations for CrossCoder evaluation")
+    logger.info("Processing activations for Crosscoder evaluation")
     activations = activation_factory.process()
     evaluator = Evaluator(settings.eval)
     evaluator.evaluate(sae, activations, wandb_logger)
 
-    logger.info("CrossCoder evaluation completed successfully")
+    logger.info("Crosscoder evaluation completed successfully")

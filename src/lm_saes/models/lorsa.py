@@ -6,7 +6,7 @@ inheriting from SparseDictionary and supporting head parallelization.
 """
 
 import math
-from typing import Any, Literal, Optional, Sequence, Tuple, Union, overload
+from typing import Any, Literal, Optional, Sequence, Tuple, Union, cast, overload
 
 import einops
 import torch
@@ -22,7 +22,13 @@ from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
 
-from lm_saes.abstract_sae import (
+from lm_saes.models.protocols import (
+    DatasetNormStandardizable,
+    EncoderBiasInitializable,
+    NormComputing,
+    NormConstrainable,
+)
+from lm_saes.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
@@ -79,6 +85,14 @@ class LorsaConfig(SparseDictionaryConfig):
         """All hook points used by Lorsa."""
         return [self.hook_point_in, self.hook_point_out]
 
+    @property
+    def hooks_in(self) -> list[str]:
+        return [self.hook_point_in]
+
+    @property
+    def hooks_out(self) -> list[str]:
+        return [self.hook_point_out]
+
     def model_post_init(self, __context):
         super().model_post_init(__context)
         assert self.hook_point_in is not None and self.hook_point_out is not None, (
@@ -92,7 +106,13 @@ class LorsaConfig(SparseDictionaryConfig):
 
 
 @register_sae_model("lorsa")
-class LowRankSparseAttention(SparseDictionary):
+class LowRankSparseAttention(
+    SparseDictionary,
+    NormComputing,
+    NormConstrainable,
+    DatasetNormStandardizable,
+    EncoderBiasInitializable,
+):
     def __init__(self, cfg: LorsaConfig, device_mesh: Optional[DeviceMesh] = None):
         super().__init__(cfg, device_mesh=device_mesh)
         self.cfg = cfg
@@ -207,6 +227,13 @@ class LowRankSparseAttention(SparseDictionary):
                 cos = DimMap({}).distribute(cos, self.device_mesh)
             self.register_buffer("rotary_sin", sin)
             self.register_buffer("rotary_cos", cos)
+
+        self.hook_hidden_pre = HookPoint()
+        self.hook_feature_acts = HookPoint()
+        self.hook_reconstructed = HookPoint()
+        self.hook_attn_pattern = HookPoint()
+        self.hook_attn_score = HookPoint()
+        self.setup()
 
     @property
     def W_D(self) -> torch.Tensor:
@@ -629,11 +656,6 @@ class LowRankSparseAttention(SparseDictionary):
             )
         return z.permute(0, 2, 1, 3).reshape(*v.shape)
 
-    @override
-    @torch.no_grad()
-    def init_encoder_with_decoder_transpose(self, factor: float = 1.0):
-        raise NotImplementedError("It does not make sense to init the encoder with the decoder transpose for Lorsa")
-
     @overload
     def encode(
         self,
@@ -660,6 +682,7 @@ class LowRankSparseAttention(SparseDictionary):
         return_hidden_pre: bool = False,
         return_attention_pattern: bool = False,
         return_attention_score: bool = False,
+        hook_attn_scores: bool = False,
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch seq_len d_sae"],
@@ -680,7 +703,7 @@ class LowRankSparseAttention(SparseDictionary):
         pattern: Optional[torch.Tensor] = None
         scores: Optional[torch.Tensor] = None
 
-        if not (return_attention_pattern or return_attention_score):
+        if not (return_attention_pattern or return_attention_score or hook_attn_scores):
             query = q.permute(0, 2, 1, 3)
             key = k.permute(0, 2, 1, 3)
             value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
@@ -702,11 +725,18 @@ class LowRankSparseAttention(SparseDictionary):
             q = q.permute(2, 0, 1, 3)  # (n_qk_heads, batch, seq_len, d_qk_head)
             k = k.permute(2, 0, 3, 1)  # (n_qk_heads, batch, d_qk_head, seq_len)
             scores = torch.einsum("nbqd,nbdk->nbqk", q, k) / self.attn_scale
-            scores = self._apply_causal_mask(scores)
-            pattern = F.softmax(scores, dim=-1)
+            scores = cast(
+                torch.Tensor, self.hook_attn_score(self._apply_causal_mask(scores))
+            )  # (n_qk_heads, batch, q_pos, k_pos)
+            # Hook called on (batch, n_qk_heads, q_pos, k_pos); permute back for internal use
+            pattern = cast(
+                torch.Tensor, self.hook_attn_pattern(F.softmax(scores, dim=-1).permute(1, 0, 2, 3)).permute(1, 0, 2, 3)
+            )
 
             # Head outputs
             hidden_pre = self._compute_head_outputs(pattern, v)
+
+        hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
@@ -718,7 +748,7 @@ class LowRankSparseAttention(SparseDictionary):
             feature_acts = feature_acts / self.decoder_norm()
             hidden_pre = hidden_pre / self.decoder_norm()
 
-        return_values: list[torch.Tensor] = [feature_acts]
+        return_values: list[torch.Tensor] = [self.hook_feature_acts(feature_acts)]
         if return_hidden_pre:
             return_values.append(hidden_pre)
         if return_attention_pattern and pattern is not None:
@@ -731,16 +761,18 @@ class LowRankSparseAttention(SparseDictionary):
     def decode(self, feature_acts, **kwargs):
         """Decode head activations to output."""
         if feature_acts.layout == torch.sparse_coo:
-            return (
+            out = (
                 torch.sparse.mm(
                     feature_acts.to(torch.float32),
                     self.W_O.to(torch.float32),
                 ).to(self.cfg.dtype)
                 + self.b_D
             )
+            return self.hook_reconstructed(out)
         out = torch.einsum("bps,sd->bpd", feature_acts, self.W_O)
         if self.cfg.use_decoder_bias:
             out = out + self.b_D
+        out = self.hook_reconstructed(out)
         if isinstance(out, DTensor):
             out = DimMap({"data": 0}).redistribute(out)
         return out

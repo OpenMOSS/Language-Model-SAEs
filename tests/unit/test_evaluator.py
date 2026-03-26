@@ -5,7 +5,7 @@ from transformer_lens import HookedTransformer
 
 from lm_saes import EvalConfig, SAEConfig
 from lm_saes.evaluator import Evaluator
-from lm_saes.sae import SparseAutoEncoder
+from lm_saes.models.sae import SparseAutoEncoder
 
 
 @pytest.fixture

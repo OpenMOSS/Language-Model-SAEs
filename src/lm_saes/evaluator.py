@@ -8,12 +8,10 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from wandb.sdk.wandb_run import Run
 
-from lm_saes.abstract_sae import SparseDictionary
 from lm_saes.circuit.attribution import attribute
 from lm_saes.circuit.graph import Graph, compute_influence, normalize_matrix
 from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes.config import BaseConfig
-from lm_saes.lorsa import LowRankSparseAttention
 from lm_saes.metrics import (
     DownstreamMetric,
     ExplainedVarianceMetric,
@@ -25,7 +23,9 @@ from lm_saes.metrics import (
     Metric,
     ModelSpecificMetric,
 )
-from lm_saes.sae import SparseAutoEncoder
+from lm_saes.models.lorsa import LowRankSparseAttention
+from lm_saes.models.sae import SparseAutoEncoder
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.utils.distributed.ops import item
 from lm_saes.utils.logging import get_distributed_logger, log_metrics
 from lm_saes.utils.timer import timer

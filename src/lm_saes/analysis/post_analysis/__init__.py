@@ -10,7 +10,7 @@ from .base import PostAnalysisProcessor, get_post_analysis_processor, register_p
 
 # Import all processors to trigger their registration
 from .clt import CLTPostAnalysisProcessor
-from .crosscoder import CrossCoderPostAnalysisProcessor
+from .crosscoder import CrosscoderPostAnalysisProcessor
 from .generic import GenericPostAnalysisProcessor
 from .lorsa import LorsaPostAnalysisProcessor
 
@@ -18,7 +18,7 @@ __all__ = [
     "PostAnalysisProcessor",
     "register_post_analysis_processor",
     "get_post_analysis_processor",
-    "CrossCoderPostAnalysisProcessor",
+    "CrosscoderPostAnalysisProcessor",
     "GenericPostAnalysisProcessor",
     "LorsaPostAnalysisProcessor",
     "CLTPostAnalysisProcessor",

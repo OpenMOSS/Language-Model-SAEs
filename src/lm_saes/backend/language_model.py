@@ -1,19 +1,39 @@
+from __future__ import annotations
+
 import json
 import os
 import re
 import warnings
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from itertools import accumulate
-from typing import Any, Callable, Literal, Optional, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Iterator,
+    Literal,
+    Optional,
+    Self,
+    Sequence,
+    Union,
+    cast,
+    overload,
+)
 
+import einops
 import torch
 import torch.distributed as dist
 import torch.utils._pytree as pytree
 from huggingface_hub import hf_hub_download
+from torch._tensor import Tensor
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
+from torch.types import Number
+from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from transformers import (
     AutoModelForCausalLM,
@@ -23,14 +43,19 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.backend.run_with_cache_until import run_with_cache_until
+from lm_saes.backend.hooks import apply_saes, detach_at
+from lm_saes.backend.tl_addons import run_with_cache_until, run_with_ref_cache
 from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
+from lm_saes.utils.discrete import DiscreteMapper
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import (
-    pad_and_truncate_tokens,
-)
-from lm_saes.utils.timer import timer
+from lm_saes.utils.misc import ensure_tokenized, pad_and_truncate_tokens, tensor_id
+
+if TYPE_CHECKING:
+    from lm_saes.models.lorsa import LowRankSparseAttention
+    from lm_saes.models.molt import MixtureOfLinearTransform
+    from lm_saes.models.sae import SparseAutoEncoder
+    from lm_saes.models.sparse_dictionary import SparseDictionary
 
 
 def to_tokens(tokenizer, text, max_length, device="cpu", prepend_bos=True):
@@ -235,6 +260,713 @@ class LanguageModel(ABC):
         pass
 
 
+@dataclass(frozen=True)
+class Node:
+    key: Any
+    """Key of the node. Should be a hashable object."""
+
+    indices: torch.Tensor
+    """Indices of elements in the node's data. Should be of shape `(n_elements, d_index)`."""
+
+    offsets: torch.Tensor
+    """In-tensor offsets of elements. Should be of shape `(n_elements,)`."""
+
+    inv_indices: torch.Tensor
+    """Inverse indices of elements. Should be of shape `(n_elements, d_index)`."""
+
+    def __hash__(self) -> int:
+        return hash((self.key, tensor_id(self.indices)))
+
+
+@dataclass
+class NodeInfo:
+    """Node identifier with key and indices into the node's data."""
+
+    key: Any
+    """Key of the node. Should be a hashable object."""
+
+    indices: torch.Tensor
+    """Indices of elements in the node's data. Should be of shape `(n_elements, d_index)`."""
+
+    def __len__(self) -> int:
+        return self.indices.shape[0]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, NodeInfo):
+            return False
+        return self.key == other.key and torch.equal(self.indices, other.indices)
+
+    def __getitem__(self, index: slice) -> Self:
+        return replace(self, indices=self.indices[index])
+
+    def split(self, batch_size: int) -> tuple[Self, Self]:
+        return self[:batch_size], self[batch_size:]
+
+    def unbind(self) -> list[Self]:
+        """Split into a list of NodeInfo, each containing exactly one index."""
+        return [replace(self, indices=self.indices[i : i + 1]) for i in range(self.indices.shape[0])]
+
+
+def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
+    inv_indices = torch.empty(
+        [int(indices[:, i].max() + 1) for i in range(indices.shape[1])],
+        device=indices.device,
+        dtype=torch.long,
+    )
+    inv_indices[indices.unbind(dim=1)] = torch.arange(indices.shape[0], device=indices.device)
+    return inv_indices
+
+
+@dataclass
+class Dimension:
+    node_infos: Sequence[NodeInfo]
+    device: torch.device | str
+    mapper: DiscreteMapper
+    node_mappings: dict[Any, Node]
+    offset_mapping: dict[str, torch.Tensor]
+    _nodes_to_offsets_cache: dict[int, torch.Tensor] = field(default_factory=dict)
+
+    @classmethod
+    def empty(cls, device: torch.device | str | None = None) -> Self:
+        return cls(
+            node_infos=[],
+            device=device if device is not None else "cpu",
+            mapper=DiscreteMapper(),
+            node_mappings={},
+            offset_mapping={
+                "keys": torch.tensor([], device=device if device is not None else "cpu", dtype=torch.long),
+                "indices": torch.tensor([], device=device if device is not None else "cpu", dtype=torch.long),
+            },
+        )
+
+    @classmethod
+    def from_node_infos(cls, node_infos: Sequence[NodeInfo]) -> Self:
+        return cls.empty(node_infos[0].indices.device) + node_infos
+
+    def __add__(self, other: Sequence[NodeInfo]) -> Self:
+        node_mappings = dict(self.node_mappings)
+        offset_mapping = dict(self.offset_mapping)
+
+        merged_node_infos = defaultdict(
+            lambda: {
+                "indices": torch.tensor([], device=self.device, dtype=torch.long),
+                "offsets": torch.tensor([], device=self.device, dtype=torch.long),
+            }
+        )
+
+        start = len(self)
+        acc_node_length = 0
+        for node_info in other:
+            node_length = node_info.indices.shape[0]
+            merged_node_infos[node_info.key]["indices"] = torch.cat(
+                [merged_node_infos[node_info.key]["indices"], node_info.indices],
+                dim=0,
+            )
+            merged_node_infos[node_info.key]["offsets"] = torch.cat(
+                [
+                    merged_node_infos[node_info.key]["offsets"],
+                    torch.arange(start + acc_node_length, start + acc_node_length + node_length, device=self.device),
+                ],
+                dim=0,
+            )
+            acc_node_length += node_length
+
+        offset_mapping = {
+            "indices": torch.cat(
+                [offset_mapping["indices"], torch.empty(acc_node_length, device=self.device, dtype=torch.long)],
+                dim=0,
+            ),
+            "keys": torch.cat(
+                [offset_mapping["keys"], torch.empty(acc_node_length, device=self.device, dtype=torch.long)],
+                dim=0,
+            ),
+        }
+
+        for key, node_info in merged_node_infos.items():
+            node_key_id = self.mapper.encode([key])[0]
+
+            # Append node to node mapping
+            if key not in node_mappings:
+                n_original_elements = 0
+                node_mappings = node_mappings | {
+                    key: Node(
+                        key=key,
+                        indices=node_info["indices"],
+                        offsets=node_info["offsets"],
+                        inv_indices=compute_inv_indices(node_info["indices"]),
+                    )
+                }
+            else:
+                n_original_elements = node_mappings[key].indices.shape[0]
+                new_indices = torch.cat(
+                    [node_mappings[key].indices, node_info["indices"]],
+                    dim=0,
+                )
+                node_mappings = node_mappings | {
+                    key: Node(
+                        key=key,
+                        indices=new_indices,
+                        offsets=torch.cat(
+                            [
+                                node_mappings[key].offsets,
+                                node_info["offsets"],
+                            ],
+                            dim=0,
+                        ),
+                        inv_indices=compute_inv_indices(new_indices),
+                    )
+                }
+
+            # Update offset mapping
+            offset_mapping["indices"][node_info["offsets"]] = torch.arange(
+                n_original_elements,
+                n_original_elements + node_info["indices"].shape[0],
+                device=self.device,
+                dtype=torch.long,
+            )
+            offset_mapping["keys"][node_info["offsets"]] = node_key_id
+
+        ret = self.__class__(
+            node_infos=list(self.node_infos) + list(other),
+            device=self.device,
+            mapper=self.mapper,
+            node_mappings=node_mappings,
+            offset_mapping=offset_mapping,
+        )
+        assert len(ret) == len(self) + sum([len(node_info) for node_info in other]), "Dimension length mismatch"
+        return ret
+
+    def __len__(self) -> int:
+        return sum([len(node.indices) for node in self.node_mappings.values()])
+
+    def __hash__(self) -> int:
+        return hash(tuple(self.node_mappings.values()))
+
+    def nodes_to_offsets(self, dimension: Sequence[NodeInfo] | Dimension) -> torch.Tensor:
+        if isinstance(dimension, Dimension):
+            cache_key = hash(dimension)
+            if cache_key in self._nodes_to_offsets_cache:
+                return self._nodes_to_offsets_cache[cache_key]
+
+            offsets = torch.empty(len(dimension), device=self.device, dtype=torch.long)
+            for node in dimension.node_mappings.values():
+                offsets[node.offsets] = self.node_mappings[node.key].offsets[
+                    self.node_mappings[node.key].inv_indices[node.indices.unbind(dim=1)]
+                ]
+
+            self._nodes_to_offsets_cache[cache_key] = offsets
+            return offsets
+        else:
+            offsets = torch.empty(
+                sum([len(node_info) for node_info in dimension]), device=self.device, dtype=torch.long
+            )
+            start = 0
+            for node_info in dimension:
+                offsets[start : start + len(node_info)] = self.node_mappings[node_info.key].offsets[
+                    self.node_mappings[node_info.key].inv_indices[node_info.indices.unbind(dim=1)]
+                ]
+                start += len(node_info)
+            return offsets
+
+    def offsets_to_nodes(self, offsets: torch.Tensor) -> Sequence[NodeInfo]:
+        keys_encoded = self.offset_mapping["keys"][offsets]
+        indices = self.offset_mapping["indices"][offsets]
+        unique_keys_encoded, inverse_indices = torch.unique_consecutive(keys_encoded, return_inverse=True)
+        unique_keys = self.mapper.decode(unique_keys_encoded.tolist())
+        return [
+            NodeInfo(
+                key=unique_keys[i], indices=self.node_mappings[unique_keys[i]].indices[indices[inverse_indices == i]]
+            )
+            for i in range(len(unique_keys))
+        ]
+
+
+class NodeIndexedTensor:
+    def __init__(
+        self,
+        n_dims: int,
+        device: torch.device | str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ):
+        self.n_dims = n_dims
+        self.data = torch.zeros([0] * self.n_dims, dtype=dtype, device=device)
+        self.dimensions = tuple(Dimension.empty(device=device) for _ in range(self.n_dims))
+
+    @classmethod
+    def from_data(cls, data: torch.Tensor, dimensions: tuple[Sequence[NodeInfo] | Dimension, ...]) -> Self:
+        self = cls.__new__(cls)
+        self.n_dims = data.ndim
+        self.data = data
+        self.dimensions = tuple(
+            dimension
+            if isinstance(dimension, Dimension)
+            else Dimension.from_node_infos(dimension)
+            if len(dimension) > 0
+            else Dimension.empty(device=data.device)
+            for dimension in dimensions
+        )
+        assert all(len(dimension) == data.shape[dim] for dim, dimension in enumerate(self.dimensions)), (
+            "Data length must match dimension length"
+        )
+        return self
+
+    @classmethod
+    def from_dimensions(
+        cls,
+        dimensions: tuple[Sequence[NodeInfo] | Dimension, ...],
+        device: torch.device | str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ) -> Self:
+        shape = [
+            len(dimension) if isinstance(dimension, Dimension) else sum([len(node_info) for node_info in dimension])
+            for dimension in dimensions
+        ]
+        return cls.from_data(torch.zeros(shape, dtype=dtype, device=device), dimensions)
+
+    def extend(self, node_infos: Sequence[NodeInfo], dim: int, data: torch.Tensor | None = None):
+        new_data_shape = tuple(
+            self.data.shape[i] if i != dim else sum([node_info.indices.shape[0] for node_info in node_infos])
+            for i in range(self.n_dims)
+        )
+
+        if data is None:
+            data = torch.zeros(new_data_shape, dtype=self.data.dtype, device=self.data.device)
+        else:
+            assert data.shape == new_data_shape, (
+                f"Data shape mismatches expected shape: {data.shape} != {new_data_shape}"
+            )
+
+        self.data = torch.cat(
+            [self.data, data],
+            dim=dim,
+        )
+
+        self.dimensions = tuple(
+            self.dimensions[i] + node_infos if i == dim else self.dimensions[i] for i in range(self.n_dims)
+        )
+
+    def __getitem__(
+        self, key: tuple[Sequence[NodeInfo] | Dimension | None, ...] | Sequence[NodeInfo] | Dimension | None
+    ) -> Self:
+        """Index the tensor with NodeInfo selections for each dimension.
+
+        Each dimension accepts a ``Sequence[NodeInfo]`` to select specific node
+        elements, or ``None`` to select all elements along that dimension.
+
+        For a 1-D tensor a single ``Sequence[NodeInfo]`` (or ``None``) can be
+        passed directly; for higher-rank tensors, pass a tuple with one entry
+        per dimension.
+
+        Args:
+            key: Dimension selectors. A tuple of ``(Sequence[NodeInfo] | None)``
+                with length equal to :attr:`n_dims`, or a bare
+                ``Sequence[NodeInfo] | None`` for 1-D tensors.
+
+        Returns:
+            A new :class:`NodeIndexedTensor` (or subclass) containing the
+            selected sub-tensor with updated node mappings.
+        """
+        if not isinstance(key, tuple):
+            key = (key,)
+        key = cast(tuple[Sequence[NodeInfo] | Dimension | None, ...], key)
+        if len(key) != self.n_dims:
+            raise ValueError(f"Expected {self.n_dims} dimension selectors, got {len(key)}")
+
+        data = self.data
+        for dim in range(self.n_dims):
+            dimension = key[dim]
+
+            if dimension is None:
+                continue
+
+            offsets = self.dimensions[dim].nodes_to_offsets(dimension)
+            data = data.index_select(dim, offsets)
+
+        dimensions = tuple(
+            dimension if dimension is not None else self.dimensions[dim] for dim, dimension in enumerate(key)
+        )
+
+        return self.__class__.from_data(data=data, dimensions=dimensions)
+
+    def __setitem__(
+        self,
+        key: tuple[Sequence[NodeInfo] | Dimension | None, ...] | Sequence[NodeInfo] | Dimension | None,
+        value: Self | Tensor,
+    ):
+        """Assign to a NodeInfo-selected sub-tensor.
+
+        Args:
+            key: Dimension selectors. A tuple of ``(Sequence[NodeInfo] | None)``
+                with length equal to :attr:`n_dims`, or a bare
+                ``Sequence[NodeInfo] | None`` for 1-D tensors.
+            value: Tensor values to write to the selected region. When a
+                :class:`NodeIndexedTensor` is provided, its underlying
+                :attr:`data` tensor is assigned.
+
+        Returns:
+            The updated tensor instance.
+        """
+        if not isinstance(key, tuple):
+            key = (key,)
+        key = cast(tuple[Sequence[NodeInfo] | Dimension | None, ...], key)
+        if len(key) != self.n_dims:
+            raise ValueError(f"Expected {self.n_dims} dimension selectors, got {len(key)}")
+
+        value = cast(Tensor, value.data if isinstance(value, NodeIndexedTensor) else value)
+
+        indexers: list[torch.Tensor] = []
+        for dim in range(self.n_dims):
+            dimension = key[dim]
+            offsets = (
+                self.dimensions[dim].nodes_to_offsets(dimension)
+                if dimension is not None
+                else torch.arange(self.data.shape[dim], device=self.data.device, dtype=torch.long)
+            )
+            view_shape = [1] * self.n_dims
+            view_shape[dim] = offsets.shape[0]
+            indexers.append(offsets.view(*view_shape))
+
+        self.data[tuple(indexers)] = value
+        return self
+
+    def __add__(self, other: Self):
+        data = self.data + other.data
+        return self.__class__.from_data(data, self.dimensions)
+
+
+class NodeIndexedVector(NodeIndexedTensor):
+    def __init__(
+        self,
+        device: torch.device | str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ):
+        super().__init__(
+            n_dims=1,
+            device=device,
+            dtype=dtype,
+        )
+
+    def add_nodes(self, node_infos: Sequence[NodeInfo], data: torch.Tensor | None = None):
+        self.extend(node_infos, 0, data)
+
+    def topk(self, k: int, ignore_node_infos: Sequence[NodeInfo] | None = None):
+        ignore_indices = (
+            self.dimensions[0].nodes_to_offsets(ignore_node_infos)
+            if ignore_node_infos is not None and len(ignore_node_infos) > 0
+            else None
+        )
+        if ignore_indices is not None:
+            self.data[ignore_indices] = float("-inf")
+        topk_values, topk_indices = torch.topk(self.data, k=k, dim=0)
+        return topk_values, self.dimensions[0].offsets_to_nodes(topk_indices)
+
+    @overload
+    def matmul(self, other: NodeIndexedMatrix, _check_node_matching: bool = False) -> NodeIndexedVector: ...
+    @overload
+    def matmul(self, other: NodeIndexedVector, _check_node_matching: bool = False) -> Number: ...
+
+    def matmul(self, other: NodeIndexedMatrix | NodeIndexedVector, _check_node_matching: bool = False):
+        # if _check_node_matching:
+        #     a, b = self.node_infos[0], other.node_infos[0]
+        #     if len(a) != len(b) or any(not ai == bi for ai, bi in zip(a, b)):
+        #         raise ValueError(f"Node matching failed: {a} != {b}")
+
+        data = self.data @ other.data
+
+        if isinstance(other, NodeIndexedMatrix):
+            return NodeIndexedVector.from_data(data, dimensions=(other.dimensions[1],))
+        elif isinstance(other, NodeIndexedVector):
+            return data.item()
+        else:
+            raise ValueError(
+                f"Invalid type as right operand in NodeIndexedVector.matmul: {type(other)}. Expected NodeIndexedMatrix or NodeIndexedVector."
+            )
+
+    def __matmul__(self, other: NodeIndexedMatrix):
+        return self.matmul(other)
+
+
+class NodeIndexedMatrix(NodeIndexedTensor):
+    def __init__(
+        self,
+        device: torch.device | str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ):
+        super().__init__(
+            n_dims=2,
+            device=device,
+            dtype=dtype,
+        )
+
+    def add_targets(self, node_infos: Sequence[NodeInfo] | NodeInfo, data: torch.Tensor | None = None):
+        node_infos = node_infos if isinstance(node_infos, Sequence) else [node_infos]
+        self.extend(node_infos, 0, data)
+
+    def add_sources(self, node_infos: Sequence[NodeInfo] | NodeInfo, data: torch.Tensor | None = None):
+        node_infos = node_infos if isinstance(node_infos, Sequence) else [node_infos]
+        self.extend(node_infos, 1, data)
+
+    @overload
+    def matmul(self, other: NodeIndexedVector, _check_node_matching: bool = False) -> NodeIndexedVector: ...
+    @overload
+    def matmul(self, other: NodeIndexedMatrix, _check_node_matching: bool = False) -> NodeIndexedMatrix: ...
+
+    def matmul(self, other: NodeIndexedVector | NodeIndexedMatrix, _check_node_matching: bool = False):
+        # if _check_node_matching:
+        #     a, b = self.dimensions[1], other.dimensions[0]
+        #     if len(a) != len(b) or any(not ai == bi for ai, bi in zip(a, b)):
+        #         raise ValueError(f"Node matching failed: {a} != {b}")
+
+        data = self.data @ other.data
+
+        if isinstance(other, NodeIndexedVector):
+            return NodeIndexedVector.from_data(data, dimensions=(self.dimensions[0],))
+        elif isinstance(other, NodeIndexedMatrix):
+            return NodeIndexedMatrix.from_data(data, dimensions=(self.dimensions[0], other.dimensions[1]))
+        else:
+            raise ValueError(f"Invalid type as right operand in NodeIndexedMatrix.matmul: {type(other)}")
+
+    @overload
+    def __matmul__(self, other: NodeIndexedVector) -> NodeIndexedVector: ...
+    @overload
+    def __matmul__(self, other: NodeIndexedMatrix) -> NodeIndexedMatrix: ...
+
+    def __matmul__(self, other: NodeIndexedVector | NodeIndexedMatrix):
+        return self.matmul(other)
+
+
+@dataclass
+class NodeInfoRef(NodeInfo):
+    """NodeInfo with reference to node (tensor) in computation graph."""
+
+    ref: torch.Tensor
+
+
+class NodeInfoQueue[T: NodeInfo]:
+    def __init__(self, node_infos: Sequence[T] = []):
+        self.queue = list(node_infos)
+
+    def enqueue(self, node_info: Sequence[T]):
+        self.queue.extend(node_info)
+
+    def dequeue(self, batch_size: int) -> Sequence[T]:
+        accumulated = 0
+        results = []
+        while accumulated < batch_size and len(self.queue) > 0:
+            if accumulated + len(self.queue[0]) > batch_size:
+                results.append(self.queue[0][: batch_size - accumulated])
+                self.queue[0] = self.queue[0][batch_size - accumulated :]
+                accumulated = batch_size
+            else:
+                results.append(self.queue.pop(0))
+                accumulated += len(results[-1])
+        return results
+
+    def iter(self, batch_size: int) -> Iterator[Sequence[T]]:
+        while len(self.queue) > 0:
+            yield self.dequeue(batch_size)
+
+
+class NodeInfoSet[T: NodeInfo]:
+    def __init__(self, node_infos: Sequence[T] = []):
+        self.node_dict: dict[Any, T] = {}
+        self.extend(node_infos)
+
+    def extend(self, node_infos: Sequence[T]):
+        for node_info in node_infos:
+            if node_info.key not in self.node_dict:
+                self.node_dict[node_info.key] = replace(node_info)
+            else:
+                self.node_dict[node_info.key].indices = torch.cat(
+                    [self.node_dict[node_info.key].indices, node_info.indices],
+                    dim=0,
+                )
+
+    def __len__(self) -> int:
+        return sum(len(node_info) for node_info in self.node_dict.values())
+
+    def to_list(self) -> list[T]:
+        return list(self.node_dict.values())
+
+
+def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
+    return NodeIndexedMatrix.from_data(
+        data=torch.abs(matrix.data) / torch.abs(matrix.data).sum(dim=1, keepdim=True).clamp(min=1e-8),
+        dimensions=matrix.dimensions,
+    )
+
+
+def compute_intermediates_attribution(
+    attribution: NodeIndexedMatrix,
+    targets: Dimension,
+    intermediates: Dimension,
+    max_iter: int,
+) -> NodeIndexedMatrix:
+    attribution = get_normalized_matrix(attribution)
+    influence = attribution[targets, None]
+    if len(intermediates) == 0:
+        return influence
+    t2i: NodeIndexedMatrix = attribution[targets, intermediates]
+    for _ in range(max_iter):
+        i2i: NodeIndexedMatrix = attribution[intermediates, None]
+        cur_influence = t2i @ i2i
+        if not torch.any(cur_influence.data):
+            break
+        influence += cur_influence
+        t2i = t2i @ attribution[intermediates, intermediates]
+    return influence
+
+
+def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
+    return [node_info.ref[:, *node_info.indices.unbind(dim=1)] for node_info in node_infos]
+
+
+def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
+    return [
+        node_info.ref.grad[:, *node_info.indices.unbind(dim=1)]
+        if node_info.ref.grad is not None
+        else torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)])
+        for node_info in node_infos
+    ]
+
+
+def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
+    for node_info in node_infos:
+        node_info.ref.grad = None
+
+
+def retrieval_from_intermediates(
+    node_infos: Sequence[NodeInfo], intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]]
+):
+    return [
+        NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[0].ref)
+        for node_info in node_infos
+        for intermediate in intermediates
+        if node_info.key == intermediate[0].key
+    ]
+
+
+def greedily_collect_attribution(
+    targets: Sequence[NodeInfoRef],
+    sources: Sequence[NodeInfoRef],
+    intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]],  # [up as target, down as source]
+    max_intermediates: int,
+    reduction_weight: torch.Tensor,
+    max_iter: int = 100,
+) -> NodeIndexedMatrix:
+    """
+    Greedily collect attribution from targets to sources through intermediates.
+    """
+
+    all_sources = list(sources) + [intermediate[1] for intermediate in intermediates]
+
+    targets_dimension = Dimension.from_node_infos(targets)
+    all_sources_dimension = Dimension.from_node_infos(all_sources)
+    source_intermediates_dimension = Dimension.from_node_infos([intermediate[1] for intermediate in intermediates])
+    attribution = NodeIndexedMatrix.from_dimensions(
+        dimensions=(targets_dimension, all_sources_dimension),
+        device=targets[0].ref.device,
+        dtype=targets[0].ref.dtype,
+    )
+
+    batch_size = targets[0].ref.shape[0]
+
+    queue = NodeInfoQueue(targets)
+
+    for target_batch in queue.iter(batch_size):
+        clear_grads(all_sources)
+        root = torch.diag(torch.cat(values(target_batch), dim=1))
+        root.sum().backward(retain_graph=True)
+        attribution[target_batch, None] = torch.cat(
+            [
+                einops.einsum(
+                    value[: root.shape[0]],
+                    grad[: root.shape[0]],
+                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                )
+                for value, grad in zip(values(all_sources), grads(all_sources))
+            ],
+            dim=1,
+        )
+
+    collected_intermediates_dimension = Dimension.empty(device=targets[0].ref.device)
+    reduction_weight: NodeIndexedVector = NodeIndexedVector.from_data(reduction_weight, dimensions=(targets_dimension,))
+    for i in tqdm(range(0, max_intermediates, batch_size)):
+        cur_batch_size = min(batch_size, max_intermediates - i)
+        intermediates_attribution = compute_intermediates_attribution(
+            attribution, targets_dimension, collected_intermediates_dimension, max_iter
+        )
+
+        influence = reduction_weight @ intermediates_attribution[None, source_intermediates_dimension]
+
+        _, selected_node_infos = influence.topk(
+            k=cur_batch_size, ignore_node_infos=collected_intermediates_dimension.node_infos
+        )
+
+        collected_intermediates_dimension = collected_intermediates_dimension + selected_node_infos
+
+        clear_grads(all_sources)
+        node_refs = retrieval_from_intermediates(selected_node_infos, intermediates)
+        root = torch.diag(torch.cat(values(node_refs), dim=1))
+
+        root.sum().backward(retain_graph=True)
+
+        attribution.add_targets(
+            selected_node_infos,
+            torch.cat(
+                [
+                    einops.einsum(
+                        value[: root.shape[0]],
+                        grad[: root.shape[0]],
+                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                    )
+                    for value, grad in zip(values(all_sources), grads(all_sources))
+                ],
+                dim=1,
+            ),
+        )
+
+    return attribution
+
+
+def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
+
+    assert models.model is not None, "model must be initialized"
+    detach_hooks = []
+    for i, block in enumerate(models.model.blocks):
+        for module_name in ["ln1", "ln2", "ln1_post", "ln2_post"]:
+            if hasattr(block, module_name) and isinstance(getattr(block, module_name), torch.nn.Module):
+                detach_hooks.append(f"blocks.{i}.{module_name}.hook_scale")
+
+    detach_hooks.append("ln_final.hook_scale")
+    return detach_hooks
+
+
+@dataclass
+class QKTraceRequest:
+    lorsa: LowRankSparseAttention
+    head_idx: int
+    q_pos: int
+    k_pos: int
+
+    @property
+    def dedup_key(self) -> tuple[str, int, int, int]:
+        return (self.lorsa.cfg.hook_point_out, self.head_idx, self.q_pos, self.k_pos)
+
+    @classmethod
+    def from_lorsa_feature(cls, node_info: NodeInfo, lorsa: LowRankSparseAttention, attn_scores: torch.Tensor):
+        head_idx = node_info.indices[0][1] // lorsa.cfg.ov_group_size
+        attn_score = attn_scores[head_idx, 0, :, :]  # (q_pos, k_pos)
+        q_pos, k_pos = torch.unravel_index(attn_score.argmax(), attn_score.shape)
+        return cls(lorsa, int(head_idx), int(q_pos.item()), int(k_pos.item()))
+
+
+@dataclass
+class QKTraceResult:
+    nodes: tuple[NodeInfo, NodeInfo]
+    attribution: float
+
+
 class TransformerLensLanguageModel(LanguageModel):
     def __init__(self, cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None):
         self.cfg = cfg
@@ -285,6 +1017,302 @@ class TransformerLensLanguageModel(LanguageModel):
             if hf_model and not cfg.tokenizer_only
             else None
         )
+
+    def _collect_cache(
+        self,
+        inputs: torch.Tensor | str,
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
+    ):
+
+        assert self.model is not None, "model must be initialized"
+        tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
+
+        assert all(
+            isinstance(replacement_module, SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform)
+            for replacement_module in replacement_modules
+        ), (
+            "Currently only support sparse dictionaries that guarantee the hook points in happen before the hook points out."
+        )
+        with self.apply_saes(cast(list[SparseDictionary], replacement_modules)):
+            with self.detach_at(
+                ["hook_embed"]
+                + [replacement_module.cfg.hook_point_out + ".error" for replacement_module in replacement_modules]
+                + [
+                    replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts"
+                    for replacement_module in replacement_modules
+                ]
+                + [
+                    replacement_module.cfg.hook_point_out + ".sae.hook_attn_pattern"
+                    for replacement_module in replacement_modules
+                    if isinstance(replacement_module, LowRankSparseAttention)
+                ]
+                + [
+                    replacement_module.cfg.hook_point_out + item
+                    for replacement_module in replacement_modules
+                    if isinstance(replacement_module, LowRankSparseAttention) and replacement_module.cfg.use_post_qk_ln
+                    for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
+                ]
+                + ln_detach_hooks(self)
+            ):
+                logits, cache = self.run_with_ref_cache(
+                    tokens,
+                    names_filter=["hook_embed.post"]
+                    + [
+                        replacement_module.cfg.hook_point_out + ".error.post"
+                        for replacement_module in replacement_modules
+                    ]
+                    + [
+                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"
+                        for replacement_module in replacement_modules
+                    ]
+                    + [
+                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"
+                        for replacement_module in replacement_modules
+                    ]
+                    + [
+                        replacement_module.cfg.hook_point_out + ".sae.hook_attn_score"
+                        for replacement_module in replacement_modules
+                        if isinstance(replacement_module, LowRankSparseAttention)
+                    ]
+                    + ln_detach_hooks(self),
+                )
+
+        return logits, cache
+
+    def attribute(
+        self,
+        inputs: torch.Tensor | str,
+        replacement_modules: list[SparseDictionary],
+        max_n_logits: int = 10,
+        desired_logit_prob: float = 0.95,
+        batch_size: int = 512,
+        max_features: int | None = None,
+    ):
+        from lm_saes.models.lorsa import LowRankSparseAttention
+        from lm_saes.models.molt import MixtureOfLinearTransform
+        from lm_saes.models.sae import SparseAutoEncoder
+
+        tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
+            list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
+        )
+        batch_logits, cache = self._collect_cache(einops.repeat(tokens, "n -> b n", b=batch_size), replacement_modules)
+
+        with torch.no_grad():
+            probs = torch.softmax(batch_logits[0, -1], dim=-1)
+            top_p, top_idx = torch.topk(probs, max_n_logits)
+            cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
+            top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
+
+        seq_len = cache["hook_embed.post"].shape[1]
+
+        targets: list[NodeInfoRef] = [
+            NodeInfoRef(
+                key="logits",
+                ref=batch_logits[:, -1, :] - batch_logits[:, -1, :].mean(dim=-1, keepdim=True),
+                indices=top_idx.unsqueeze(-1),
+            )
+        ]
+
+        sources: list[NodeInfoRef] = [
+            NodeInfoRef(
+                key="hook_embed",
+                ref=cache["hook_embed.post"],
+                indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
+            )
+        ] + [
+            NodeInfoRef(
+                key=replacement_module.cfg.hook_point_out + ".error",
+                ref=cache[replacement_module.cfg.hook_point_out + ".error.post"],
+                indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
+            )
+            for (replacement_module) in replacement_modules
+        ]
+
+        intermediates: list[tuple[NodeInfoRef, NodeInfoRef]] = [
+            (
+                NodeInfoRef(
+                    key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
+                    ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"],
+                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"][0].nonzero(),
+                ),
+                NodeInfoRef(
+                    key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
+                    ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
+                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0].nonzero(),
+                ),
+            )
+            for replacement_module in replacement_modules
+        ]
+
+        max_intermediates = max_features if max_features is not None else len(intermediates)
+        max_iter = len(replacement_modules) + 10
+
+        attribution = greedily_collect_attribution(
+            targets=targets,
+            sources=sources,
+            intermediates=intermediates,
+            max_intermediates=max_intermediates,
+            reduction_weight=top_p,
+            max_iter=max_iter,
+        )
+
+        return attribution
+
+    def qk_trace(
+        self,
+        inputs: torch.Tensor | str,
+        replacement_modules: list[SparseDictionary],
+        lorsa_features: list[NodeInfo],
+        topk: int = 10,
+        batch_size: int = 1,
+    ):
+        from lm_saes.models.lorsa import LowRankSparseAttention
+        from lm_saes.models.molt import MixtureOfLinearTransform
+        from lm_saes.models.sae import SparseAutoEncoder
+
+        tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
+            list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
+        )
+        _, cache = self._collect_cache(einops.repeat(tokens, "n -> b n", b=batch_size * topk), replacement_modules)
+        rm_mapping = {
+            replacement_module.cfg.hook_point_out: replacement_module for replacement_module in replacement_modules
+        }
+        requests = [
+            QKTraceRequest.from_lorsa_feature(
+                lorsa_feature,
+                cast(LowRankSparseAttention, rm_mapping[lorsa_feature.key]),
+                cache[lorsa_feature.key + ".sae.hook_attn_score"],
+            )
+            for lorsa_feature in lorsa_features
+        ]
+
+        unique_map: dict[tuple[str, int, int, int], int] = {}
+        unique_requests: list[QKTraceRequest] = []
+        request_indices: list[int] = []
+        for req in requests:
+            key = req.dedup_key
+            if key not in unique_map:
+                unique_map[key] = len(unique_requests)
+                unique_requests.append(req)
+            request_indices.append(unique_map[key])
+
+        unique_results = self._qk_trace_from_request(unique_requests, cache, replacement_modules, topk)
+        return [unique_results[idx] for idx in request_indices]
+
+    def _qk_trace_from_request(
+        self,
+        requests: list[QKTraceRequest],
+        cache: dict[str, torch.Tensor],
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
+        topk: int,
+    ) -> list[list[QKTraceResult]]:  # pyright: ignore[reportReturnType]
+
+        seq_len = cache["hook_embed.post"].shape[1]
+        fwd_batch_size = cache["hook_embed.post"].shape[0]
+        bwd_batch_size = fwd_batch_size // topk
+        sources: list[NodeInfoRef] = (
+            [
+                NodeInfoRef(
+                    key="hook_embed",
+                    ref=cache["hook_embed.post"],
+                    indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
+                )
+            ]
+            + [
+                NodeInfoRef(
+                    key=replacement_module.cfg.hook_point_out + ".error",
+                    ref=cache[replacement_module.cfg.hook_point_out + ".error.post"],
+                    indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
+                )
+                for replacement_module in replacement_modules
+            ]
+            + [
+                NodeInfoRef(
+                    key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
+                    ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
+                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0].nonzero(),
+                )
+                for replacement_module in replacement_modules
+            ]
+        )
+
+        sources_dimension = Dimension.from_node_infos(sources)
+        results = []
+        for batch_start in range(0, len(requests), bwd_batch_size):
+            request_batch = requests[batch_start : batch_start + bwd_batch_size]
+            clear_grads(sources)
+            bwd_scores = torch.stack(
+                [
+                    cache[request.lorsa.cfg.hook_point_out + ".sae.hook_attn_score"][
+                        request.head_idx, batch_idx * topk : (batch_idx + 1) * topk, request.q_pos, request.k_pos
+                    ]
+                    for batch_idx, request in enumerate(request_batch)
+                ],
+                dim=0,
+            )
+            bwd_scores.sum().backward(create_graph=True, retain_graph=True)
+            first_order_gradients = torch.cat(
+                [
+                    einops.einsum(
+                        value.detach(),
+                        grad,
+                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                    )
+                    for value, grad in zip(values(sources), grads(sources))
+                ],
+                dim=1,
+            )  # fwd_batch_size, n_sources
+            second_sources = []
+            all_topk_indices = []
+            for batch_idx in range(len(request_batch)):
+                _, topk_indices = first_order_gradients[batch_idx * topk].topk(
+                    topk
+                )  # get the first row of each request
+                second_sources.extend(sources_dimension.offsets_to_nodes(topk_indices))
+                all_topk_indices.append(topk_indices)
+
+            unbind_second_sources = [n for s in second_sources for n in s.unbind()]
+
+            all_topk_indices = torch.stack(all_topk_indices, dim=0)  # (len(request_batch), topk)
+            batch_row_indices = torch.arange(len(request_batch), device=self.device).unsqueeze(1) * topk + torch.arange(
+                topk, device=self.device
+            ).unsqueeze(0)  # (len(request_batch), topk)
+            second_bwd_values = first_order_gradients[batch_row_indices, all_topk_indices].reshape(-1)
+            clear_grads(sources)
+            second_bwd_values.sum().backward(retain_graph=True)
+
+            second_order_gradients = torch.cat(
+                [
+                    einops.einsum(
+                        value.detach(),
+                        grad,
+                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                    )
+                    for value, grad in zip(values(sources), grads(sources))
+                ],
+                dim=1,
+            )  # fwd_batch_size, n_sources
+
+            for batch_idx in range(len(request_batch)):
+                batch_results = []
+                for k_idx in range(topk):
+                    idx = batch_idx * topk + k_idx
+                    topk_values, topk_indices = second_order_gradients[idx].topk(topk)
+                    topk_nodes = sources_dimension.offsets_to_nodes(topk_indices)
+                    unbind_topk_nodes = [n for s in topk_nodes for n in s.unbind()]
+                    batch_results.append(
+                        QKTraceResult(
+                            nodes=(unbind_second_sources[idx], unbind_topk_nodes[k_idx]),
+                            attribution=topk_values[k_idx].item(),
+                        )
+                    )
+
+                batch_results.sort(key=lambda x: x.attribution, reverse=True)
+                results.append(batch_results[:topk])
+
+        return results
 
     @property
     def eos_token_id(self) -> int | None:
@@ -407,6 +1435,27 @@ class TransformerLensLanguageModel(LanguageModel):
         ):
             yield self
 
+    @contextmanager
+    def apply_saes(self, saes: list[SparseDictionary]):
+        assert self.model is not None, "model must be initialized"
+        with apply_saes(self.model, saes):
+            yield self
+
+    @contextmanager
+    def detach_at(self, hook_points: list[str]):
+        assert self.model is not None, "model must be initialized"
+        with detach_at(self.model, hook_points):
+            yield self
+
+    def run_with_ref_cache(self, *args, **kwargs) -> Any:
+        assert self.model is not None, "model must be initialized"
+        if self.device_mesh is None:
+            return run_with_ref_cache(self.model, *args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, run_with_ref_cache(self.model, *args, **kwargs))
+
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
@@ -435,7 +1484,6 @@ class TransformerLensLanguageModel(LanguageModel):
             for offset_ in offsets
         ]
 
-    @timer.time("to_activations")
     @torch.no_grad()
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None

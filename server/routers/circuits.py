@@ -17,8 +17,8 @@ from lm_saes.circuit.replacement_model import ReplacementModel
 from lm_saes.circuit.utils.create_graph_files import serialize_graph
 from lm_saes.circuit.utils.transcoder_set import TranscoderSet, TranscoderSetConfig
 from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
-from lm_saes.lorsa import LowRankSparseAttention
-from lm_saes.sae import SparseAutoEncoder
+from lm_saes.models.lorsa import LowRankSparseAttention
+from lm_saes.models.sae import SparseAutoEncoder
 from server.config import LRU_CACHE_SIZE_CIRCUITS, client, sae_series
 from server.logic.loaders import get_model, get_sae
 from server.logic.samples import list_feature_data
