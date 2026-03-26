@@ -6,7 +6,7 @@ inheriting from SparseDictionary and supporting head parallelization.
 """
 
 import math
-from typing import Any, Literal, Optional, Sequence, Tuple, Union, overload
+from typing import Any, Literal, Optional, Sequence, Tuple, Union, cast, overload
 
 import einops
 import torch
@@ -232,6 +232,7 @@ class LowRankSparseAttention(
         self.hook_feature_acts = HookPoint()
         self.hook_reconstructed = HookPoint()
         self.hook_attn_pattern = HookPoint()
+        self.hook_attn_score = HookPoint()
         self.setup()
 
     @property
@@ -681,6 +682,7 @@ class LowRankSparseAttention(
         return_hidden_pre: bool = False,
         return_attention_pattern: bool = False,
         return_attention_score: bool = False,
+        hook_attn_scores: bool = False,
         **kwargs,
     ) -> Union[
         Float[torch.Tensor, "batch seq_len d_sae"],
@@ -701,7 +703,7 @@ class LowRankSparseAttention(
         pattern: Optional[torch.Tensor] = None
         scores: Optional[torch.Tensor] = None
 
-        if not (return_attention_pattern or return_attention_score):
+        if not (return_attention_pattern or return_attention_score or hook_attn_scores):
             query = q.permute(0, 2, 1, 3)
             key = k.permute(0, 2, 1, 3)
             value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
@@ -723,9 +725,13 @@ class LowRankSparseAttention(
             q = q.permute(2, 0, 1, 3)  # (n_qk_heads, batch, seq_len, d_qk_head)
             k = k.permute(2, 0, 3, 1)  # (n_qk_heads, batch, d_qk_head, seq_len)
             scores = torch.einsum("nbqd,nbdk->nbqk", q, k) / self.attn_scale
-            scores = self._apply_causal_mask(scores)
+            scores = cast(
+                torch.Tensor, self.hook_attn_score(self._apply_causal_mask(scores))
+            )  # (n_qk_heads, batch, q_pos, k_pos)
             # Hook called on (batch, n_qk_heads, q_pos, k_pos); permute back for internal use
-            pattern = self.hook_attn_pattern(F.softmax(scores, dim=-1).permute(1, 0, 2, 3)).permute(1, 0, 2, 3)
+            pattern = cast(
+                torch.Tensor, self.hook_attn_pattern(F.softmax(scores, dim=-1).permute(1, 0, 2, 3)).permute(1, 0, 2, 3)
+            )
 
             # Head outputs
             hidden_pre = self._compute_head_outputs(pattern, v)
@@ -737,13 +743,12 @@ class LowRankSparseAttention(
             hidden_pre = hidden_pre * self.decoder_norm()
 
         feature_acts = self.activation_function(hidden_pre)
-        feature_acts = self.hook_feature_acts(feature_acts)
 
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
             hidden_pre = hidden_pre / self.decoder_norm()
 
-        return_values: list[torch.Tensor] = [feature_acts]
+        return_values: list[torch.Tensor] = [self.hook_feature_acts(feature_acts)]
         if return_hidden_pre:
             return_values.append(hidden_pre)
         if return_attention_pattern and pattern is not None:

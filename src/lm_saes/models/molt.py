@@ -531,15 +531,14 @@ class MixtureOfLinearTransform(
             hidden_pre = hidden_pre * self.decoder_norm()
 
         feature_acts = self.activation_function(hidden_pre)
-        feature_acts = self.hook_feature_acts(feature_acts)
 
         if self.cfg.sparsity_include_decoder_norm:
             feature_acts = feature_acts / self.decoder_norm()
             hidden_pre = hidden_pre / self.decoder_norm()
 
         if return_hidden_pre:
-            return feature_acts, hidden_pre
-        return feature_acts
+            return self.hook_feature_acts(feature_acts), hidden_pre
+        return self.hook_feature_acts(feature_acts)
 
     def _decode_single_gpu(
         self,

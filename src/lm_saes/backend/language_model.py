@@ -302,6 +302,10 @@ class NodeInfo:
     def split(self, batch_size: int) -> tuple[Self, Self]:
         return self[:batch_size], self[batch_size:]
 
+    def unbind(self) -> list[Self]:
+        """Split into a list of NodeInfo, each containing exactly one index."""
+        return [replace(self, indices=self.indices[i : i + 1]) for i in range(self.indices.shape[0])]
+
 
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
     inv_indices = torch.empty(
@@ -739,7 +743,7 @@ class NodeInfoRef(NodeInfo):
 
 
 class NodeInfoQueue[T: NodeInfo]:
-    def __init__(self, node_infos: Sequence[T]):
+    def __init__(self, node_infos: Sequence[T] = []):
         self.queue = list(node_infos)
 
     def enqueue(self, node_info: Sequence[T]):
@@ -813,6 +817,35 @@ def compute_intermediates_attribution(
     return influence
 
 
+def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
+    return [node_info.ref[:, *node_info.indices.unbind(dim=1)] for node_info in node_infos]
+
+
+def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
+    return [
+        node_info.ref.grad[:, *node_info.indices.unbind(dim=1)]
+        if node_info.ref.grad is not None
+        else torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)])
+        for node_info in node_infos
+    ]
+
+
+def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
+    for node_info in node_infos:
+        node_info.ref.grad = None
+
+
+def retrieval_from_intermediates(
+    node_infos: Sequence[NodeInfo], intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]]
+):
+    return [
+        NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[0].ref)
+        for node_info in node_infos
+        for intermediate in intermediates
+        if node_info.key == intermediate[0].key
+    ]
+
+
 def greedily_collect_attribution(
     targets: Sequence[NodeInfoRef],
     sources: Sequence[NodeInfoRef],
@@ -840,21 +873,6 @@ def greedily_collect_attribution(
 
     queue = NodeInfoQueue(targets)
 
-    def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-        return [node_info.ref[:, *node_info.indices.unbind(dim=1)] for node_info in node_infos]
-
-    def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-        return [
-            node_info.ref.grad[:, *node_info.indices.unbind(dim=1)]
-            if node_info.ref.grad is not None
-            else torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)])
-            for node_info in node_infos
-        ]
-
-    def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
-        for node_info in node_infos:
-            node_info.ref.grad = None
-
     for target_batch in queue.iter(batch_size):
         clear_grads(all_sources)
         root = torch.diag(torch.cat(values(target_batch), dim=1))
@@ -870,14 +888,6 @@ def greedily_collect_attribution(
             ],
             dim=1,
         )
-
-    def retrieval_from_intermediates(node_infos: Sequence[NodeInfo]):
-        return [
-            NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[0].ref)
-            for node_info in node_infos
-            for intermediate in intermediates
-            if node_info.key == intermediate[0].key
-        ]
 
     collected_intermediates_dimension = Dimension.empty(device=targets[0].ref.device)
     reduction_weight: NodeIndexedVector = NodeIndexedVector.from_data(reduction_weight, dimensions=(targets_dimension,))
@@ -896,7 +906,7 @@ def greedily_collect_attribution(
         collected_intermediates_dimension = collected_intermediates_dimension + selected_node_infos
 
         clear_grads(all_sources)
-        node_refs = retrieval_from_intermediates(selected_node_infos)
+        node_refs = retrieval_from_intermediates(selected_node_infos, intermediates)
         root = torch.diag(torch.cat(values(node_refs), dim=1))
 
         root.sum().backward(retain_graph=True)
@@ -930,6 +940,31 @@ def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
 
     detach_hooks.append("ln_final.hook_scale")
     return detach_hooks
+
+
+@dataclass
+class QKTraceRequest:
+    lorsa: LowRankSparseAttention
+    head_idx: int
+    q_pos: int
+    k_pos: int
+
+    @property
+    def dedup_key(self) -> tuple[str, int, int, int]:
+        return (self.lorsa.cfg.hook_point_out, self.head_idx, self.q_pos, self.k_pos)
+
+    @classmethod
+    def from_lorsa_feature(cls, node_info: NodeInfo, lorsa: LowRankSparseAttention, attn_scores: torch.Tensor):
+        head_idx = node_info.indices[0][1] // lorsa.cfg.ov_group_size
+        attn_score = attn_scores[head_idx, 0, :, :]  # (q_pos, k_pos)
+        q_pos, k_pos = torch.unravel_index(attn_score.argmax(), attn_score.shape)
+        return cls(lorsa, int(head_idx), int(q_pos.item()), int(k_pos.item()))
+
+
+@dataclass
+class QKTraceResult:
+    nodes: tuple[NodeInfo, NodeInfo]
+    attribution: float
 
 
 class TransformerLensLanguageModel(LanguageModel):
@@ -986,12 +1021,8 @@ class TransformerLensLanguageModel(LanguageModel):
     def _collect_cache(
         self,
         inputs: torch.Tensor | str,
-        replacement_modules: list[SparseDictionary],
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
     ):
-        from lm_saes.models.lorsa import LowRankSparseAttention
-        from lm_saes.models.molt import MixtureOfLinearTransform
-        from lm_saes.models.sae import SparseAutoEncoder
-        from lm_saes.models.sparse_dictionary import SparseDictionary
 
         assert self.model is not None, "model must be initialized"
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
@@ -1002,10 +1033,6 @@ class TransformerLensLanguageModel(LanguageModel):
         ), (
             "Currently only support sparse dictionaries that guarantee the hook points in happen before the hook points out."
         )
-        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
-            list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
-        )
-
         with self.apply_saes(cast(list[SparseDictionary], replacement_modules)):
             with self.detach_at(
                 ["hook_embed"]
@@ -1019,7 +1046,12 @@ class TransformerLensLanguageModel(LanguageModel):
                     for replacement_module in replacement_modules
                     if isinstance(replacement_module, LowRankSparseAttention)
                 ]
-                + [f"blocks.{i}.attn.hook_pattern" for i in range(self.model.cfg.n_layers)]
+                + [
+                    replacement_module.cfg.hook_point_out + item
+                    for replacement_module in replacement_modules
+                    if isinstance(replacement_module, LowRankSparseAttention) and replacement_module.cfg.use_post_qk_ln
+                    for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
+                ]
                 + ln_detach_hooks(self)
             ):
                 logits, cache = self.run_with_ref_cache(
@@ -1036,7 +1068,13 @@ class TransformerLensLanguageModel(LanguageModel):
                     + [
                         replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"
                         for replacement_module in replacement_modules
-                    ],
+                    ]
+                    + [
+                        replacement_module.cfg.hook_point_out + ".sae.hook_attn_score"
+                        for replacement_module in replacement_modules
+                        if isinstance(replacement_module, LowRankSparseAttention)
+                    ]
+                    + ln_detach_hooks(self),
                 )
 
         return logits, cache
@@ -1050,11 +1088,16 @@ class TransformerLensLanguageModel(LanguageModel):
         batch_size: int = 512,
         max_features: int | None = None,
     ):
+        from lm_saes.models.lorsa import LowRankSparseAttention
+        from lm_saes.models.molt import MixtureOfLinearTransform
+        from lm_saes.models.sae import SparseAutoEncoder
+
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
-        batch_logits, cache = self._collect_cache(einops.repeat(tokens, "n -> b n", b=batch_size), replacement_modules)
         replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
             list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
         )
+        batch_logits, cache = self._collect_cache(einops.repeat(tokens, "n -> b n", b=batch_size), replacement_modules)
+
         with torch.no_grad():
             probs = torch.softmax(batch_logits[0, -1], dim=-1)
             top_p, top_idx = torch.topk(probs, max_n_logits)
@@ -1115,6 +1158,161 @@ class TransformerLensLanguageModel(LanguageModel):
         )
 
         return attribution
+
+    def qk_trace(
+        self,
+        inputs: torch.Tensor | str,
+        replacement_modules: list[SparseDictionary],
+        lorsa_features: list[NodeInfo],
+        topk: int = 10,
+        batch_size: int = 1,
+    ):
+        from lm_saes.models.lorsa import LowRankSparseAttention
+        from lm_saes.models.molt import MixtureOfLinearTransform
+        from lm_saes.models.sae import SparseAutoEncoder
+
+        tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
+            list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
+        )
+        _, cache = self._collect_cache(einops.repeat(tokens, "n -> b n", b=batch_size * topk), replacement_modules)
+        rm_mapping = {
+            replacement_module.cfg.hook_point_out: replacement_module for replacement_module in replacement_modules
+        }
+        requests = [
+            QKTraceRequest.from_lorsa_feature(
+                lorsa_feature,
+                cast(LowRankSparseAttention, rm_mapping[lorsa_feature.key]),
+                cache[lorsa_feature.key + ".sae.hook_attn_score"],
+            )
+            for lorsa_feature in lorsa_features
+        ]
+
+        unique_map: dict[tuple[str, int, int, int], int] = {}
+        unique_requests: list[QKTraceRequest] = []
+        request_indices: list[int] = []
+        for req in requests:
+            key = req.dedup_key
+            if key not in unique_map:
+                unique_map[key] = len(unique_requests)
+                unique_requests.append(req)
+            request_indices.append(unique_map[key])
+
+        unique_results = self._qk_trace_from_request(unique_requests, cache, replacement_modules, topk)
+        return [unique_results[idx] for idx in request_indices]
+
+    def _qk_trace_from_request(
+        self,
+        requests: list[QKTraceRequest],
+        cache: dict[str, torch.Tensor],
+        replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
+        topk: int,
+    ) -> list[list[QKTraceResult]]:  # pyright: ignore[reportReturnType]
+
+        seq_len = cache["hook_embed.post"].shape[1]
+        fwd_batch_size = cache["hook_embed.post"].shape[0]
+        bwd_batch_size = fwd_batch_size // topk
+        sources: list[NodeInfoRef] = (
+            [
+                NodeInfoRef(
+                    key="hook_embed",
+                    ref=cache["hook_embed.post"],
+                    indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
+                )
+            ]
+            + [
+                NodeInfoRef(
+                    key=replacement_module.cfg.hook_point_out + ".error",
+                    ref=cache[replacement_module.cfg.hook_point_out + ".error.post"],
+                    indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
+                )
+                for replacement_module in replacement_modules
+            ]
+            + [
+                NodeInfoRef(
+                    key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
+                    ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
+                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0].nonzero(),
+                )
+                for replacement_module in replacement_modules
+            ]
+        )
+
+        sources_dimension = Dimension.from_node_infos(sources)
+        results = []
+        for batch_start in range(0, len(requests), bwd_batch_size):
+            request_batch = requests[batch_start : batch_start + bwd_batch_size]
+            clear_grads(sources)
+            bwd_scores = torch.stack(
+                [
+                    cache[request.lorsa.cfg.hook_point_out + ".sae.hook_attn_score"][
+                        request.head_idx, batch_idx * topk : (batch_idx + 1) * topk, request.q_pos, request.k_pos
+                    ]
+                    for batch_idx, request in enumerate(request_batch)
+                ],
+                dim=0,
+            )
+            bwd_scores.sum().backward(create_graph=True, retain_graph=True)
+            first_order_gradients = torch.cat(
+                [
+                    einops.einsum(
+                        value.detach(),
+                        grad,
+                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                    )
+                    for value, grad in zip(values(sources), grads(sources))
+                ],
+                dim=1,
+            )  # fwd_batch_size, n_sources
+            second_sources = []
+            all_topk_indices = []
+            for batch_idx in range(len(request_batch)):
+                _, topk_indices = first_order_gradients[batch_idx * topk].topk(
+                    topk
+                )  # get the first row of each request
+                second_sources.extend(sources_dimension.offsets_to_nodes(topk_indices))
+                all_topk_indices.append(topk_indices)
+
+            unbind_second_sources = [n for s in second_sources for n in s.unbind()]
+
+            all_topk_indices = torch.stack(all_topk_indices, dim=0)  # (len(request_batch), topk)
+            batch_row_indices = torch.arange(len(request_batch), device=self.device).unsqueeze(1) * topk + torch.arange(
+                topk, device=self.device
+            ).unsqueeze(0)  # (len(request_batch), topk)
+            second_bwd_values = first_order_gradients[batch_row_indices, all_topk_indices].reshape(-1)
+            clear_grads(sources)
+            second_bwd_values.sum().backward(retain_graph=True)
+
+            second_order_gradients = torch.cat(
+                [
+                    einops.einsum(
+                        value.detach(),
+                        grad,
+                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                    )
+                    for value, grad in zip(values(sources), grads(sources))
+                ],
+                dim=1,
+            )  # fwd_batch_size, n_sources
+
+            for batch_idx in range(len(request_batch)):
+                batch_results = []
+                for k_idx in range(topk):
+                    idx = batch_idx * topk + k_idx
+                    topk_values, topk_indices = second_order_gradients[idx].topk(topk)
+                    topk_nodes = sources_dimension.offsets_to_nodes(topk_indices)
+                    unbind_topk_nodes = [n for s in topk_nodes for n in s.unbind()]
+                    batch_results.append(
+                        QKTraceResult(
+                            nodes=(unbind_second_sources[idx], unbind_topk_nodes[k_idx]),
+                            attribution=topk_values[k_idx].item(),
+                        )
+                    )
+
+                batch_results.sort(key=lambda x: x.attribution, reverse=True)
+                results.append(batch_results[:topk])
+
+        return results
 
     @property
     def eos_token_id(self) -> int | None:

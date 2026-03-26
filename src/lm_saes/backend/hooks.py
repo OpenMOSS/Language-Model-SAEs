@@ -39,7 +39,7 @@ def apply_saes(model: HookedRootModule, saes: list["SparseDictionary"]):
 
         def hook_in(tensor: torch.Tensor, hook: HookPoint):
             nonlocal x
-            x = sae.encode(tensor)
+            x = sae.encode(tensor, hook_attn_scores=True)
             return tensor
 
         def hook_out(tensor: torch.Tensor, hook: HookPoint):
