@@ -167,9 +167,6 @@ class CircuitRecord(BaseModel):
     progress_phase: Optional[str] = None
     error_message: Optional[str] = None
 
-    attribution_id: Optional[str] = None
-    """GridFS ObjectId for the stored attribution data."""
-
 
 class MongoClient:
     def __init__(self, cfg: MongoDBConfig):
@@ -914,7 +911,7 @@ class MongoClient:
             query["group"] = group
 
         # Exclude raw_graph_id from listing
-        projection = {"raw_graph_id": 0}
+        projection = {"attribution_id": 0}
 
         cursor = self.circuit_collection.find(query, projection=projection).sort("created_at", pymongo.DESCENDING)
 
@@ -943,14 +940,14 @@ class MongoClient:
     def delete_circuit(self, circuit_id: str) -> bool:
         """Delete a circuit by its ID.
 
-        Also deletes the associated raw graph from GridFS if it exists.
+        Also deletes the associated attribution from GridFS if it exists.
         """
         try:
-            # First get the circuit to find raw_graph_id
+            # First get the circuit to find attribution_id
             circuit = self.circuit_collection.find_one({"_id": ObjectId(circuit_id)})
-            if circuit and circuit.get("raw_graph_id") and self.fs:
+            if circuit and circuit.get("attribution_id") and self.fs:
                 try:
-                    self.fs.delete(ObjectId(circuit["raw_graph_id"]))
+                    self.fs.delete(ObjectId(circuit["attribution_id"]))
                 except Exception:
                     pass  # Ignore errors when deleting GridFS file
 

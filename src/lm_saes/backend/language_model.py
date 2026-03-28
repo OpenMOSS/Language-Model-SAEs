@@ -802,7 +802,7 @@ def _find_influence_threshold(scores: torch.Tensor, threshold: float) -> torch.T
     """Find score threshold that keeps the desired fraction of total influence."""
     if scores.numel() == 0:
         return torch.tensor(0.0, device=scores.device, dtype=scores.dtype)
-    sorted_scores = torch.sort(scores, descending=True).values
+    sorted_scores = torch.sort(scores.view(-1), descending=True).values
     cumulative_score = torch.cumsum(sorted_scores, dim=0) / torch.sum(sorted_scores).clamp(min=1e-8)
     threshold_index = torch.searchsorted(cumulative_score, threshold)
     threshold_index = min(int(threshold_index.item()), len(cumulative_score) - 1)
@@ -1258,6 +1258,10 @@ class TransformerLensLanguageModel(LanguageModel):
         batch_size: int = 512,
         max_features: int | None = None,
     ):
+        from lm_saes.models.lorsa import LowRankSparseAttention
+        from lm_saes.models.molt import MixtureOfLinearTransform
+        from lm_saes.models.sae import SparseAutoEncoder
+
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
         replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
             list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
