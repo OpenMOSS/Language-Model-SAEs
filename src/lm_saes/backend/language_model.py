@@ -306,6 +306,11 @@ class NodeInfo:
         """Split into a list of NodeInfo, each containing exactly one index."""
         return [replace(self, indices=self.indices[i : i + 1]) for i in range(self.indices.shape[0])]
 
+    def __iter__(self) -> Iterator[Self]:
+        """Iterate over any single element in the node info."""
+        for i in range(len(self)):
+            yield self[slice(i, i + 1)]
+
 
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
     inv_indices = torch.empty(
@@ -343,7 +348,10 @@ class Dimension:
     def from_node_infos(cls, node_infos: Sequence[NodeInfo]) -> Self:
         return cls.empty(node_infos[0].indices.device) + node_infos
 
-    def __add__(self, other: Sequence[NodeInfo]) -> Self:
+    def __add__(self, other: Sequence[NodeInfo] | "Dimension") -> Self:
+        if isinstance(other, Dimension):
+            return self + other.node_infos
+
         node_mappings = dict(self.node_mappings)
         offset_mapping = dict(self.offset_mapping)
 
@@ -479,6 +487,19 @@ class Dimension:
             )
             for i in range(len(unique_keys))
         ]
+
+    def __iter__(self) -> Iterator[NodeInfo]:
+        """Iterate over any single node in the dimension."""
+        for ni in self.node_infos:
+            yield from iter(ni)
+
+    def filter(self, predicate: Callable[[NodeInfo], bool]) -> Self:
+        filtered = [ni for ni in self.node_infos if predicate(ni)]
+        return self.__class__.from_node_infos(filtered) if filtered else self.__class__.empty(device=self.device)
+
+    def unique(self) -> Self:
+        node_infos = [NodeInfo(key=node.key, indices=node.indices.unique(dim=0)) for node in self.node_infos]
+        return self.__class__.from_node_infos(node_infos)
 
 
 class NodeIndexedTensor:
@@ -633,6 +654,19 @@ class NodeIndexedTensor:
         data = self.data + other.data
         return self.__class__.from_data(data, self.dimensions)
 
+    def map(self, function: Callable[[torch.Tensor], torch.Tensor]) -> Self:
+        return self.__class__.from_data(function(self.data), self.dimensions)
+
+    def clone(self) -> Self:
+        return self.__class__.from_data(self.data.clone(), self.dimensions)
+
+    def nonzero(self) -> tuple[torch.Tensor, tuple[Dimension, ...]]:
+        indices = self.data.nonzero(as_tuple=True)
+        values = self.data[indices]
+        return values, tuple(
+            Dimension.from_node_infos(self.dimensions[i].offsets_to_nodes(indices[i])) for i in range(self.n_dims)
+        )
+
 
 class NodeIndexedVector(NodeIndexedTensor):
     def __init__(
@@ -685,6 +719,12 @@ class NodeIndexedVector(NodeIndexedTensor):
     def __matmul__(self, other: NodeIndexedMatrix):
         return self.matmul(other)
 
+    def __and__(self, other: Self) -> Self:
+        return self.__class__.from_data(self.data & other.data, self.dimensions)
+
+    def __invert__(self) -> Self:
+        return self.__class__.from_data(~self.data, self.dimensions)
+
 
 class NodeIndexedMatrix(NodeIndexedTensor):
     def __init__(
@@ -726,6 +766,29 @@ class NodeIndexedMatrix(NodeIndexedTensor):
         else:
             raise ValueError(f"Invalid type as right operand in NodeIndexedMatrix.matmul: {type(other)}")
 
+    def any(self, dim: int) -> NodeIndexedVector:
+        """Reduce along *dim* with logical OR, mirroring ``torch.Tensor.any(dim)``.
+
+        ``dim=0`` reduces target (row) nodes and returns a vector over source (col)
+        nodes; ``dim=1`` does the reverse.  To restrict to a subset of nodes, index
+        the matrix first: ``matrix[None, subset].any(0)``.
+        """
+        return NodeIndexedVector.from_data(self.data.any(dim), (self.dimensions[1 - dim],))
+
+    def masked_fill_dim_(self, dim: int, mask: NodeIndexedVector, value: Number) -> Self:
+        offsets = self.dimensions[dim].nodes_to_offsets(mask.dimensions[0])
+        filled = offsets[mask.data]
+        if filled.numel() > 0:
+            if dim == 0:
+                self.data[filled, :] = value
+            else:
+                self.data[:, filled] = value
+        return self
+
+    def masked_fill_(self, mask: NodeIndexedMatrix, value: Number) -> Self:
+        self.data.masked_fill_(mask.data, value)
+        return self
+
     @overload
     def __matmul__(self, other: NodeIndexedVector) -> NodeIndexedVector: ...
     @overload
@@ -733,6 +796,89 @@ class NodeIndexedMatrix(NodeIndexedTensor):
 
     def __matmul__(self, other: NodeIndexedVector | NodeIndexedMatrix):
         return self.matmul(other)
+
+
+def _find_influence_threshold(scores: torch.Tensor, threshold: float) -> torch.Tensor:
+    """Find score threshold that keeps the desired fraction of total influence."""
+    if scores.numel() == 0:
+        return torch.tensor(0.0, device=scores.device, dtype=scores.dtype)
+    sorted_scores = torch.sort(scores, descending=True).values
+    cumulative_score = torch.cumsum(sorted_scores, dim=0) / torch.sum(sorted_scores).clamp(min=1e-8)
+    threshold_index = torch.searchsorted(cumulative_score, threshold)
+    threshold_index = min(int(threshold_index.item()), len(cumulative_score) - 1)
+    return sorted_scores[threshold_index]
+
+
+def prune_attribution(
+    attribution: NodeIndexedMatrix,
+    logit_weights: torch.Tensor,
+    node_threshold: float = 0.6,
+    edge_threshold: float = 0.8,
+) -> NodeIndexedMatrix:
+    """Prune an attribution NodeIndexedMatrix by removing low-influence nodes and edges.
+
+    The attribution matrix is expected to have:
+    - dim 0 (targets/rows): logit nodes (key="logits") + collected feature nodes
+    - dim 1 (sources/cols): embed nodes (key="hook_embed") + error nodes (key ends with ".error")
+                             + all (possibly uncollected) feature nodes
+
+    Logit nodes and embed/error source nodes are always kept. Feature nodes are pruned based
+    on their cumulative contribution to the weighted logit output.
+
+    Args:
+        attribution: NodeIndexedMatrix from the attribution computation.
+        node_threshold: Retain feature nodes accounting for this fraction of total influence.
+        edge_threshold: Retain edges accounting for this fraction of total edge influence.
+        logit_weights: Per-logit scalar weights (shape ``[n_logits]``).
+
+    Returns:
+        Pruned NodeIndexedMatrix containing only kept nodes and edges.
+    """
+    if node_threshold > 1.0 or node_threshold < 0.0:
+        raise ValueError("node_threshold must be between 0.0 and 1.0")
+    if edge_threshold > 1.0 or edge_threshold < 0.0:
+        raise ValueError("edge_threshold must be between 0.0 and 1.0")
+
+    logits_dimension = attribution.dimensions[0].filter(lambda ni: ni.key == "logits")
+    intermediates_dimension = attribution.dimensions[0].filter(lambda ni: ni.key != "logits")
+    optional_sources_dimension = (
+        attribution.dimensions[1].filter(lambda ni: ni.key.endswith(".error")) + intermediates_dimension
+    )
+
+    edge_scores = compute_intermediates_attribution(
+        attribution, attribution.dimensions[0], intermediates_dimension, max_iter=100
+    )
+    node_scores = (
+        NodeIndexedVector.from_data(logit_weights, dimensions=(logits_dimension,)) @ edge_scores[logits_dimension, None]
+    )
+
+    node_mask = node_scores.map(lambda x: x >= _find_influence_threshold(x, node_threshold))
+    edge_mask = edge_scores.map(lambda x: x >= _find_influence_threshold(x, edge_threshold))
+
+    old_node_mask = node_mask.clone()
+    node_mask[optional_sources_dimension] = node_mask[optional_sources_dimension] & edge_mask[
+        None, optional_sources_dimension
+    ].any(0)
+    node_mask[intermediates_dimension] = node_mask[intermediates_dimension] & edge_mask[
+        intermediates_dimension, None
+    ].any(1)
+
+    while not torch.all(node_mask.data == old_node_mask.data):
+        old_node_mask = node_mask.clone()
+        edge_mask.masked_fill_dim_(1, ~node_mask[optional_sources_dimension], False)
+        edge_mask.masked_fill_dim_(0, ~node_mask[intermediates_dimension], False)
+        node_mask[optional_sources_dimension] = node_mask[optional_sources_dimension] & edge_mask[
+            None, optional_sources_dimension
+        ].any(0)
+        node_mask[intermediates_dimension] = node_mask[intermediates_dimension] & edge_mask[
+            intermediates_dimension, None
+        ].any(1)
+
+    attribution = attribution.clone()
+    attribution.masked_fill_dim_(1, ~node_mask[optional_sources_dimension], 0)
+    attribution.masked_fill_dim_(0, ~node_mask[intermediates_dimension], 0)
+    attribution.masked_fill_(edge_mask, 0)
+    return attribution
 
 
 @dataclass
@@ -787,6 +933,18 @@ class NodeInfoSet[T: NodeInfo]:
 
     def to_list(self) -> list[T]:
         return list(self.node_dict.values())
+
+
+@dataclass
+class AttributionResult:
+    activations: NodeIndexedVector
+    attribution: NodeIndexedMatrix
+    logits: torch.Tensor
+    probs: torch.Tensor
+    prompt_token_ids: list[int] = field(default_factory=list)
+    prompt_tokens: list[str] = field(default_factory=list)
+    logit_token_ids: list[int] = field(default_factory=list)
+    logit_tokens: list[str] = field(default_factory=list)
 
 
 def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
@@ -930,7 +1088,6 @@ def greedily_collect_attribution(
 
 
 def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
-
     assert models.model is not None, "model must be initialized"
     detach_hooks = []
     for i, block in enumerate(models.model.blocks):
@@ -1023,7 +1180,6 @@ class TransformerLensLanguageModel(LanguageModel):
         inputs: torch.Tensor | str,
         replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
     ):
-
         assert self.model is not None, "model must be initialized"
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
 
@@ -1088,10 +1244,6 @@ class TransformerLensLanguageModel(LanguageModel):
         batch_size: int = 512,
         max_features: int | None = None,
     ):
-        from lm_saes.models.lorsa import LowRankSparseAttention
-        from lm_saes.models.molt import MixtureOfLinearTransform
-        from lm_saes.models.sae import SparseAutoEncoder
-
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
         replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
             list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
@@ -1157,7 +1309,31 @@ class TransformerLensLanguageModel(LanguageModel):
             max_iter=max_iter,
         )
 
-        return attribution
+        activations = torch.cat(
+            [node_info.ref[0, *node_info.indices.unbind(dim=1)] for node_info in targets]
+            + [node_info.ref[0, *node_info.indices.unbind(dim=1)] for node_info, _ in intermediates]
+            + [torch.ones_like(node_info.indices[:, 0], dtype=node_info.ref.dtype) for node_info in sources],
+            dim=0,
+        )
+
+        activations = NodeIndexedVector.from_data(
+            data=activations,
+            dimensions=(Dimension.from_node_infos(targets + [node_info for node_info, _ in intermediates] + sources),),
+        )
+
+        prompt_token_ids = tokens.detach().cpu().tolist()
+        logit_token_ids = top_idx.detach().cpu().tolist()
+
+        return AttributionResult(
+            activations=activations,
+            attribution=attribution,
+            logits=batch_logits[:, -1, top_idx],
+            probs=top_p,
+            prompt_token_ids=prompt_token_ids,
+            prompt_tokens=[self.tokenizer.decode([token_id]) for token_id in prompt_token_ids],
+            logit_token_ids=logit_token_ids,
+            logit_tokens=[self.tokenizer.decode([token_id]) for token_id in logit_token_ids],
+        )
 
     def qk_trace(
         self,
@@ -1208,7 +1384,6 @@ class TransformerLensLanguageModel(LanguageModel):
         replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
         topk: int,
     ) -> list[list[QKTraceResult]]:  # pyright: ignore[reportReturnType]
-
         seq_len = cache["hook_embed.post"].shape[1]
         fwd_batch_size = cache["hook_embed.post"].shape[0]
         bwd_batch_size = fwd_batch_size // topk
