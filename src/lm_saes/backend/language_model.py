@@ -1181,15 +1181,11 @@ class TransformerLensLanguageModel(LanguageModel):
         replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
         with_bias_leaves: bool = False,
     ):
+        from lm_saes.models.lorsa import LowRankSparseAttention
+        from lm_saes.models.sparse_dictionary import SparseDictionary
+
         assert self.model is not None, "model must be initialized"
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
-
-        assert all(
-            isinstance(replacement_module, SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform)
-            for replacement_module in replacement_modules
-        ), (
-            "Currently only support sparse dictionaries that guarantee the hook points in happen before the hook points out."
-        )
 
         from contextlib import nullcontext
 
@@ -1204,8 +1200,8 @@ class TransformerLensLanguageModel(LanguageModel):
             else nullcontext({})
         )
 
-        with bias_ctx as bias_leaves:
-            with self.apply_saes(cast(list[SparseDictionary], replacement_modules)):
+        with self.apply_saes(cast(list[SparseDictionary], replacement_modules)):
+            with bias_ctx as bias_leaves:
                 with self.detach_at(
                     ["hook_embed"]
                     + [replacement_module.cfg.hook_point_out + ".error" for replacement_module in replacement_modules]
@@ -1372,6 +1368,7 @@ class TransformerLensLanguageModel(LanguageModel):
         _, cache = self._collect_cache(
             einops.repeat(tokens, "n -> b n", b=batch_size * topk), replacement_modules, with_bias_leaves=True
         )
+        # print(cache["blocks.24.hook_attn_out.sae.hook_feature_acts.post"][0][2].nonzero())
         rm_mapping = {
             replacement_module.cfg.hook_point_out: replacement_module for replacement_module in replacement_modules
         }
@@ -1433,8 +1430,6 @@ class TransformerLensLanguageModel(LanguageModel):
                 for replacement_module in replacement_modules
             ]
         )
-
-        # ---- bias leaf sources (from replace_biases_with_leaves) ----
         assert self.model is not None
         for i in range(len(self.model.blocks)):
             for key in (f"blocks.{i}.attn.b_O", f"blocks.{i}.mlp.b_out"):
