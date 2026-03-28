@@ -43,7 +43,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.backend.hooks import apply_saes, detach_at
+from lm_saes.backend.hooks import apply_saes, detach_at, replace_biases_with_leaves
 from lm_saes.backend.tl_addons import run_with_cache_until, run_with_ref_cache
 from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
@@ -1179,6 +1179,7 @@ class TransformerLensLanguageModel(LanguageModel):
         self,
         inputs: torch.Tensor | str,
         replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
+        with_bias_leaves: bool = False,
     ):
         assert self.model is not None, "model must be initialized"
         tokens = ensure_tokenized(inputs, self.tokenizer, device=self.device)
@@ -1189,50 +1190,67 @@ class TransformerLensLanguageModel(LanguageModel):
         ), (
             "Currently only support sparse dictionaries that guarantee the hook points in happen before the hook points out."
         )
-        with self.apply_saes(cast(list[SparseDictionary], replacement_modules)):
-            with self.detach_at(
-                ["hook_embed"]
-                + [replacement_module.cfg.hook_point_out + ".error" for replacement_module in replacement_modules]
-                + [
-                    replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts"
-                    for replacement_module in replacement_modules
-                ]
-                + [
-                    replacement_module.cfg.hook_point_out + ".sae.hook_attn_pattern"
-                    for replacement_module in replacement_modules
-                    if isinstance(replacement_module, LowRankSparseAttention)
-                ]
-                + [
-                    replacement_module.cfg.hook_point_out + item
-                    for replacement_module in replacement_modules
-                    if isinstance(replacement_module, LowRankSparseAttention) and replacement_module.cfg.use_post_qk_ln
-                    for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
-                ]
-                + ln_detach_hooks(self)
-            ):
-                logits, cache = self.run_with_ref_cache(
-                    tokens,
-                    names_filter=["hook_embed.post"]
+
+        from contextlib import nullcontext
+
+        bias_ctx = (
+            replace_biases_with_leaves(
+                self.model,
+                cast(list[SparseDictionary], replacement_modules),
+                batch_size=tokens.shape[0],
+                seq_len=tokens.shape[1],
+            )
+            if with_bias_leaves
+            else nullcontext({})
+        )
+
+        with bias_ctx as bias_leaves:
+            with self.apply_saes(cast(list[SparseDictionary], replacement_modules)):
+                with self.detach_at(
+                    ["hook_embed"]
+                    + [replacement_module.cfg.hook_point_out + ".error" for replacement_module in replacement_modules]
                     + [
-                        replacement_module.cfg.hook_point_out + ".error.post"
+                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts"
                         for replacement_module in replacement_modules
                     ]
                     + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"
-                        for replacement_module in replacement_modules
-                    ]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"
-                        for replacement_module in replacement_modules
-                    ]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_attn_score"
+                        replacement_module.cfg.hook_point_out + ".sae.hook_attn_pattern"
                         for replacement_module in replacement_modules
                         if isinstance(replacement_module, LowRankSparseAttention)
                     ]
-                    + ln_detach_hooks(self),
-                )
+                    + [
+                        replacement_module.cfg.hook_point_out + item
+                        for replacement_module in replacement_modules
+                        if isinstance(replacement_module, LowRankSparseAttention)
+                        and replacement_module.cfg.use_post_qk_ln
+                        for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
+                    ]
+                    + ln_detach_hooks(self)
+                ):
+                    logits, cache = self.run_with_ref_cache(
+                        tokens,
+                        names_filter=["hook_embed.post"]
+                        + [
+                            replacement_module.cfg.hook_point_out + ".error.post"
+                            for replacement_module in replacement_modules
+                        ]
+                        + [
+                            replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"
+                            for replacement_module in replacement_modules
+                        ]
+                        + [
+                            replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"
+                            for replacement_module in replacement_modules
+                        ]
+                        + [
+                            replacement_module.cfg.hook_point_out + ".sae.hook_attn_score"
+                            for replacement_module in replacement_modules
+                            if isinstance(replacement_module, LowRankSparseAttention)
+                        ]
+                        + ln_detach_hooks(self),
+                    )
 
+        cache.update(bias_leaves)
         return logits, cache
 
     def attribute(
@@ -1351,7 +1369,9 @@ class TransformerLensLanguageModel(LanguageModel):
         replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
             list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
         )
-        _, cache = self._collect_cache(einops.repeat(tokens, "n -> b n", b=batch_size * topk), replacement_modules)
+        _, cache = self._collect_cache(
+            einops.repeat(tokens, "n -> b n", b=batch_size * topk), replacement_modules, with_bias_leaves=True
+        )
         rm_mapping = {
             replacement_module.cfg.hook_point_out: replacement_module for replacement_module in replacement_modules
         }
@@ -1387,19 +1407,20 @@ class TransformerLensLanguageModel(LanguageModel):
         seq_len = cache["hook_embed.post"].shape[1]
         fwd_batch_size = cache["hook_embed.post"].shape[0]
         bwd_batch_size = fwd_batch_size // topk
+        pos_indices = torch.arange(seq_len, device=self.device).unsqueeze(-1)
         sources: list[NodeInfoRef] = (
             [
                 NodeInfoRef(
                     key="hook_embed",
                     ref=cache["hook_embed.post"],
-                    indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
+                    indices=pos_indices,
                 )
             ]
             + [
                 NodeInfoRef(
                     key=replacement_module.cfg.hook_point_out + ".error",
                     ref=cache[replacement_module.cfg.hook_point_out + ".error.post"],
-                    indices=torch.arange(seq_len, device=self.device).unsqueeze(-1),
+                    indices=pos_indices,
                 )
                 for replacement_module in replacement_modules
             ]
@@ -1412,6 +1433,19 @@ class TransformerLensLanguageModel(LanguageModel):
                 for replacement_module in replacement_modules
             ]
         )
+
+        # ---- bias leaf sources (from replace_biases_with_leaves) ----
+        assert self.model is not None
+        for i in range(len(self.model.blocks)):
+            for key in (f"blocks.{i}.attn.b_O", f"blocks.{i}.mlp.b_out"):
+                if key in cache:
+                    sources.append(NodeInfoRef(key=key, ref=cache[key], indices=pos_indices))
+        for replacement_module in replacement_modules:
+            hp = replacement_module.cfg.hook_point_out
+            for suffix in (".sae.b_Q", ".sae.b_K", ".sae.b_D"):
+                key = hp + suffix
+                if key in cache:
+                    sources.append(NodeInfoRef(key=key, ref=cache[key], indices=pos_indices))
 
         sources_dimension = Dimension.from_node_infos(sources)
         results = []
