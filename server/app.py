@@ -3204,7 +3204,7 @@ def circuit_trace(request: dict):
             - max_n_logits: maximum logit number (default: 1)
             - desired_logit_prob: desired logit probability (default: 0.95)
             - batch_size: batch size (default: 1)
-            - order_mode: sorting mode (positive/negative, default: "positive")
+            - order_mode: abs | positive | negative | both (default: "abs")
             - encoder_demean: whether to demean encoder (default: False)
             - save_activation_info: whether to save activation info (default: False)
     
@@ -3247,7 +3247,7 @@ def circuit_trace(request: dict):
             max_n_logits = request.get("max_n_logits", 1)
             desired_logit_prob = request.get("desired_logit_prob", 0.95)
             batch_size = request.get("batch_size", 1)
-            order_mode = request.get("order_mode", "positive")
+            order_mode = request.get("order_mode", "abs")
             encoder_demean = request.get("encoder_demean", False)
             save_activation_info = request.get("save_activation_info", True)  # default to enable activation info saving
             max_act_times = request.get("max_act_times", None)  # add maximum activation times parameter
@@ -3278,8 +3278,11 @@ def circuit_trace(request: dict):
                 side = "both"
                 # convert order_mode to move_pair, for backend processing
                 order_mode = "move_pair"
-            elif order_mode not in ["positive", "negative"]:
-                raise HTTPException(status_code=400, detail="order_mode must be 'positive', 'negative', or 'both'")
+            elif order_mode not in ["abs", "positive", "negative"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="order_mode must be 'abs', 'positive', 'negative', or 'both'",
+                )
             
             # validate move_uci
             if not move_uci:

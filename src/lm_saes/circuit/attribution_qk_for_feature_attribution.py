@@ -1826,7 +1826,7 @@ def compute_partial_influences(edge_matrix, target_vector, row_to_node_index,
     Returns:
         influences: [n_cols] 每个节点的影响力
     """
-    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = device or edge_matrix.device
     W = edge_matrix.to(device)
 
     if sign_mode == "abs":
@@ -1859,6 +1859,18 @@ def compute_partial_influences(edge_matrix, target_vector, row_to_node_index,
     return influences
 
 
+def partial_influence_queue_config(order_mode: str) -> tuple[str, bool]:
+    """Same semantics as :func:`attribution_qk.partial_influence_queue_config`."""
+    if order_mode == "negative":
+        return "signed", False
+    if order_mode == "positive":
+        return "signed", True
+    if order_mode in ("abs", "move_pair", "group"):
+        return "abs", True
+    logger.warning("Unknown order_mode %r; using abs weights + descending sort.", order_mode)
+    return "abs", True
+
+
 def attribute(
     prompt: Union[str, torch.Tensor, List[int]],
     model: ReplacementModel,
@@ -1881,7 +1893,7 @@ def attribute(
     mongo_client = None,
     sae_series: str = 'BT4-exp128',
     analysis_name: str = 'default',
-    order_mode: str = 'positive',
+    order_mode: str = 'abs',
     save_activation_info: bool = True,  # 是否当前propmt保存激活信息和z_pattern
     feature_trace_specs: Optional[Sequence[int | FeatureTraceSpec]] = None,
 ) -> Dict[str, Any]:
@@ -1958,7 +1970,7 @@ def _run_attribution(
     mongo_client = None,
     sae_series: str = 'BT4-exp128',
     analysis_name: str = 'default',
-    order_mode: str = 'positive', # ['positive', 'negative', 'move_pair', 'group']
+    order_mode: str = 'abs',  # abs | positive | negative | move_pair | group
     save_activation_info: bool = True,  # 是否保存激活信息和z_pattern
     feature_trace_specs: Optional[Sequence[int | FeatureTraceSpec]] = None,
 ) -> Dict[str, Any]:
@@ -1970,7 +1982,7 @@ def _run_attribution(
     feature_specs_requested = bool(feature_trace_specs)
     print(f'{feature_specs_requested = }')
     
-    if order_mode == 'positive':
+    if order_mode in ('positive', 'abs'):
         positive_move_idx = move_idx
         print(f'{positive_move_idx = }')
     elif order_mode == 'negative':
@@ -3247,7 +3259,7 @@ def run_feature_attribution(
     edge_matrix: torch.Tensor,
     row_to_node_index: torch.Tensor,
     logger=None,
-    order_mode: str = 'positive',
+    order_mode: str = 'abs',
     initial_queue: Optional[torch.Tensor] = None,
 ) -> dict:
     """
@@ -3257,9 +3269,13 @@ def run_feature_attribution(
       - edge_matrix: 计算后（行=feature+logit，列=所有节点）的矩阵（原地同传入对象）
       - row_to_node_index: 计算后（行→全局 gid）的映射（原地同传入对象）
     """
-    rank_logits_signed = (order_mode == 'negative')
-    if rank_logits_signed is True:
-        print('order: from most negative')
+    influence_sign_mode, feature_descending = partial_influence_queue_config(order_mode)
+    if order_mode == "negative":
+        print("order_mode=negative: signed partial influence, ascending sort")
+    elif order_mode == "positive":
+        print("order_mode=positive: signed partial influence, descending sort")
+    elif order_mode == "abs":
+        print("order_mode=abs: |edge| partial influence, descending sort")
 
     if logger:
         logger.info(f"Phase: Computing feature attributions")
@@ -3279,9 +3295,6 @@ def run_feature_attribution(
     n_visited = 0
 
     pbar = tqdm(total=max_feature_nodes, desc="Feature influence computation")
-
-    feature_descending: bool = not rank_logits_signed
-    influence_sign_mode = "signed" if rank_logits_signed else "abs"
 
     def _chunk_indices(indices: torch.Tensor) -> list[torch.Tensor]:
         return [indices[i:i + batch_size] for i in range(0, len(indices), batch_size)]

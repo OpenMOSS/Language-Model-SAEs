@@ -103,7 +103,7 @@ export const SearchCircuitsVisualization = () => {
     edge_threshold: 0.57,
     max_act_times: null as number | null,
     side: 'both' as 'q' | 'k' | 'both',
-    orderMode: 'positive' as 'positive' | 'negative',
+    orderMode: 'abs' as 'abs' | 'positive' | 'negative',
     skipExisting: true,  // skip edges with existing results
   });
   const batchTraceAbortRef = useRef(false);
@@ -1279,14 +1279,15 @@ export const SearchCircuitsVisualization = () => {
                   <Label htmlFor="batch-order">Ordering mode</Label>
                   <Select 
                     value={batchTraceParams.orderMode} 
-                    onValueChange={(v) => setBatchTraceParams(p => ({ ...p, orderMode: v as 'positive' | 'negative' }))}
+                    onValueChange={(v) => setBatchTraceParams(p => ({ ...p, orderMode: v as 'abs' | 'positive' | 'negative' }))}
                   >
                     <SelectTrigger id="batch-order">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="positive">Positive</SelectItem>
-                      <SelectItem value="negative">Negative</SelectItem>
+                      <SelectItem value="abs">Abs (|W|, desc)</SelectItem>
+                      <SelectItem value="positive">Signed (desc)</SelectItem>
+                      <SelectItem value="negative">Signed (asc)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

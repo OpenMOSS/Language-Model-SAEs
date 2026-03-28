@@ -44,7 +44,7 @@ export interface EdgeCircuitTraceResult {
   visualizationData: any;
   timestamp: number;
   params: CircuitTraceParams;
-  orderMode: 'positive' | 'negative';
+  orderMode: 'abs' | 'positive' | 'negative';
   side: 'q' | 'k' | 'both';
 }
 
@@ -85,7 +85,9 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
   
   // Side and order mode state
   const [traceSide, setTraceSide] = useState<'q' | 'k' | 'both'>(existingResult?.side || 'k');
-  const [orderMode, setOrderMode] = useState<'positive' | 'negative'>(existingResult?.orderMode || 'positive');
+  const [orderMode, setOrderMode] = useState<'abs' | 'positive' | 'negative'>(
+    existingResult?.orderMode || 'abs',
+  );
   
   // Graph visualization state
   const [clickedNodeId, setClickedNodeId] = useState<string | null>(null);
@@ -357,13 +359,17 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           </div>
           <div className="flex-1">
             <Label className="text-xs">Order Mode</Label>
-            <Select value={orderMode} onValueChange={(v: 'positive' | 'negative') => setOrderMode(v)}>
+            <Select
+              value={orderMode}
+              onValueChange={(v: 'abs' | 'positive' | 'negative') => setOrderMode(v)}
+            >
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="positive">Positive</SelectItem>
-                <SelectItem value="negative">Negative</SelectItem>
+                <SelectItem value="abs">Abs (|W|, desc)</SelectItem>
+                <SelectItem value="positive">Signed (desc)</SelectItem>
+                <SelectItem value="negative">Signed (asc)</SelectItem>
               </SelectContent>
             </Select>
           </div>

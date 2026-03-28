@@ -1757,7 +1757,7 @@ def select_encoder_bias_lorsa(
 
 def compute_partial_influences(edge_matrix, logit_p, row_to_node_index,
                                max_iter=128, device=None, sign_mode="abs"):  # 'abs' | 'signed'
-    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = device or edge_matrix.device
     W = edge_matrix.to(device)
 
     if sign_mode == "abs":
@@ -1782,6 +1782,38 @@ def compute_partial_influences(edge_matrix, logit_p, row_to_node_index,
     return influences
 
 
+def partial_influence_queue_config(order_mode: str) -> tuple[str, bool]:
+    """Map ``order_mode`` to ``(sign_mode, descending)`` for feature-queue ranking.
+
+    ``sign_mode`` is passed to :func:`compute_partial_influences` (``\"abs\"`` or
+    ``\"signed\"``). ``descending`` is the sort order of accumulated partial
+    influences on feature nodes.
+
+    Modes:
+        - ``abs`` (default): use :math:`|W|` in the random walk, sort descending.
+          Matches the historical default when ``order_mode`` was ``\"positive\"``.
+        - ``positive``: signed :math:`W`, sort descending (largest net scores first;
+          tends to prioritize promoters over suppressors).
+        - ``negative``: signed :math:`W`, sort ascending (smallest / most negative first).
+        - ``move_pair`` / ``group``: same queue rule as ``abs`` (descending, abs edges).
+
+    Args:
+        order_mode: One of ``abs``, ``positive``, ``negative``, ``move_pair``, ``group``.
+
+    Returns:
+        Tuple ``(sign_mode, descending)`` for :func:`compute_partial_influences` and
+        ``torch.argsort(..., descending=...)``.
+    """
+    if order_mode == "negative":
+        return "signed", False
+    if order_mode == "positive":
+        return "signed", True
+    if order_mode in ("abs", "move_pair", "group"):
+        return "abs", True
+    logger.warning("Unknown order_mode %r; using abs weights + descending sort.", order_mode)
+    return "abs", True
+
+
 def attribute(
     prompt: Union[str, torch.Tensor, List[int]],
     model: ReplacementModel,
@@ -1804,11 +1836,16 @@ def attribute(
     mongo_client = None,
     sae_series: str = 'BT4-exp128',
     analysis_name: str = 'default',
-    order_mode: str = 'positive',
+    order_mode: str = 'abs',
     save_activation_info: bool = True,
     feature_trace_specs: Optional[Sequence[int | FeatureTraceSpec]] = None,
 ) -> Dict[str, Any]:
-    """Compute an attribution graph for *prompt* and return a structured bundle."""
+    """Compute an attribution graph for *prompt* and return a structured bundle.
+
+    ``order_mode``: ``abs`` (default) — partial-influence queue uses :math:`|W|`,
+    descending. ``positive`` — signed :math:`W`, descending (promoters tend first).
+    ``negative`` — signed :math:`W`, ascending.
+    """
     offload_handles = []
 
     input_ids = prompt
@@ -1867,7 +1904,7 @@ def _run_attribution(
     mongo_client = None,
     sae_series: str = 'BT4-exp128',
     analysis_name: str = 'default',
-    order_mode: str = 'positive', # ['positive', 'negative', 'move_pair', 'group']
+    order_mode: str = 'abs',  # abs | positive | negative | move_pair | group
     save_activation_info: bool = True,
     feature_trace_specs: Optional[Sequence[int | FeatureTraceSpec]] = None,
 ) -> Dict[str, Any]:
@@ -1878,7 +1915,7 @@ def _run_attribution(
     negative_move_idx = None
     feature_specs_requested = bool(feature_trace_specs)
     
-    if order_mode == 'positive':
+    if order_mode in ('positive', 'abs'):
         positive_move_idx = move_idx
         print(f'{positive_move_idx = }')
     elif order_mode == 'negative':
@@ -3130,7 +3167,7 @@ def run_feature_attribution(
     edge_matrix: torch.Tensor,
     row_to_node_index: torch.Tensor,
     logger=None,
-    order_mode: str = 'positive',
+    order_mode: str = 'abs',
     initial_queue: Optional[torch.Tensor] = None,
 ) -> dict:
     """
@@ -3140,9 +3177,13 @@ def run_feature_attribution(
       - edge_matrix: Matrix after computation (rows = feature + logit, columns = all nodes) (in-place same as input object)
       - row_to_node_index: Mapping after computation (row -> global gid) (in-place same as input object)
     """
-    rank_logits_signed = (order_mode == 'negative')
-    if rank_logits_signed is True:
-        print('order: from most negative')
+    influence_sign_mode, feature_descending = partial_influence_queue_config(order_mode)
+    if order_mode == "negative":
+        print("order_mode=negative: signed partial influence, ascending sort")
+    elif order_mode == "positive":
+        print("order_mode=positive: signed partial influence, descending sort")
+    elif order_mode == "abs":
+        print("order_mode=abs: |edge| partial influence, descending sort")
 
     if logger:
         logger.info(f"Phase: Computing feature attributions")
@@ -3162,9 +3203,6 @@ def run_feature_attribution(
     n_visited = 0
 
     pbar = tqdm(total=max_feature_nodes, desc="Feature influence computation")
-
-    feature_descending: bool = not rank_logits_signed
-    influence_sign_mode = "signed" if rank_logits_signed else "abs"
 
     def _chunk_indices(indices: torch.Tensor) -> list[torch.Tensor]:
         return [indices[i:i + batch_size] for i in range(0, len(indices), batch_size)]

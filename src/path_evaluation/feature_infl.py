@@ -15,6 +15,49 @@ from src.feature_and_steering.interact import analyze_node_activation_impact
 FeatureNode = Tuple[int, int, int, str]
 
 
+def _feature_type_order(feature_type: str) -> int:
+    feature_type_lower = feature_type.lower()
+    if feature_type_lower == "lorsa":
+        return 0
+    if feature_type_lower == "transcoder":
+        return 1
+    raise ValueError(f"Unknown feature_type: {feature_type}")
+
+
+def _feature_sort_key(node: FeatureNode) -> Tuple[int, int, int, int]:
+    layer, pos, feature_id, feature_type = node
+    return (layer, _feature_type_order(feature_type), pos, feature_id)
+
+
+def build_feature_list_from_df(unique_features: pd.DataFrame) -> List[FeatureNode]:
+    feature_nodes = {
+        (
+            int(row["layer"]),
+            int(row["position_idx"]),
+            int(row["feature_id"]),
+            str(row["feature_type"]).lower(),
+        )
+        for _, row in unique_features.iterrows()
+    }
+    return sorted(feature_nodes, key=_feature_sort_key)
+
+
+def _is_valid_causal_edge(source_node: FeatureNode, target_node: FeatureNode) -> bool:
+    if source_node == target_node:
+        return False
+
+    source_layer, _, _, source_type = source_node
+    target_layer, _, _, target_type = target_node
+
+    if source_layer < target_layer:
+        return True
+
+    if source_layer == target_layer:
+        return source_type.lower() == "lorsa" and target_type.lower() == "transcoder"
+
+    return False
+
+
 def precompute_activations_and_weights(
     fen: str,
     model: Any,
@@ -98,6 +141,7 @@ def batch_analyze_node_interactions(
             )
             result["source_node"] = source_node
             result["target_node_input"] = target_node
+            result["target_node_inputs"] = [target_node]
             results.append(result)
         except Exception as e:
             print(f"Error processing {source_node} -> {target_node}: {e}")
@@ -106,49 +150,12 @@ def batch_analyze_node_interactions(
 
 
 def _build_feature_pairs_within(unique_features: pd.DataFrame) -> List[Tuple[FeatureNode, FeatureNode]]:
+    feature_nodes = build_feature_list_from_df(unique_features)
     feature_pairs: List[Tuple[FeatureNode, FeatureNode]] = []
-    for i in range(len(unique_features)):
-        for j in range(i + 1, len(unique_features)):
-            f1 = unique_features.iloc[i]
-            f2 = unique_features.iloc[j]
-
-            layer1, layer2 = int(f1["layer"]), int(f2["layer"])
-            type1, type2 = f1["feature_type"], f2["feature_type"]
-            pos1, pos2 = int(f1["position_idx"]), int(f2["position_idx"])
-            fid1, fid2 = int(f1["feature_id"]), int(f2["feature_id"])
-
-            # 排除相同的 feature（self-connection 不应该包含相同的 feature）
-            if layer1 == layer2 and pos1 == pos2 and fid1 == fid2 and type1 == type2:
-                continue
-
-            if layer1 == layer2:
-                if type1 == "lorsa" and type2 == "transcoder":
-                    source, target = f1, f2
-                elif type1 == "transcoder" and type2 == "lorsa":
-                    source, target = f2, f1
-                else:
-                    continue
-            else:
-                if layer1 < layer2:
-                    source, target = f1, f2
-                else:
-                    source, target = f2, f1
-
-            source_node: FeatureNode = (
-                int(source["layer"]),
-                int(source["position_idx"]),
-                int(source["feature_id"]),
-                str(source["feature_type"]),
-            )
-
-            target_node: FeatureNode = (
-                int(target["layer"]),
-                int(target["position_idx"]),
-                int(target["feature_id"]),
-                str(target["feature_type"]),
-            )
-
-            feature_pairs.append((source_node, target_node))
+    for i, source_node in enumerate(feature_nodes):
+        for target_node in feature_nodes[i + 1 :]:
+            if _is_valid_causal_edge(source_node, target_node):
+                feature_pairs.append((source_node, target_node))
     return feature_pairs
 
 
@@ -156,45 +163,151 @@ def _build_feature_pairs_between(
     unique_features_src: pd.DataFrame,
     unique_features_tgt: pd.DataFrame,
 ) -> List[Tuple[FeatureNode, FeatureNode]]:
+    source_features = build_feature_list_from_df(unique_features_src)
+    target_features = build_feature_list_from_df(unique_features_tgt)
     feature_pairs: List[Tuple[FeatureNode, FeatureNode]] = []
-    for _, f1 in unique_features_src.iterrows():
-        for _, f2 in unique_features_tgt.iterrows():
-            layer1, layer2 = int(f1["layer"]), int(f2["layer"])
-            type1, type2 = f1["feature_type"], f2["feature_type"]
-            pos1, pos2 = int(f1["position_idx"]), int(f2["position_idx"])
-            fid1, fid2 = int(f1["feature_id"]), int(f2["feature_id"])
-
-            if layer1 == layer2 and pos1 == pos2 and fid1 == fid2 and type1 == type2:
-                continue
-
-            if layer1 == layer2:
-                if type1 == "lorsa" and type2 == "transcoder":
-                    source, target = f1, f2
-                else:
-                    continue
-            else:
-                if layer1 < layer2:
-                    source, target = f1, f2
-                else:
-                    continue
-
-            source_node: FeatureNode = (
-                int(source["layer"]),
-                int(source["position_idx"]),
-                int(source["feature_id"]),
-                str(source["feature_type"]),
-            )
-
-            target_node: FeatureNode = (
-                int(target["layer"]),
-                int(target["position_idx"]),
-                int(target["feature_id"]),
-                str(target["feature_type"]),
-            )
-
-            feature_pairs.append((source_node, target_node))
+    for source_node in source_features:
+        for target_node in target_features:
+            if _is_valid_causal_edge(source_node, target_node):
+                feature_pairs.append((source_node, target_node))
 
     return feature_pairs
+
+
+def _build_target_groups_within_feature_list(
+    feature_list: List[FeatureNode],
+) -> List[Tuple[FeatureNode, List[FeatureNode]]]:
+    ordered_features = sorted(set(feature_list), key=_feature_sort_key)
+    grouped_targets: List[Tuple[FeatureNode, List[FeatureNode]]] = []
+    for i, source_node in enumerate(ordered_features):
+        target_nodes = [
+            target_node
+            for target_node in ordered_features[i + 1 :]
+            if _is_valid_causal_edge(source_node, target_node)
+        ]
+        if target_nodes:
+            grouped_targets.append((source_node, target_nodes))
+    return grouped_targets
+
+
+def _build_target_groups_between_feature_lists(
+    source_feature_list: List[FeatureNode],
+    target_feature_list: List[FeatureNode],
+) -> List[Tuple[FeatureNode, List[FeatureNode]]]:
+    ordered_sources = sorted(set(source_feature_list), key=_feature_sort_key)
+    ordered_targets = sorted(set(target_feature_list), key=_feature_sort_key)
+    grouped_targets: List[Tuple[FeatureNode, List[FeatureNode]]] = []
+    for source_node in ordered_sources:
+        target_nodes = [
+            target_node
+            for target_node in ordered_targets
+            if _is_valid_causal_edge(source_node, target_node)
+        ]
+        if target_nodes:
+            grouped_targets.append((source_node, target_nodes))
+    return grouped_targets
+
+
+def _batch_analyze_grouped_node_interactions(
+    precomputed_data: Dict[str, Any],
+    grouped_targets: List[Tuple[FeatureNode, List[FeatureNode]]],
+    steering_scale: float = 0.0,
+    desc: str = "Analyzing feature interactions",
+) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    for source_node, target_nodes in tqdm(grouped_targets, desc=desc):
+        try:
+            result = analyze_node_activation_impact(
+                steering_nodes=[source_node],
+                target_nodes=target_nodes,
+                steering_scale=steering_scale,
+                cache=precomputed_data["cache"],
+                model=precomputed_data["model"],
+                tc_activations=precomputed_data["tc_activations"],
+                lorsa_activations=precomputed_data["lorsa_activations"],
+                tc_WDs=precomputed_data["tc_WDs"],
+                lorsa_WDs=precomputed_data["lorsa_WDs"],
+                transcoders=precomputed_data["transcoders"],
+                lorsas=precomputed_data["lorsas"],
+            )
+            result["source_node"] = source_node
+            result["target_node_inputs"] = list(target_nodes)
+            if len(target_nodes) == 1:
+                result["target_node_input"] = target_nodes[0]
+            results.append(result)
+        except Exception as e:
+            print(f"Error processing {source_node} -> {len(target_nodes)} targets: {e}")
+            continue
+    return results
+
+
+def batch_analyze_feature_list_interactions(
+    precomputed_data: Dict[str, Any],
+    feature_list: List[FeatureNode],
+    steering_scale: float = 0.0,
+) -> List[Dict[str, Any]]:
+    grouped_targets = _build_target_groups_within_feature_list(feature_list)
+    return _batch_analyze_grouped_node_interactions(
+        precomputed_data,
+        grouped_targets,
+        steering_scale=steering_scale,
+        desc="Analyzing feature interactions by source",
+    )
+
+
+def batch_analyze_feature_list_cross_interactions(
+    precomputed_data: Dict[str, Any],
+    source_feature_list: List[FeatureNode],
+    target_feature_list: List[FeatureNode],
+    steering_scale: float = 0.0,
+) -> List[Dict[str, Any]]:
+    grouped_targets = _build_target_groups_between_feature_lists(
+        source_feature_list,
+        target_feature_list,
+    )
+    return _batch_analyze_grouped_node_interactions(
+        precomputed_data,
+        grouped_targets,
+        steering_scale=steering_scale,
+        desc="Analyzing cross-feature interactions by source",
+    )
+
+
+def _iter_target_entries(
+    result: Dict[str, Any],
+) -> List[Tuple[Optional[FeatureNode], Dict[str, Any]]]:
+    target_results = result.get("target_nodes")
+    if isinstance(target_results, list) and target_results:
+        target_node_inputs = result.get("target_node_inputs")
+        if not isinstance(target_node_inputs, list):
+            single_target = result.get("target_node_input")
+            target_node_inputs = [single_target] if single_target is not None else []
+
+        entries: List[Tuple[Optional[FeatureNode], Dict[str, Any]]] = []
+        for idx, target_result in enumerate(target_results):
+            target_node = (
+                target_node_inputs[idx]
+                if idx < len(target_node_inputs)
+                else result.get("target_node_input")
+            )
+            entries.append((target_node, target_result))
+        return entries
+
+    target_node = result.get("target_node_input")
+    if target_node is None:
+        return []
+
+    return [
+        (
+            target_node,
+            {
+                "target_node": result.get("target_node", ""),
+                "original_activation": result.get("original_activation", 0.0),
+                "modified_activation": result.get("modified_activation", 0.0),
+                "activation_change": result.get("activation_change", 0.0),
+            },
+        )
+    ]
 
 
 def _process_interaction_results(
@@ -205,45 +318,42 @@ def _process_interaction_results(
 ) -> Tuple[List[Dict[str, Any]], Optional[str], Optional[str]]:
     processed_results: List[Dict[str, Any]] = []
     for result in results:
-        if "target_nodes" in result and len(result["target_nodes"]) > 0:
-            target_result = result["target_nodes"][0]
-            original_activation = target_result["original_activation"]
-            modified_activation = target_result["modified_activation"]
-            activation_change = target_result["activation_change"]
-        else:
-            original_activation = result.get("original_activation", 0.0)
-            modified_activation = result.get("modified_activation", 0.0)
-            activation_change = result.get("activation_change", 0.0)
+        source_node = result.get("source_node")
+        if source_node is None:
+            continue
 
-        if original_activation != 0:
-            reduction_ratio = activation_change / original_activation
-        else:
-            reduction_ratio = 0.0
+        for target_node, target_result in _iter_target_entries(result):
+            if target_node is None:
+                continue
 
-        source_node = result["source_node"]
-        target_node = result["target_node_input"]
+            original_activation = float(target_result.get("original_activation", 0.0))
+            modified_activation = float(target_result.get("modified_activation", 0.0))
+            activation_change = float(target_result.get("activation_change", 0.0))
 
-        processed_result: Dict[str, Any] = {
-            "source_layer": source_node[0],
-            "source_pos": source_node[1],
-            "source_feature": source_node[2],
-            "source_type": source_node[3],
-            "target_layer": target_node[0],
-            "target_pos": target_node[1],
-            "target_feature": target_node[2],
-            "target_type": target_node[3],
-            "original_activation": original_activation,
-            "modified_activation": modified_activation,
-            "activation_change": activation_change,
-            "steering_scale": result.get("steering_scale", steering_scale),
-            "reduction_ratio": reduction_ratio,
-            "target_node_str": target_result.get("target_node", "")
-            if "target_nodes" in result and len(result["target_nodes"]) > 0
-            else result.get("target_node", ""),
-            "steering_nodes_count": result.get("steering_nodes_count", 1),
-        }
+            if original_activation != 0:
+                reduction_ratio = activation_change / original_activation
+            else:
+                reduction_ratio = 0.0
 
-        processed_results.append(processed_result)
+            processed_result: Dict[str, Any] = {
+                "source_layer": source_node[0],
+                "source_pos": source_node[1],
+                "source_feature": source_node[2],
+                "source_type": source_node[3],
+                "target_layer": target_node[0],
+                "target_pos": target_node[1],
+                "target_feature": target_node[2],
+                "target_type": target_node[3],
+                "original_activation": original_activation,
+                "modified_activation": modified_activation,
+                "activation_change": activation_change,
+                "steering_scale": result.get("steering_scale", steering_scale),
+                "reduction_ratio": reduction_ratio,
+                "target_node_str": target_result.get("target_node", ""),
+                "steering_nodes_count": result.get("steering_nodes_count", 1),
+            }
+
+            processed_results.append(processed_result)
 
     json_output_file: Optional[str] = None
     csv_output_file: Optional[str] = None
@@ -254,11 +364,56 @@ def _process_interaction_results(
             json.dump(processed_results, f, indent=2)
 
         results_df = pd.DataFrame(processed_results)
-        filtered_df = results_df[results_df["reduction_ratio"] <= -threshold]
+        if results_df.empty:
+            filtered_df = results_df
+        else:
+            filtered_df = results_df[results_df["reduction_ratio"] <= -threshold]
         csv_output_file = f"{output_prefix}_reduction_{threshold}.csv"
         filtered_df.to_csv(csv_output_file, index=False)
 
     return processed_results, json_output_file, csv_output_file
+
+
+def compute_feature_list_interactions(
+    feature_list: List[FeatureNode],
+    precomputed_data: Dict[str, Any],
+    steering_scale: float = 0.0,
+    output_prefix: Optional[str] = None,
+    threshold: float = 0.1,
+) -> Tuple[List[Dict[str, Any]], Optional[str], Optional[str]]:
+    raw_results = batch_analyze_feature_list_interactions(
+        precomputed_data,
+        feature_list,
+        steering_scale=steering_scale,
+    )
+    return _process_interaction_results(
+        raw_results,
+        steering_scale,
+        output_prefix,
+        threshold=threshold,
+    )
+
+
+def compute_cross_feature_list_interactions(
+    source_feature_list: List[FeatureNode],
+    target_feature_list: List[FeatureNode],
+    precomputed_data: Dict[str, Any],
+    steering_scale: float = 0.0,
+    output_prefix: Optional[str] = None,
+    threshold: float = 0.1,
+) -> Tuple[List[Dict[str, Any]], Optional[str], Optional[str]]:
+    raw_results = batch_analyze_feature_list_cross_interactions(
+        precomputed_data,
+        source_feature_list,
+        target_feature_list,
+        steering_scale=steering_scale,
+    )
+    return _process_interaction_results(
+        raw_results,
+        steering_scale,
+        output_prefix,
+        threshold=threshold,
+    )
 
 
 def compute_feature_interactions_batch(
@@ -274,18 +429,18 @@ def compute_feature_interactions_batch(
     unique_features = df[
         ["position_name", "position_idx", "layer", "feature_id", "feature_type"]
     ].drop_duplicates()
+    feature_list = build_feature_list_from_df(unique_features)
 
     precomputed_data = precompute_activations_and_weights(
         fen, model, transcoders, lorsas
     )
 
-    feature_pairs = _build_feature_pairs_within(unique_features)
-    raw_results = batch_analyze_node_interactions(
-        precomputed_data, feature_pairs, steering_scale
-    )
-
-    processed_results, json_file, csv_file = _process_interaction_results(
-        raw_results, steering_scale, output_prefix, threshold=0.1
+    processed_results, json_file, csv_file = compute_feature_list_interactions(
+        feature_list,
+        precomputed_data,
+        steering_scale=steering_scale,
+        output_prefix=output_prefix,
+        threshold=0.1,
     )
 
     return processed_results, json_file, csv_file
@@ -303,18 +458,20 @@ def compute_self_conn_for_csv(
     precomputed_data: Dict[str, Any],
     steering_scale: float = 0.0,
     output_prefix: Optional[str] = None,
+    threshold: float = 0.1,
 ) -> Tuple[float, Optional[str], Optional[str]]:
     df = pd.read_csv(csv_file_path)
     unique_features = df[
         ["position_name", "position_idx", "layer", "feature_id", "feature_type"]
     ].drop_duplicates()
+    feature_list = build_feature_list_from_df(unique_features)
 
-    feature_pairs = _build_feature_pairs_within(unique_features)
-    raw_results = batch_analyze_node_interactions(
-        precomputed_data, feature_pairs, steering_scale
-    )
-    processed_results, json_file, csv_file = _process_interaction_results(
-        raw_results, steering_scale, output_prefix, threshold=0.1
+    processed_results, json_file, csv_file = compute_feature_list_interactions(
+        feature_list,
+        precomputed_data,
+        steering_scale=steering_scale,
+        output_prefix=output_prefix,
+        threshold=threshold,
     )
     self_conn = _mean_infl_from_results(processed_results)
     return self_conn, json_file, csv_file
@@ -336,13 +493,16 @@ def compute_cross_conn_between_csvs(
     unique_tgt = df_tgt[
         ["position_name", "position_idx", "layer", "feature_id", "feature_type"]
     ].drop_duplicates()
+    source_feature_list = build_feature_list_from_df(unique_src)
+    target_feature_list = build_feature_list_from_df(unique_tgt)
 
-    feature_pairs = _build_feature_pairs_between(unique_src, unique_tgt)
-    raw_results = batch_analyze_node_interactions(
-        precomputed_data, feature_pairs, steering_scale
-    )
-    processed_results, json_file, csv_file = _process_interaction_results(
-        raw_results, steering_scale, output_prefix, threshold=0.1
+    processed_results, json_file, csv_file = compute_cross_feature_list_interactions(
+        source_feature_list,
+        target_feature_list,
+        precomputed_data,
+        steering_scale=steering_scale,
+        output_prefix=output_prefix,
+        threshold=0.1,
     )
     cross_conn = _mean_infl_from_results(processed_results)
     return cross_conn, json_file, csv_file

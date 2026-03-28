@@ -1,4 +1,9 @@
-from .overlap import compute_folder_overlap, compute_folder_overlap_details
+from .overlap import (
+    compute_folder_overlap,
+    compute_folder_overlap_details,
+    compute_folder_overlap_per_layer,
+    compute_folder_overlap_per_layer_details,
+)
 from .feature_infl import compute_folder_csr
 from .virtual_weight import compute_folder_virtual_weight, compute_virtual_weight_single
 from .decoder_cos_sim import compute_folder_decoder_cos_sim

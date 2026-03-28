@@ -416,7 +416,7 @@ def create_graph_files(
             )
         sae_series = graph.sae_series
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = graph.adjacency_matrix.device if isinstance(graph.adjacency_matrix, torch.Tensor) else "cpu"
     graph.to(device)
     
     fen = graph.input_string

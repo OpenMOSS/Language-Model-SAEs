@@ -304,8 +304,11 @@ def load_model_and_transcoders(
             add_log("Load new HookedTransformer model...")
             model = HookedTransformer.from_pretrained_no_processing(
                 model_name,
+                device=device,
                 dtype=torch.float32,
             ).eval()
+            if hasattr(model, "cfg") and hasattr(model.cfg, "device"):
+                model.cfg.device = device
             _global_hooked_models[model_name] = model
             add_log("HookedTransformer model loaded")
         
@@ -378,6 +381,9 @@ def load_model_and_transcoders(
         replacement_model = ReplacementModel.from_pretrained_model(
             model, transcoders, lorsas
         )
+        if hasattr(replacement_model, "cfg") and hasattr(replacement_model.cfg, "device"):
+            replacement_model.cfg.device = device
+        replacement_model.to(device)
         add_log("ReplacementModel created successfully")
         
         set_cached_models(cache_key, model, transcoders, lorsas, replacement_model)
@@ -617,7 +623,7 @@ def create_graph_json_data(
             )
         sae_series = graph.sae_series
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = graph.adjacency_matrix.device if isinstance(graph.adjacency_matrix, torch.Tensor) else "cpu"
     graph.to(device)
     
     fen = graph.input_string
@@ -684,7 +690,7 @@ def run_circuit_trace(
     desired_logit_prob: float = 0.95,
     max_feature_nodes: int = 4096,
     batch_size: int = 1,
-    order_mode: str = "positive",
+    order_mode: str = "abs",
     mongo_uri: str = "mongodb://10.245.40.154:27017",
     mongo_db: str = "mechinterp",
     sae_series: str = "BT4-exp128",
@@ -884,7 +890,7 @@ def main():
                        help="Maximum feature nodes number")
     parser.add_argument("--batch_size", type=int, default=1,
                        help="Batch size")
-    parser.add_argument("--order_mode", type=str, default="positive",
+    parser.add_argument("--order_mode", type=str, default="abs",
                        choices=["positive", "negative", "move_pair", "group"],
                        help="Sorting mode")
     
