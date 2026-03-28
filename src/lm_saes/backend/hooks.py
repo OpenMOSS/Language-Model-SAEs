@@ -106,35 +106,7 @@ def replace_biases_with_leaves(
     batch_size: int,
     seq_len: int,
 ):
-    """Replace bias parameters with per-batch, per-position leaf tensors.
 
-    Every leaf has shape ``(batch, seq, *original_bias_shape)`` so that
-    gradients are available per batch element **and** per token position.
-
-    Only biases that enter the **residual stream** directly are included,
-    plus LORSA's QK biases which are needed for attention-score tracing:
-
-    *Strategy 1 – zero & hook* (base-model resid-stream biases):
-        ``b_O`` and ``b_out`` live inside ``F.linear`` / ``batch_addmm``
-        which require a 1-D bias, so we cannot change their shape.
-        Instead we zero the parameter and re-inject the expanded leaf
-        through a hook at the next HookPoint (``hook_attn_out`` /
-        ``hook_mlp_out``).
-
-    *Strategy 2 – parameter replacement* (SAE / LORSA biases):
-        LORSA ``b_Q`` / ``b_K`` are consumed via plain ``+ self.b_Q``
-        inside ``_compute_qkv`` which has **no** HookPoint between the
-        addition and the downstream attention-score computation.
-        ``b_D`` (decoder bias of SAE / MOLT / LORSA) is similarly added
-        via ``+ self.b_D`` before ``hook_reconstructed``, but the SAE
-        has not yet been mounted when this context manager is entered
-        so we cannot register hooks on its HookPoints.
-        For both cases we pop the ``nn.Parameter`` and set the expanded
-        leaf as a plain attribute; PyTorch broadcasting handles the rest.
-
-    Yields:
-        ``dict[str, torch.Tensor]`` mapping bias names to their leaf tensors.
-    """
     from lm_saes.models.lorsa import LowRankSparseAttention
     from lm_saes.models.molt import MixtureOfLinearTransform
     from lm_saes.models.sae import SparseAutoEncoder
@@ -157,7 +129,7 @@ def replace_biases_with_leaves(
         saved_state.append((module, attr_name, param.data.clone(), False))
         leaf = _make_bias_leaf(param.data, batch_size, seq_len)
         bias_leaves[cache_key] = leaf
-        param.data.zero_()
+        param.zero_()
 
         def _hook(tensor: torch.Tensor, hook: HookPoint, _leaf: torch.Tensor = leaf) -> torch.Tensor:
             return tensor + _leaf
@@ -180,7 +152,6 @@ def replace_biases_with_leaves(
         object.__setattr__(module, attr_name, leaf)
 
     try:
-        # ---- base-model biases that enter the residual stream directly ----
         for i, block in enumerate(model.blocks):  # type: ignore[arg-type]
             if hasattr(block, "attn") and hasattr(block.attn, "b_O") and getattr(block.attn, "b_O") is not None:
                 _save_zero_and_hook(block.attn, "b_O", f"blocks.{i}.attn.b_O", f"blocks.{i}.hook_attn_out")
@@ -196,7 +167,7 @@ def replace_biases_with_leaves(
                     if hasattr(sae, bias_name) and getattr(sae, bias_name) is not None:
                         _save_and_replace_param(sae, bias_name, f"{sae.cfg.hook_point_out}.sae.{bias_name}")
             # decoder bias b_D (SAE / MOLT / LORSA)
-            if getattr(sae.cfg, "use_decoder_bias", False) and hasattr(sae, "b_D"):
+            if sae.cfg.use_decoder_bias and hasattr(sae, "b_D"):
                 _save_and_replace_param(sae, "b_D", f"{sae.cfg.hook_point_out}.sae.b_D")
 
         with model.hooks(fwd_hooks):
