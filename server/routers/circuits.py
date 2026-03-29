@@ -126,7 +126,9 @@ def concretize_graph_data(graph_data: dict[str, Any]):
         [
             list_feature_data(sae_name=sae_name, indices=[node["feature"] for node in nodes], with_samplings=False)
             for sae_name, nodes in itertools.groupby(
-                sorted(filter(lambda x: x["sae_name"] is not None, graph_data["nodes"]), key=lambda x: x["sae_name"]),
+                sorted(
+                    filter(lambda x: x.get("sae_name") is not None, graph_data["nodes"]), key=lambda x: x["sae_name"]
+                ),
                 key=lambda x: x["sae_name"],
             )
         ],
@@ -134,7 +136,7 @@ def concretize_graph_data(graph_data: dict[str, Any]):
     )
 
     for node in graph_data["nodes"]:
-        if node["sae_name"] is not None:
+        if node.get("sae_name") is not None:
             if (node["sae_name"], node["feature"]) not in features:
                 return Response(
                     content=f"Feature {node['feature']} not found in SAE {node['sae_name']}", status_code=404
@@ -199,9 +201,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             activation_map[sig] = float(activation_value.item())
 
     logit_token_map = {token_id: token for token_id, token in zip(ar.logit_token_ids, ar.logit_tokens)}
-    logit_prob_map = {
-        int(index.item()): float(ar.probs[i].item()) for i, index in enumerate(targets.node_mappings["logits"].indices)
-    }
+    logit_prob_map = {token_id: float(prob.item()) for token_id, prob in zip(ar.logit_token_ids, ar.probs)}
     target_vocab_index = int(targets.node_mappings["logits"].indices[0][0].item())
     n_layers = max((int(item["layer_idx"]) for item in sae_metadata.values()), default=-1) + 1
 
@@ -219,6 +219,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
                 "layer": -1,
                 "ctx_idx": pos,
                 "token": token,
+                "is_target_logit": False,
                 "is_from_qk_tracing": False,
             }
 
@@ -249,6 +250,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
                 "node_id": f"{layer}_error_{pos}",
                 "layer": layer,
                 "ctx_idx": pos,
+                "is_target_logit": False,
                 "is_from_qk_tracing": False,
             }
 
@@ -270,6 +272,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
                 "sae_name": metadata["sae_name"] if metadata is not None else None,
                 "activation": activation_value,
                 "qk_tracing_results": None,
+                "is_target_logit": False,
                 "is_from_qk_tracing": False,
             }
 
@@ -279,6 +282,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             "node_id": fallback_id,
             "layer": 0,
             "ctx_idx": indices[0] if len(indices) > 0 else 0,
+            "is_target_logit": False,
             "is_from_qk_tracing": False,
         }
 
@@ -355,7 +359,7 @@ def run_circuit_attribution(
                 replacement_modules=list(saes.values()),
                 max_n_logits=request.max_n_logits,
                 desired_logit_prob=request.desired_logit_prob,
-                batch_size=1,
+                batch_size=128,
                 max_features=request.max_feature_nodes,
             )
 

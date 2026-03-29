@@ -660,6 +660,12 @@ class NodeIndexedTensor:
     def clone(self) -> Self:
         return self.__class__.from_data(self.data.clone(), self.dimensions)
 
+    def __and__(self, other: Self) -> Self:
+        return self.__class__.from_data(self.data & other.data, self.dimensions)
+
+    def __invert__(self) -> Self:
+        return self.__class__.from_data(~self.data, self.dimensions)
+
     def nonzero(self) -> tuple[torch.Tensor, tuple[Dimension, ...]]:
         indices = self.data.nonzero(as_tuple=True)
         values = self.data[indices]
@@ -718,12 +724,6 @@ class NodeIndexedVector(NodeIndexedTensor):
 
     def __matmul__(self, other: NodeIndexedMatrix):
         return self.matmul(other)
-
-    def __and__(self, other: Self) -> Self:
-        return self.__class__.from_data(self.data & other.data, self.dimensions)
-
-    def __invert__(self) -> Self:
-        return self.__class__.from_data(~self.data, self.dimensions)
 
 
 class NodeIndexedMatrix(NodeIndexedTensor):
@@ -877,7 +877,7 @@ def prune_attribution(
     attribution = attribution.clone()
     attribution.masked_fill_dim_(1, ~node_mask[optional_sources_dimension], 0)
     attribution.masked_fill_dim_(0, ~node_mask[intermediates_dimension], 0)
-    attribution.masked_fill_(edge_mask, 0)
+    attribution.masked_fill_(~edge_mask, 0)
     return attribution
 
 
@@ -1011,7 +1011,7 @@ def greedily_collect_attribution(
     max_intermediates: int,
     reduction_weight: torch.Tensor,
     max_iter: int = 100,
-) -> NodeIndexedMatrix:
+) -> tuple[NodeIndexedMatrix, Dimension]:
     """
     Greedily collect attribution from targets to sources through intermediates.
     """
@@ -1084,7 +1084,7 @@ def greedily_collect_attribution(
             ),
         )
 
-    return attribution
+    return attribution, collected_intermediates_dimension
 
 
 def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
@@ -1318,7 +1318,7 @@ class TransformerLensLanguageModel(LanguageModel):
         max_intermediates = max_features if max_features is not None else len(intermediates)
         max_iter = len(replacement_modules) + 10
 
-        attribution = greedily_collect_attribution(
+        attribution, collected_intermediates = greedily_collect_attribution(
             targets=targets,
             sources=sources,
             intermediates=intermediates,
@@ -1327,16 +1327,23 @@ class TransformerLensLanguageModel(LanguageModel):
             max_iter=max_iter,
         )
 
+        sources_dimension = Dimension.from_node_infos(sources)
+        attribution = attribution[None, sources_dimension + collected_intermediates]
+
+        intermediate_ref_map = {node_info.key: node_info.ref for node_info, _ in intermediates}
         activations = torch.cat(
             [node_info.ref[0, *node_info.indices.unbind(dim=1)] for node_info in targets]
-            + [node_info.ref[0, *node_info.indices.unbind(dim=1)] for node_info, _ in intermediates]
+            + [
+                intermediate_ref_map[node_info.key][0, *node_info.indices.unbind(dim=1)]
+                for node_info in collected_intermediates.node_infos
+            ]
             + [torch.ones_like(node_info.indices[:, 0], dtype=node_info.ref.dtype) for node_info in sources],
             dim=0,
         )
 
         activations = NodeIndexedVector.from_data(
             data=activations,
-            dimensions=(Dimension.from_node_infos(targets + [node_info for node_info, _ in intermediates] + sources),),
+            dimensions=(Dimension.from_node_infos(targets + list(collected_intermediates.node_infos) + sources),),
         )
 
         prompt_token_ids = tokens.detach().cpu().tolist()
