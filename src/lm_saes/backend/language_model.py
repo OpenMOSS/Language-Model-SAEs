@@ -498,7 +498,9 @@ class Dimension:
         return self.__class__.from_node_infos(filtered) if filtered else self.__class__.empty(device=self.device)
 
     def unique(self) -> Self:
-        node_infos = [NodeInfo(key=node.key, indices=node.indices.unique(dim=0)) for node in self.node_infos]
+        node_infos = [
+            NodeInfo(key=node.key, indices=node.indices.unique(dim=0)) for node in self.node_mappings.values()
+        ]
         return self.__class__.from_node_infos(node_infos)
 
     def to(self, device: torch.device | str) -> Self:
@@ -972,13 +974,14 @@ def compute_intermediates_attribution(
     if len(intermediates) == 0:
         return influence
     t2i: NodeIndexedMatrix = attribution[targets, intermediates]
+    i2all: NodeIndexedMatrix = attribution[intermediates, None]
+    i2i: NodeIndexedMatrix = attribution[intermediates, intermediates]
     for _ in range(max_iter):
-        i2i: NodeIndexedMatrix = attribution[intermediates, None]
-        cur_influence = t2i @ i2i
+        cur_influence = t2i @ i2all
         if not torch.any(cur_influence.data):
             break
         influence += cur_influence
-        t2i = t2i @ attribution[intermediates, intermediates]
+        t2i = t2i @ i2i
     return influence
 
 
@@ -1106,6 +1109,18 @@ def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
     return detach_hooks
 
 
+def attn_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
+    assert models.model is not None, "model must be initialized"
+    detach_hooks = []
+    for i, block in enumerate(models.model.blocks):
+        if hasattr(block, "attn") and isinstance(block.attn, torch.nn.Module):
+            detach_hooks.append(f"blocks.{i}.attn.hook_pattern")
+            if models.model.cfg.use_qk_norm:
+                detach_hooks.append(f"blocks.{i}.attn.q_norm.hook_scale")
+                detach_hooks.append(f"blocks.{i}.attn.k_norm.hook_scale")
+    return detach_hooks
+
+
 @dataclass
 class QKTraceRequest:
     lorsa: LowRankSparseAttention
@@ -1229,6 +1244,7 @@ class TransformerLensLanguageModel(LanguageModel):
                         for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
                     ]
                     + ln_detach_hooks(self)
+                    + attn_detach_hooks(self)
                 ):
                     logits, cache = self.run_with_ref_cache(
                         tokens,
