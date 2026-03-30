@@ -295,8 +295,8 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
 
     links = [
         {
-            "source": node_lookup[node_signature(target_ni.key, target_ni.indices)]["node_id"],
-            "target": node_lookup[node_signature(source_ni.key, source_ni.indices)]["node_id"],
+            "source": node_lookup[node_signature(source_ni.key, source_ni.indices)]["node_id"],
+            "target": node_lookup[node_signature(target_ni.key, target_ni.indices)]["node_id"],
             "weight": float(weight),
         }
         for weight, target_ni, source_ni in zip(edge_weights.tolist(), targets, sources)
