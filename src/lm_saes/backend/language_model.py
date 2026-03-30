@@ -501,6 +501,10 @@ class Dimension:
         node_infos = [NodeInfo(key=node.key, indices=node.indices.unique(dim=0)) for node in self.node_infos]
         return self.__class__.from_node_infos(node_infos)
 
+    def to(self, device: torch.device | str) -> Self:
+        node_infos = [NodeInfo(key=node.key, indices=node.indices.to(device)) for node in self.node_infos]
+        return self.__class__.from_node_infos(node_infos)
+
 
 class NodeIndexedTensor:
     def __init__(
@@ -672,6 +676,9 @@ class NodeIndexedTensor:
         return values, tuple(
             Dimension.from_node_infos(self.dimensions[i].offsets_to_nodes(indices[i])) for i in range(self.n_dims)
         )
+
+    def to(self, device: torch.device | str) -> Self:
+        return self.__class__.from_data(self.data.to(device), tuple(dim.to(device) for dim in self.dimensions))
 
 
 class NodeIndexedVector(NodeIndexedTensor):
