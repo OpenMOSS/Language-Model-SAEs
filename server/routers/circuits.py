@@ -157,14 +157,17 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     ar = client.load_attribution(circuit_id)
     if ar is None:
         raise ValueError(f"Attribution data not found for circuit {circuit_id}")
-
+    device = "cuda"
+    ar.attribution = ar.attribution.to(device)
+    ar.activations = ar.activations.to(device)
+    ar.logits = ar.logits.to(device)
+    ar.probs = ar.probs.to(device)
     attribution = prune_attribution(
         ar.attribution,
         ar.probs,
         node_threshold=node_threshold,
         edge_threshold=edge_threshold,
     )
-
     sae_set = client.get_sae_set(name=circuit.sae_set_name)
     if sae_set is None:
         raise ValueError(f"SAE set {circuit.sae_set_name} not found")
@@ -359,7 +362,7 @@ def run_circuit_attribution(
                 replacement_modules=list(saes.values()),
                 max_n_logits=request.max_n_logits,
                 desired_logit_prob=request.desired_logit_prob,
-                batch_size=128,
+                batch_size=16,
                 max_features=request.max_feature_nodes,
             )
 
