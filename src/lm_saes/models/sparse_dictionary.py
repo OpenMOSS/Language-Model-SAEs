@@ -598,7 +598,7 @@ class SparseDictionary(HookedRootModule, ABC):
         pretrained_name_or_path: str,
         *,
         device_mesh: DeviceMesh | None = None,
-        fold_activation_scale: bool = True,
+        fold_activation_scale: bool = False,
         strict_loading: bool = True,
         **kwargs: Any,
     ) -> Self:
