@@ -157,7 +157,6 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
         raise ValueError(f"Circuit {circuit_id} is not completed (status: {circuit.status})")
 
     ar = client.load_attribution(circuit_id)
-
     if ar is None:
         raise ValueError(f"Attribution data not found for circuit {circuit_id}")
 
@@ -166,6 +165,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     ar.activations = ar.activations.to(device)
     ar.logits = ar.logits.to(device)
     ar.probs = ar.probs.to(device)
+
     attribution = prune_attribution(
         ar.attribution,
         ar.probs,
@@ -189,31 +189,21 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             "layer_idx": layer_idx,
         }
 
-    def node_signature(node_key: Any, indices: torch.Tensor) -> tuple[str, tuple[int, ...]]:
-        return (str(node_key), tuple(indices[0].tolist()))
-
     def parse_hook_layer(hook_key: str) -> int:
         match = re.search(r"blocks\.(\d+)\.", hook_key)
         return int(match.group(1)) if match else 0
 
     edge_weights, (targets, sources) = attribution.nonzero()
     nodes = (sources + targets).unique()
-
-    activation_map: dict[tuple[str, tuple[int, ...]], float] = {}
-    for node_info in nodes.node_infos:
-        for single_node_info in node_info.unbind():
-            sig = node_signature(single_node_info.key, single_node_info.indices)
-            activation_value = ar.activations[[single_node_info]].data
-            activation_map[sig] = float(activation_value.item())
+    node_activations = ar.activations[nodes].data
 
     logit_token_map = {token_id: token for token_id, token in zip(ar.logit_token_ids, ar.logit_tokens)}
     logit_prob_map = {token_id: float(prob.item()) for token_id, prob in zip(ar.logit_token_ids, ar.probs)}
     target_vocab_index = int(targets.node_mappings["logits"].indices[0][0].item())
     n_layers = max((int(item["layer_idx"]) for item in sae_metadata.values()), default=-1) + 1
 
-    def make_node(node_key: str, indices_tuple: tuple[int, ...]) -> dict[str, Any]:
+    def make_node(node_key: str, indices_tuple: tuple[int, ...], activation: float) -> dict[str, Any]:
         indices = list(indices_tuple)
-        sig = (node_key, indices_tuple)
 
         if node_key == "hook_embed":
             pos = indices[0]
@@ -268,7 +258,6 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             layer = 2 * layer_base + int(not is_lorsa)
             pos = indices[0] if len(indices) > 0 else 0
             feature_idx = indices[1] if len(indices) > 1 else 0
-            activation_value = activation_map.get(sig, 0.0)
             return {
                 "feature_type": "lorsa" if is_lorsa else "cross layer transcoder",
                 "node_id": f"{layer}_{feature_idx}_{pos}",
@@ -276,7 +265,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
                 "ctx_idx": pos,
                 "feature": feature_idx,
                 "sae_name": metadata["sae_name"] if metadata is not None else None,
-                "activation": activation_value,
+                "activation": activation,
                 "qk_tracing_results": None,
                 "is_target_logit": False,
                 "is_from_qk_tracing": False,
@@ -292,20 +281,28 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             "is_from_qk_tracing": False,
         }
 
-    node_lookup = {
-        sig: make_node(*sig)
-        for node_info in nodes.node_infos
-        for single_node_info in node_info.unbind()
-        for sig in (node_signature(single_node_info.key, single_node_info.indices),)
-    }
+    node_entries = [
+        make_node(
+            str(ni.key),
+            tuple(ni.indices[0].tolist()),
+            float(activation),
+        )
+        for ni, activation in zip(nodes, node_activations)
+    ]
+    node_ids = [node_data["node_id"] for node_data in node_entries]
 
+    target_node_offsets = nodes.nodes_to_offsets(targets).tolist()
+    source_node_offsets = nodes.nodes_to_offsets(sources).tolist()
+    edge_weight_values = edge_weights.tolist()
     links = [
         {
-            "source": node_lookup[node_signature(source_ni.key, source_ni.indices)]["node_id"],
-            "target": node_lookup[node_signature(target_ni.key, target_ni.indices)]["node_id"],
+            "source": node_ids[source_node_offset],
+            "target": node_ids[target_node_offset],
             "weight": float(weight),
         }
-        for weight, target_ni, source_ni in zip(edge_weights.tolist(), targets, sources)
+        for weight, source_node_offset, target_node_offset in zip(
+            edge_weight_values, source_node_offsets, target_node_offsets
+        )
     ]
 
     graph_data: dict[str, Any] = {
@@ -314,7 +311,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             "prompt": circuit.prompt,
             "schema_version": 1,
         },
-        "nodes": list(node_lookup.values()),
+        "nodes": node_entries,
         "links": links,
     }
     concretize_graph_data(graph_data)
