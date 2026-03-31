@@ -1,6 +1,7 @@
 import os
 import pickle
 from datetime import datetime
+from importlib import import_module
 from typing import Annotated, Any, Literal, Optional, Union
 
 import gridfs
@@ -10,13 +11,12 @@ import pymongo.database
 import pymongo.errors
 import pymongo.results
 from bson import ObjectId
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
 
 from lm_saes.backend.language_model import AttributionResult, LanguageModelConfig
 from lm_saes.config import DatasetConfig
-from lm_saes.models.sae import SAEConfig
-from lm_saes.models.sparse_dictionary import SparseDictionaryConfig
+from lm_saes.models.sparse_dictionary import SAE_TYPE_TO_CONFIG_CLASS, SparseDictionaryConfig
 from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
 
 
@@ -83,7 +83,35 @@ class SAERecord(BaseModel):
     name: str
     series: str
     path: str
-    cfg: SAEConfig  # TODO: add more variants of SAEConfig
+    cfg: SparseDictionaryConfig
+
+    @field_validator("cfg", mode="before")
+    @classmethod
+    def _resolve_concrete_sae_cfg(cls, value: Any) -> Any:
+        """Convert raw cfg dicts into concrete config subclasses using sae_type."""
+        if not isinstance(value, dict):
+            return value
+
+        sae_type = value.get("sae_type")
+        if not isinstance(sae_type, str):
+            return value
+
+        cfg_cls = SAE_TYPE_TO_CONFIG_CLASS.get(sae_type)
+        if cfg_cls is None:
+            # Lazy import model modules so config classes are registered.
+            for module_name in (
+                "lm_saes.models.sae",
+                "lm_saes.models.crosscoder",
+                "lm_saes.models.clt",
+                "lm_saes.models.lorsa",
+                "lm_saes.models.molt",
+            ):
+                import_module(module_name)
+            cfg_cls = SAE_TYPE_TO_CONFIG_CLASS.get(sae_type)
+
+        if cfg_cls is None:
+            raise ValueError(f"Unknown sae_type '{sae_type}' in SAE config")
+        return cfg_cls.model_validate(value)
 
 
 class SAESetRecord(BaseModel):
@@ -93,17 +121,6 @@ class SAESetRecord(BaseModel):
 
 
 class BookmarkRecord(BaseModel):
-    """Record for bookmarked features.
-
-    Attributes:
-        sae_name: Name of the SAE model
-        sae_series: Series of the SAE model
-        feature_index: Index of the bookmarked feature
-        created_at: Timestamp when the bookmark was created
-        tags: Optional list of tags for categorizing bookmarks
-        notes: Optional user notes about the bookmark
-    """
-
     sae_name: str
     sae_series: str
     feature_index: int
@@ -113,8 +130,6 @@ class BookmarkRecord(BaseModel):
 
 
 class CircuitStatus(str):
-    """Status of circuit generation."""
-
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -122,12 +137,6 @@ class CircuitStatus(str):
 
 
 class CircuitConfig(BaseModel):
-    """Configuration used to generate a circuit graph.
-
-    Note: node_threshold and edge_threshold are no longer stored here.
-    They are now query-time parameters for dynamic pruning.
-    """
-
     desired_logit_prob: float = 0.98
     max_feature_nodes: int = 256
     qk_tracing_topk: int = 10
@@ -149,8 +158,6 @@ CircuitInput = Annotated[Union[CircuitTextInput, CircuitChatTemplateInput], Fiel
 
 
 class CircuitRecord(BaseModel):
-    """Record for a generated circuit graph."""
-
     id: str
     name: Optional[str] = None
     group: Optional[str] = None

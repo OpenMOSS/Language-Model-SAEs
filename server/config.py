@@ -14,5 +14,5 @@ tokenizer_only = os.environ.get("TOKENIZER_ONLY", "false").lower() == "true"
 LRU_CACHE_SIZE_SAMPLES = int(os.environ.get("LRU_CACHE_SIZE_SAMPLES", "128"))
 LRU_CACHE_SIZE_MODELS = int(os.environ.get("LRU_CACHE_SIZE_MODELS", "8"))
 LRU_CACHE_SIZE_DATASETS = int(os.environ.get("LRU_CACHE_SIZE_DATASETS", "16"))
-LRU_CACHE_SIZE_SAES = int(os.environ.get("LRU_CACHE_SIZE_SAES", "8"))
+LRU_CACHE_SIZE_SAES = int(os.environ.get("LRU_CACHE_SIZE_SAES", "64"))
 LRU_CACHE_SIZE_CIRCUITS = int(os.environ.get("LRU_CACHE_SIZE_CIRCUITS", "64"))

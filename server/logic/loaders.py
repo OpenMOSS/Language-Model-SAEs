@@ -2,6 +2,7 @@ from functools import lru_cache
 
 from datasets import Dataset
 
+from lm_saes import SparseDictionaryConfig
 from lm_saes.backend import LanguageModel
 from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.resource_loaders import load_dataset_shard, load_model
@@ -47,3 +48,11 @@ def get_sae(*, name: str) -> SparseDictionary:
     sae = SparseDictionary.from_pretrained(path, device=device)
     sae.eval()
     return sae
+
+
+@synchronized
+@lru_cache(maxsize=LRU_CACHE_SIZE_SAES)
+def get_sae_cfg(*, name: str) -> SparseDictionaryConfig:
+    sae_record = client.get_sae(name, sae_series)
+    assert sae_record is not None, f"SAE {name} not found"
+    return sae_record.cfg

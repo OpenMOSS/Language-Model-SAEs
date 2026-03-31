@@ -13,9 +13,11 @@ from pydantic import BaseModel
 
 from lm_saes.backend.language_model import TransformerLensLanguageModel, prune_attribution
 from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
-from lm_saes.models.lorsa import LowRankSparseAttention
+from lm_saes.models.lorsa import LorsaConfig
+from lm_saes.models.molt import MOLTConfig
+from lm_saes.models.sae import SAEConfig
 from server.config import LRU_CACHE_SIZE_CIRCUITS, client, sae_series
-from server.logic.loaders import get_model, get_sae
+from server.logic.loaders import get_model, get_sae, get_sae_cfg
 from server.logic.samples import list_feature_data
 from server.utils.common import make_serializable, synchronized
 
@@ -155,8 +157,10 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
         raise ValueError(f"Circuit {circuit_id} is not completed (status: {circuit.status})")
 
     ar = client.load_attribution(circuit_id)
+
     if ar is None:
         raise ValueError(f"Attribution data not found for circuit {circuit_id}")
+
     device = "cuda"
     ar.attribution = ar.attribution.to(device)
     ar.activations = ar.activations.to(device)
@@ -168,21 +172,20 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
         node_threshold=node_threshold,
         edge_threshold=edge_threshold,
     )
+
     sae_set = client.get_sae_set(name=circuit.sae_set_name)
     if sae_set is None:
         raise ValueError(f"SAE set {circuit.sae_set_name} not found")
 
     sae_metadata: dict[str, dict[str, Any]] = {}
     for sae_name in sae_set.sae_names:
-        sae = get_sae(name=sae_name)
-        hook_point_out = getattr(sae.cfg, "hook_point_out", None)
-        if hook_point_out is None:
-            continue
-        layer_match = re.search(r"blocks\.(\d+)\.", hook_point_out)
+        cfg = get_sae_cfg(name=sae_name)
+        assert isinstance(cfg, SAEConfig | LorsaConfig | MOLTConfig)
+        layer_match = re.search(r"blocks\.(\d+)\.", cfg.hook_point_out)
         layer_idx = int(layer_match.group(1)) if layer_match else 0
-        sae_metadata[hook_point_out] = {
+        sae_metadata[cfg.hook_point_out] = {
             "sae_name": sae_name,
-            "is_lorsa": isinstance(sae, LowRankSparseAttention),
+            "is_lorsa": isinstance(cfg, LorsaConfig),
             "layer_idx": layer_idx,
         }
 
