@@ -3,9 +3,10 @@
 Each axis of a :class:`~lm_saes.backend.language_model.NodeIndexedTensor` is
 described by a :class:`~lm_saes.backend.language_model.Dimension` (node layout,
 offsets, inverse indices). Construction uses ``from_dimensions`` /
-``from_data(..., dimensions=...)``.  Where the API accepts a sequence of
-:class:`NodeInfo`, a :class:`Dimension` built from that sequence is also valid
-(e.g. ``nodes_to_offsets``, ``__getitem__``, ``__setitem__``).
+``from_data(..., dimensions=...)``. Selector-style APIs accept either a
+sequence of :class:`NodeInfo` or a prebuilt :class:`Dimension`, while
+``nodes_to_offsets`` and ``topk(..., ignore_dimension=...)`` operate on
+:class:`Dimension` directly.
 
 Index convention
 ----------------
@@ -39,6 +40,14 @@ def _ni(key: str, *positions: int) -> NodeInfo:
 def _ni2(key: str, *pairs: tuple[int, int]) -> NodeInfo:
     """Build a NodeInfo with 2-D indices ``(n_elements, 2)`` from (a, b) pairs."""
     return NodeInfo(key=key, indices=torch.tensor(list(pairs), dtype=torch.long))
+
+
+def _dim(*node_infos: NodeInfo) -> Dimension:
+    return Dimension.from_node_infos(list(node_infos))
+
+
+def _grouped(dimension: Dimension) -> list[NodeInfo]:
+    return [NodeInfo(key=node.key, indices=node.indices) for node in dimension.node_mappings.values()]
 
 
 # ---------------------------------------------------------------------------
@@ -109,21 +118,21 @@ def test_nodes_to_offsets_full_first_node():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    assert torch.equal(t.dimensions[0].nodes_to_offsets([_ni("a", 0, 3)]), torch.tensor([0, 1]))
+    assert torch.equal(t.dimensions[0].nodes_to_offsets(_dim(_ni("a", 0, 3))), torch.tensor([0, 1]))
 
 
 def test_nodes_to_offsets_full_second_node():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    assert torch.equal(t.dimensions[0].nodes_to_offsets([_ni("b", 1, 2)]), torch.tensor([2, 3]))
+    assert torch.equal(t.dimensions[0].nodes_to_offsets(_dim(_ni("b", 1, 2))), torch.tensor([2, 3]))
 
 
 def test_nodes_to_offsets_partial_first_element():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    assert torch.equal(t.dimensions[0].nodes_to_offsets([_ni("a", 0)]), torch.tensor([0]))
+    assert torch.equal(t.dimensions[0].nodes_to_offsets(_dim(_ni("a", 0))), torch.tensor([0]))
 
 
 def test_nodes_to_offsets_partial_second_element():
@@ -131,14 +140,14 @@ def test_nodes_to_offsets_partial_second_element():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    assert torch.equal(t.dimensions[0].nodes_to_offsets([_ni("a", 3)]), torch.tensor([1]))
+    assert torch.equal(t.dimensions[0].nodes_to_offsets(_dim(_ni("a", 3))), torch.tensor([1]))
 
 
 def test_nodes_to_offsets_cross_node_selection():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    result = t.dimensions[0].nodes_to_offsets([_ni("a", 3), _ni("b", 1)])
+    result = t.dimensions[0].nodes_to_offsets(_dim(_ni("a", 3), _ni("b", 1)))
     assert torch.equal(result, torch.tensor([1, 2]))
 
 
@@ -148,10 +157,9 @@ def test_nodes_to_offsets_accepts_dimension_matching_node_info_list():
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
     axis = t.dimensions[0]
-    selection = Dimension.from_node_infos([_ni("a", 3), _ni("b", 1)])
+    selection = _dim(_ni("a", 3), _ni("b", 1))
     via_dimension = axis.nodes_to_offsets(selection)
-    via_list = axis.nodes_to_offsets([_ni("a", 3), _ni("b", 1)])
-    assert torch.equal(via_dimension, via_list)
+    assert torch.equal(via_dimension, torch.tensor([1, 2]))
 
 
 def test_nodes_to_offsets_dimension_branch_caches_by_dimension_hash():
@@ -159,7 +167,7 @@ def test_nodes_to_offsets_dimension_branch_caches_by_dimension_hash():
         dimensions=([_ni("a", 0, 3), _ni("b", 1)],),
     )
     axis = t.dimensions[0]
-    selection = Dimension.from_node_infos([_ni("a", 0)])
+    selection = _dim(_ni("a", 0))
     first = axis.nodes_to_offsets(selection)
     second = axis.nodes_to_offsets(selection)
     assert first is second
@@ -169,10 +177,9 @@ def test_nodes_to_offsets_merged_node_dimension_matches_list():
     """Selection :class:`Dimension` built from two :class:`NodeInfo` with the same key."""
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 3, 7)],))
     axis = t.dimensions[0]
-    selection = Dimension.from_node_infos([_ni("a", 7), _ni("a", 0)])
+    selection = _dim(_ni("a", 7), _ni("a", 0))
     via_dimension = axis.nodes_to_offsets(selection)
-    via_list = axis.nodes_to_offsets([_ni("a", 7), _ni("a", 0)])
-    assert torch.equal(via_dimension, via_list)
+    assert torch.equal(via_dimension, torch.tensor([2, 0]))
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +191,7 @@ def test_offsets_to_nodes_full_first_node():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([0, 1])).node_infos
+    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([0, 1])))
     assert len(node_infos) == 1
     assert node_infos[0].key == "a"
     assert torch.equal(node_infos[0].indices, torch.tensor([[0], [3]]))
@@ -194,7 +201,7 @@ def test_offsets_to_nodes_full_second_node():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([2, 3])).node_infos
+    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([2, 3])))
     assert len(node_infos) == 1
     assert node_infos[0].key == "b"
     assert torch.equal(node_infos[0].indices, torch.tensor([[1], [2]]))
@@ -205,7 +212,7 @@ def test_offsets_to_nodes_single_offset_second_element():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([1])).node_infos
+    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([1])))
     assert len(node_infos) == 1
     assert node_infos[0].key == "a"
     assert torch.equal(node_infos[0].indices, torch.tensor([[3]]))
@@ -216,7 +223,7 @@ def test_offsets_to_nodes_across_two_nodes():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([0, 2])).node_infos
+    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([0, 2])))
     assert len(node_infos) == 2
     assert node_infos[0].key == "a"
     assert torch.equal(node_infos[0].indices, torch.tensor([[0]]))
@@ -234,9 +241,9 @@ def test_nodes_to_offsets_then_to_nodes_full_round_trip():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("x", 5, 7, 9), _ni("y", 1, 3)],),
     )
-    original = [_ni("x", 5, 7, 9), _ni("y", 1, 3)]
+    original = _dim(_ni("x", 5, 7, 9), _ni("y", 1, 3))
     offsets = t.dimensions[0].nodes_to_offsets(original)
-    recovered = t.dimensions[0].offsets_to_nodes(offsets).node_infos
+    recovered = _grouped(t.dimensions[0].offsets_to_nodes(offsets))
     assert len(recovered) == 2
     assert recovered[0].key == "x"
     assert torch.equal(recovered[0].indices, torch.tensor([[5], [7], [9]]))
@@ -248,9 +255,9 @@ def test_nodes_to_offsets_then_to_nodes_partial_round_trip():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("x", 5, 7, 9), _ni("y", 1, 3)],),
     )
-    original = [_ni("x", 7), _ni("y", 1)]
+    original = _dim(_ni("x", 7), _ni("y", 1))
     offsets = t.dimensions[0].nodes_to_offsets(original)
-    recovered = t.dimensions[0].offsets_to_nodes(offsets).node_infos
+    recovered = _grouped(t.dimensions[0].offsets_to_nodes(offsets))
     assert len(recovered) == 2
     assert recovered[0].key == "x"
     assert torch.equal(recovered[0].indices, torch.tensor([[7]]))
@@ -272,11 +279,11 @@ def test_offsets_to_nodes_then_to_offsets_round_trip():
 def test_duality_with_merged_node():
     # Register "a" in two separate extend calls so the merge path is exercised.
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 3)],))
-    t.extend([_ni("a", 7)], dim=0)
+    t.extend(_dim(_ni("a", 7)), dim=0)
     # a: offsets 0,1,2 for logical 0,3,7
-    offsets = t.dimensions[0].nodes_to_offsets([_ni("a", 0, 3, 7)])
+    offsets = t.dimensions[0].nodes_to_offsets(_dim(_ni("a", 0, 3, 7)))
     assert torch.equal(offsets, torch.tensor([0, 1, 2]))
-    recovered = t.dimensions[0].offsets_to_nodes(offsets).node_infos
+    recovered = _grouped(t.dimensions[0].offsets_to_nodes(offsets))
     assert len(recovered) == 1
     assert recovered[0].key == "a"
     assert torch.equal(recovered[0].indices, torch.tensor([[0], [3], [7]]))
@@ -293,7 +300,7 @@ def test_getitem_first_node_exact_values():
         data=data,
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    result = t[[_ni("a", 0, 3)]]
+    result = t[_dim(_ni("a", 0, 3))]
     assert torch.equal(result.data, torch.tensor([10.0, 20.0]))
 
 
@@ -303,7 +310,7 @@ def test_getitem_second_node_exact_values():
         data=data,
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    result = t[[_ni("b", 1, 2)]]
+    result = t[_dim(_ni("b", 1, 2))]
     assert torch.equal(result.data, torch.tensor([30.0, 40.0]))
 
 
@@ -314,7 +321,7 @@ def test_getitem_reordered_cross_node_exact_values():
         data=data,
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    result = t[[_ni("b", 2), _ni("a", 0)]]
+    result = t[_dim(_ni("b", 2), _ni("a", 0))]
     assert torch.equal(result.data, torch.tensor([40.0, 10.0]))
 
 
@@ -325,7 +332,7 @@ def test_getitem_single_element_from_multi_element_node():
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
     # "a"→3 is the *second* element of "a" → data offset 1 → value 20
-    result = t[[_ni("a", 3)]]
+    result = t[_dim(_ni("a", 3))]
     assert torch.equal(result.data, torch.tensor([20.0]))
 
 
@@ -345,11 +352,8 @@ def test_getitem_accepts_dimension_key_matches_node_info_list():
         data=data,
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    key_dim = Dimension.from_node_infos([_ni("b", 2), _ni("a", 0)])
-    key_list = [_ni("b", 2), _ni("a", 0)]
+    key_dim = _dim(_ni("b", 2), _ni("a", 0))
     out_dim = t[key_dim]
-    out_list = t[key_list]
-    assert torch.equal(out_dim.data, out_list.data)
     assert torch.equal(out_dim.data, torch.tensor([40.0, 10.0]))
 
 
@@ -360,7 +364,7 @@ def test_getitem_dimension_key_is_preserved_on_result_axis():
         data=data,
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    key_dim = Dimension.from_node_infos([_ni("a", 0, 3)])
+    key_dim = _dim(_ni("a", 0, 3))
     result = t[key_dim]
     assert result.dimensions[0] is key_dim
 
@@ -374,7 +378,7 @@ def test_setitem_full_node_exact_values():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    t[[_ni("a", 0, 3)]] = torch.tensor([7.0, 8.0])
+    t[_dim(_ni("a", 0, 3))] = torch.tensor([7.0, 8.0])
     assert t.data[0].item() == 7.0  # offset 0  →  "a"→0
     assert t.data[1].item() == 8.0  # offset 1  →  "a"→3
     assert t.data[2].item() == 0.0  # offset 2  →  "b"→1  (untouched)
@@ -385,7 +389,7 @@ def test_setitem_partial_node_leaves_rest_unchanged():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    t[[_ni("a", 3)]] = torch.tensor([99.0])
+    t[_dim(_ni("a", 3))] = torch.tensor([99.0])
     assert t.data[0].item() == 0.0  # "a"→0 (offset 0) untouched
     assert t.data[1].item() == 99.0  # "a"→3 (offset 1) written
 
@@ -402,8 +406,9 @@ def test_setitem_then_getitem_round_trip():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    t[[_ni("b", 1, 2)]] = torch.tensor([11.0, 22.0])
-    result = t[[_ni("b", 1, 2)]]
+    selection = _dim(_ni("b", 1, 2))
+    t[selection] = torch.tensor([11.0, 22.0])
+    result = t[selection]
     assert torch.equal(result.data, torch.tensor([11.0, 22.0]))
 
 
@@ -411,7 +416,7 @@ def test_setitem_accepts_dimension_key():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    key_dim = Dimension.from_node_infos([_ni("a", 0, 3)])
+    key_dim = _dim(_ni("a", 0, 3))
     t[key_dim] = torch.tensor([7.0, 8.0])
     assert t.data[0].item() == 7.0
     assert t.data[1].item() == 8.0
@@ -425,20 +430,20 @@ def test_setitem_accepts_dimension_key():
 
 def test_add_elements_expands_size():
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 1)],))
-    t.extend([_ni("b", 5, 6)], dim=0)
+    t.extend(_dim(_ni("b", 5, 6)), dim=0)
     assert t.data.shape == (4,)
 
 
 def test_add_elements_new_node_gets_correct_offsets_and_indices():
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 1)],))
-    t.extend([_ni("b", 5, 6)], dim=0)
+    t.extend(_dim(_ni("b", 5, 6)), dim=0)
     assert torch.equal(t.dimensions[0].node_mappings["b"].offsets, torch.tensor([2, 3]))
     assert torch.equal(t.dimensions[0].node_mappings["b"].indices, torch.tensor([[5], [6]]))
 
 
 def test_add_elements_existing_node_is_merged():
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0)],))
-    t.extend([_ni("a", 7)], dim=0)
+    t.extend(_dim(_ni("a", 7)), dim=0)
     assert t.data.shape == (2,)
     assert torch.equal(t.dimensions[0].node_mappings["a"].offsets, torch.tensor([0, 1]))
     assert torch.equal(t.dimensions[0].node_mappings["a"].indices, torch.tensor([[0], [7]]))
@@ -449,7 +454,7 @@ def test_add_elements_preserves_existing_values():
         data=torch.tensor([5.0, 6.0]),
         dimensions=([_ni("a", 0, 1)],),
     )
-    t.extend([_ni("b", 9)], dim=0)
+    t.extend(_dim(_ni("b", 9)), dim=0)
     assert torch.equal(t.data[:2], torch.tensor([5.0, 6.0]))
     assert t.data[2].item() == 0.0
 
@@ -459,9 +464,10 @@ def test_add_elements_newly_added_node_is_addressable():
         data=torch.tensor([5.0, 6.0]),
         dimensions=([_ni("a", 0, 1)],),
     )
-    t.extend([_ni("b", 9)], dim=0)
-    t[[_ni("b", 9)]] = torch.tensor([42.0])
-    result = t[[_ni("b", 9)]]
+    selection = _dim(_ni("b", 9))
+    t.extend(selection, dim=0)
+    t[selection] = torch.tensor([42.0])
+    result = t[selection]
     assert torch.equal(result.data, torch.tensor([42.0]))
 
 
@@ -483,7 +489,7 @@ def test_matrix_getitem_row_slice_exact_values():
         data=data,
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
-    result = m[[_ni("r", 0)], None]
+    result = m[_dim(_ni("r", 0)), None]
     assert torch.equal(result.data, torch.tensor([[1.0, 2.0, 3.0]]))
 
 
@@ -493,7 +499,7 @@ def test_matrix_getitem_col_slice_exact_values():
         data=data,
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
-    result = m[None, [_ni("c", 1)]]
+    result = m[None, _dim(_ni("c", 1))]
     assert torch.equal(result.data, torch.tensor([[2.0], [5.0]]))
 
 
@@ -504,7 +510,7 @@ def test_matrix_getitem_submatrix_exact_values():
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
     # Row 1 ("r"→1), cols 0 and 2 ("c"→0, "c"→2) → [[4, 6]]
-    result = m[[_ni("r", 1)], [_ni("c", 0, 2)]]
+    result = m[_dim(_ni("r", 1)), _dim(_ni("c", 0, 2))]
     assert torch.equal(result.data, torch.tensor([[4.0, 6.0]]))
 
 
@@ -524,11 +530,9 @@ def test_matrix_getitem_accepts_dimension_on_row_and_column_axes():
         data=data,
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
-    row_dim = Dimension.from_node_infos([_ni("r", 1)])
-    col_dim = Dimension.from_node_infos([_ni("c", 0, 2)])
+    row_dim = _dim(_ni("r", 1))
+    col_dim = _dim(_ni("c", 0, 2))
     out = m[row_dim, col_dim]
-    ref = m[[_ni("r", 1)], [_ni("c", 0, 2)]]
-    assert torch.equal(out.data, ref.data)
     assert torch.equal(out.data, torch.tensor([[4.0, 6.0]]))
     assert out.dimensions[0] is row_dim
     assert out.dimensions[1] is col_dim
@@ -538,8 +542,8 @@ def test_matrix_setitem_accepts_dimension_keys():
     m = NodeIndexedMatrix.from_dimensions(
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
-    row_dim = Dimension.from_node_infos([_ni("r", 0)])
-    col_dim = Dimension.from_node_infos([_ni("c", 1, 2)])
+    row_dim = _dim(_ni("r", 0))
+    col_dim = _dim(_ni("c", 1, 2))
     m[row_dim, col_dim] = torch.tensor([[99.0, 88.0]])
     assert m.data[0, 1].item() == 99.0
     assert m.data[0, 2].item() == 88.0
@@ -550,7 +554,7 @@ def test_matrix_setitem_submatrix_exact_values():
     m = NodeIndexedMatrix.from_dimensions(
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
-    m[[_ni("r", 0)], [_ni("c", 1, 2)]] = torch.tensor([[99.0, 88.0]])
+    m[_dim(_ni("r", 0)), _dim(_ni("c", 1, 2))] = torch.tensor([[99.0, 88.0]])
     assert m.data[0, 0].item() == 0.0  # "c"→0 untouched
     assert m.data[0, 1].item() == 99.0  # "c"→1 written
     assert m.data[0, 2].item() == 88.0  # "c"→2 written
@@ -563,8 +567,10 @@ def test_matrix_setitem_then_getitem_round_trip():
     m = NodeIndexedMatrix.from_dimensions(
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
-    m[[_ni("r", 1)], [_ni("c", 0, 2)]] = torch.tensor([[11.0, 22.0]])
-    result = m[[_ni("r", 1)], [_ni("c", 0, 2)]]
+    row_selection = _dim(_ni("r", 1))
+    col_selection = _dim(_ni("c", 0, 2))
+    m[row_selection, col_selection] = torch.tensor([[11.0, 22.0]])
+    result = m[row_selection, col_selection]
     assert torch.equal(result.data, torch.tensor([[11.0, 22.0]]))
 
 
@@ -574,9 +580,10 @@ def test_matrix_add_target_then_addressable():
         data=data,
         dimensions=([_ni("r", 0, 1)], [_ni("c", 0, 1, 2)]),
     )
-    m.add_targets([_ni("r2", 10)])
-    m[[_ni("r2", 10)], None] = torch.tensor([[7.0, 8.0, 9.0]])
-    result = m[[_ni("r2", 10)], None]
+    selection = _dim(_ni("r2", 10))
+    m.add_targets(selection)
+    m[selection, None] = torch.tensor([[7.0, 8.0, 9.0]])
+    result = m[selection, None]
     assert torch.equal(result.data, torch.tensor([[7.0, 8.0, 9.0]]))
 
 
@@ -593,6 +600,7 @@ def test_vector_topk_values_and_nodes_same_key():
         dimensions=([_ni("p", 5, 7, 9), _ni("q", 1)],),
     )
     values, node_infos = v.topk(k=2)
+    node_infos = _grouped(node_infos)
     # top-2: offset 2 (4.0 → p→9) then offset 0 (3.0 → p→5)
     assert torch.equal(values, torch.tensor([4.0, 3.0]))
     # both belong to "p" (consecutive), so they collapse into one NodeInfo
@@ -609,6 +617,7 @@ def test_vector_topk_values_and_nodes_different_keys():
         dimensions=([_ni("a", 0), _ni("b", 1), _ni("a", 2)],),
     )
     values, node_infos = v.topk(k=2)
+    node_infos = _grouped(node_infos)
     # top-2: offset 1 (4.0 → b→1) then offset 2 (3.0 → a→2)
     assert torch.equal(values, torch.tensor([4.0, 3.0]))
     assert len(node_infos) == 2
@@ -666,27 +675,27 @@ def test_2d_node_mappings_store_correct_offsets():
 
 def test_2d_nodes_to_offsets_full_node():
     t = _make_2d_tensor()
-    offsets = t.dimensions[0].nodes_to_offsets([_ni2("feat", (0, 1), (2, 3), (2, 5))])
+    offsets = t.dimensions[0].nodes_to_offsets(_dim(_ni2("feat", (0, 1), (2, 3), (2, 5))))
     assert torch.equal(offsets, torch.tensor([0, 1, 2]))
 
 
 def test_2d_nodes_to_offsets_partial_selection():
     t = _make_2d_tensor()
     # (2, 5) is the third element of "feat" → offset 2
-    offsets = t.dimensions[0].nodes_to_offsets([_ni2("feat", (2, 5))])
+    offsets = t.dimensions[0].nodes_to_offsets(_dim(_ni2("feat", (2, 5))))
     assert torch.equal(offsets, torch.tensor([2]))
 
 
 def test_2d_nodes_to_offsets_cross_node():
     t = _make_2d_tensor()
     # feat→(2,3)=offset 1, err→(1,0)=offset 4
-    offsets = t.dimensions[0].nodes_to_offsets([_ni2("feat", (2, 3)), _ni2("err", (1, 0))])
+    offsets = t.dimensions[0].nodes_to_offsets(_dim(_ni2("feat", (2, 3)), _ni2("err", (1, 0))))
     assert torch.equal(offsets, torch.tensor([1, 4]))
 
 
 def test_2d_offsets_to_nodes_full_feat_node():
     t = _make_2d_tensor()
-    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([0, 1, 2])).node_infos
+    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([0, 1, 2])))
     assert len(node_infos) == 1
     assert node_infos[0].key == "feat"
     assert torch.equal(node_infos[0].indices, torch.tensor([[0, 1], [2, 3], [2, 5]]))
@@ -695,7 +704,7 @@ def test_2d_offsets_to_nodes_full_feat_node():
 def test_2d_offsets_to_nodes_partial_feat():
     t = _make_2d_tensor()
     # offset 2 → feat→(2,5)
-    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([2])).node_infos
+    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([2])))
     assert len(node_infos) == 1
     assert node_infos[0].key == "feat"
     assert torch.equal(node_infos[0].indices, torch.tensor([[2, 5]]))
@@ -703,7 +712,7 @@ def test_2d_offsets_to_nodes_partial_feat():
 
 def test_2d_offsets_to_nodes_full_err_node():
     t = _make_2d_tensor()
-    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([3, 4])).node_infos
+    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([3, 4])))
     assert len(node_infos) == 1
     assert node_infos[0].key == "err"
     assert torch.equal(node_infos[0].indices, torch.tensor([[0, 0], [1, 0]]))
@@ -711,9 +720,9 @@ def test_2d_offsets_to_nodes_full_err_node():
 
 def test_2d_duality_nodes_to_offsets_to_nodes():
     t = _make_2d_tensor()
-    original = [_ni2("feat", (0, 1), (2, 5)), _ni2("err", (0, 0))]
+    original = _dim(_ni2("feat", (0, 1), (2, 5)), _ni2("err", (0, 0)))
     offsets = t.dimensions[0].nodes_to_offsets(original)
-    recovered = t.dimensions[0].offsets_to_nodes(offsets).node_infos
+    recovered = _grouped(t.dimensions[0].offsets_to_nodes(offsets))
     assert len(recovered) == 2
     assert recovered[0].key == "feat"
     assert torch.equal(recovered[0].indices, torch.tensor([[0, 1], [2, 5]]))
@@ -742,7 +751,7 @@ def test_2d_getitem_exact_values():
         ),
     )
     # feat→(0,1)=offset 0=10, feat→(2,5)=offset 2=30
-    result = t[[_ni2("feat", (0, 1), (2, 5))]]
+    result = t[_dim(_ni2("feat", (0, 1), (2, 5)))]
     assert torch.equal(result.data, torch.tensor([10.0, 30.0]))
 
 
@@ -755,7 +764,7 @@ def test_2d_setitem_exact_values():
             ],
         ),
     )
-    t[[_ni2("err", (0, 0), (1, 0))]] = torch.tensor([7.0, 8.0])
+    t[_dim(_ni2("err", (0, 0), (1, 0)))] = torch.tensor([7.0, 8.0])
     assert t.data[0].item() == 0.0  # feat (untouched)
     assert t.data[3].item() == 7.0  # err→(0,0)
     assert t.data[4].item() == 8.0  # err→(1,0)
@@ -773,6 +782,7 @@ def test_2d_topk_exact_values_and_nodes():
         ),
     )
     values, node_infos = v.topk(k=3)
+    node_infos = list(node_infos)
     # top-3: offset 1 (5.0→feat(2,3)), offset 3 (4.0→err(0,0)), offset 2 (3.0→feat(2,5))
     assert torch.equal(values, torch.tensor([5.0, 4.0, 3.0]))
     assert len(node_infos) == 3

@@ -18,6 +18,7 @@ from lm_saes.backend.language_model import AttributionResult, LanguageModelConfi
 from lm_saes.config import DatasetConfig
 from lm_saes.models.sparse_dictionary import SAE_TYPE_TO_CONFIG_CLASS, SparseDictionaryConfig
 from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
+from lm_saes.utils.timer import timer
 
 
 class MongoDBConfig(BaseModel):
@@ -1028,6 +1029,7 @@ class MongoClient:
         )
         return result.modified_count > 0
 
+    @timer.time("load_attribution")
     def load_attribution(self, circuit_id: str) -> Optional[AttributionResult]:
         """Load attribution data from GridFS."""
         assert self.fs is not None

@@ -197,3 +197,6 @@ pyrightconfig.json
 /exp
 /results
 /graphs
+
+.codex
+.agents

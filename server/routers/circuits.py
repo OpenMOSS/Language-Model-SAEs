@@ -16,6 +16,7 @@ from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
 from lm_saes.models.lorsa import LorsaConfig
 from lm_saes.models.molt import MOLTConfig
 from lm_saes.models.sae import SAEConfig
+from lm_saes.utils.timer import timer
 from server.config import LRU_CACHE_SIZE_CIRCUITS, client, sae_series
 from server.logic.loaders import get_model, get_sae, get_sae_cfg
 from server.logic.samples import list_feature_data
@@ -119,6 +120,7 @@ class GenerateCircuitRequest(BaseModel):
     parent_id: Optional[str] = None
 
 
+@timer.time("concretize_graph_data")
 def concretize_graph_data(graph_data: dict[str, Any]):
     """Concretize a graph data by adding feature data. This will modify the graph data in place."""
     logger.info("Retrieving feature records for circuit")
@@ -148,6 +150,18 @@ def concretize_graph_data(graph_data: dict[str, Any]):
 
 @synchronized
 @functools.lru_cache(maxsize=LRU_CACHE_SIZE_CIRCUITS)
+@timer.profile(
+    "load_circuit_graph",
+    message_fn=lambda summary, _args, kwargs: (
+        "Timer summary for load_circuit_graph(circuit_id=%s, node_threshold=%s, edge_threshold=%s):\n%s"
+        % (
+            kwargs["circuit_id"],
+            kwargs["node_threshold"],
+            kwargs["edge_threshold"],
+            summary,
+        )
+    ),
+)
 def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold: float) -> dict[str, Any]:
     """Load, prune, and concretize a circuit graph. Cached for repeated access."""
     circuit = client.get_circuit(circuit_id)
@@ -195,6 +209,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
 
     edge_weights, (targets, sources) = attribution.nonzero()
     nodes = (sources + targets).unique()
+
     node_activations = ar.activations[nodes].data
 
     logit_token_map = {token_id: token for token_id, token in zip(ar.logit_token_ids, ar.logit_tokens)}
@@ -202,6 +217,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     target_vocab_index = int(targets.node_mappings["logits"].indices[0][0].item())
     n_layers = max((int(item["layer_idx"]) for item in sae_metadata.values()), default=-1) + 1
 
+    @timer.time("make_node")
     def make_node(node_key: str, indices_tuple: tuple[int, ...], activation: float) -> dict[str, Any]:
         indices = list(indices_tuple)
 
@@ -281,15 +297,16 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             "is_from_qk_tracing": False,
         }
 
-    node_entries = [
-        make_node(
-            str(ni.key),
-            tuple(ni.indices[0].tolist()),
-            float(activation),
-        )
-        for ni, activation in zip(nodes, node_activations)
-    ]
-    node_ids = [node_data["node_id"] for node_data in node_entries]
+    with timer.time("make_nodes"):
+        node_entries = [
+            make_node(
+                str(ni.key),
+                tuple(ni.indices[0].tolist()),
+                float(activation),
+            )
+            for ni, activation in zip(nodes, node_activations)
+        ]
+        node_ids = [node_data["node_id"] for node_data in node_entries]
 
     target_node_offsets = nodes.nodes_to_offsets(targets).tolist()
     source_node_offsets = nodes.nodes_to_offsets(sources).tolist()
@@ -314,7 +331,9 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
         "nodes": node_entries,
         "links": links,
     }
+
     concretize_graph_data(graph_data)
+
     return graph_data
 
 
