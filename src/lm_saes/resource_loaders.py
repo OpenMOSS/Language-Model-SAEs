@@ -65,7 +65,7 @@ def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_
         return "transformer_lens"
 
 
-def load_model(cfg: LanguageModelConfig) -> LanguageModel:
+def load_model(cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None) -> LanguageModel:
     backend = infer_model_backend(cfg.model_name) if cfg.backend == "auto" else cfg.backend
     if backend == "huggingface":
         if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
@@ -73,6 +73,6 @@ def load_model(cfg: LanguageModelConfig) -> LanguageModel:
         else:
             return HuggingFaceLanguageModel(cfg)
     elif backend == "transformer_lens":
-        return TransformerLensLanguageModel(cfg)
+        return TransformerLensLanguageModel(cfg, device_mesh)
     else:
         raise NotImplementedError(f"Backend {backend} not supported.")

@@ -601,6 +601,7 @@ class NodeIndexedTensor:
         ]
         return cls.from_data(torch.zeros(shape, dtype=dtype, device=device), dimensions)
 
+    @timer.time("extend")
     def extend(self, dimension: Dimension, dim: int, data: torch.Tensor | None = None):
         new_data_shape = tuple(self.data.shape[i] if i != dim else len(dimension) for i in range(self.n_dims))
 
@@ -754,9 +755,6 @@ class NodeIndexedVector(NodeIndexedTensor):
             data = data.clone()
             data[ignore_indices] = float("-inf")
         topk_values, topk_indices = torch.topk(data, k=k, dim=0)
-        print("Topk values: ", topk_values)
-        print("Topk indices: ", topk_indices)
-        print(self.dimensions[0].offsets_to_nodes(topk_indices))
         return topk_values, self.dimensions[0].offsets_to_nodes(topk_indices)
 
     @overload
@@ -1067,6 +1065,7 @@ def retrieval_from_intermediates(
     ]
 
 
+@timer.profile("greedily_collect_attribution")
 def greedily_collect_attribution(
     targets: Sequence[NodeInfoRef],
     sources: Sequence[NodeInfoRef],
@@ -1097,7 +1096,10 @@ def greedily_collect_attribution(
     for target_batch in queue.iter(batch_size):
         clear_grads(all_sources)
         root = torch.diag(torch.cat(values(target_batch), dim=1))
-        root.sum().backward(retain_graph=True)
+
+        with timer.time("backward"):
+            root.sum().backward(retain_graph=True)
+
         attribution[Dimension.from_node_infos(target_batch), None] = torch.cat(
             [
                 einops.einsum(
@@ -1128,7 +1130,8 @@ def greedily_collect_attribution(
         node_refs = retrieval_from_intermediates(selected_nodes, intermediates)
         root = torch.diag(torch.cat(values(node_refs), dim=1))
 
-        root.sum().backward(retain_graph=True)
+        with timer.time("backward"):
+            root.sum().backward(retain_graph=True)
 
         attribution.add_targets(
             selected_nodes,
@@ -1248,6 +1251,7 @@ class TransformerLensLanguageModel(LanguageModel):
             else None
         )
 
+    @timer.profile("collect_cache")
     def _collect_cache(
         self,
         inputs: torch.Tensor | str,
@@ -1323,6 +1327,7 @@ class TransformerLensLanguageModel(LanguageModel):
         cache.update(bias_leaves)
         return logits, cache
 
+    @timer.profile("attribute")
     def attribute(
         self,
         inputs: torch.Tensor | str,

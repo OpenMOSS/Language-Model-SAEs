@@ -150,18 +150,6 @@ def concretize_graph_data(graph_data: dict[str, Any]):
 
 @synchronized
 @functools.lru_cache(maxsize=LRU_CACHE_SIZE_CIRCUITS)
-@timer.profile(
-    "load_circuit_graph",
-    message_fn=lambda summary, _args, kwargs: (
-        "Timer summary for load_circuit_graph(circuit_id=%s, node_threshold=%s, edge_threshold=%s):\n%s"
-        % (
-            kwargs["circuit_id"],
-            kwargs["node_threshold"],
-            kwargs["edge_threshold"],
-            summary,
-        )
-    ),
-)
 def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold: float) -> dict[str, Any]:
     """Load, prune, and concretize a circuit graph. Cached for repeated access."""
     circuit = client.get_circuit(circuit_id)
@@ -297,16 +285,15 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             "is_from_qk_tracing": False,
         }
 
-    with timer.time("make_nodes"):
-        node_entries = [
-            make_node(
-                str(ni.key),
-                tuple(ni.indices[0].tolist()),
-                float(activation),
-            )
-            for ni, activation in zip(nodes, node_activations)
-        ]
-        node_ids = [node_data["node_id"] for node_data in node_entries]
+    node_entries = [
+        make_node(
+            str(ni.key),
+            tuple(ni.indices[0].tolist()),
+            float(activation),
+        )
+        for ni, activation in zip(nodes, node_activations)
+    ]
+    node_ids = [node_data["node_id"] for node_data in node_entries]
 
     target_node_offsets = nodes.nodes_to_offsets(targets).tolist()
     source_node_offsets = nodes.nodes_to_offsets(sources).tolist()
@@ -343,10 +330,7 @@ def run_circuit_attribution(
     prompt: str,
     request: GenerateCircuitRequest,
 ):
-    """Background task to run circuit attribution and store the result.
-
-    This function is designed to run in a background thread/task.
-    """
+    """Background task to run circuit attribution and store the result."""
     try:
         with _generation_lock:
             # Update status to running
