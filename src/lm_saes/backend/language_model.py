@@ -754,6 +754,9 @@ class NodeIndexedVector(NodeIndexedTensor):
             data = data.clone()
             data[ignore_indices] = float("-inf")
         topk_values, topk_indices = torch.topk(data, k=k, dim=0)
+        print("Topk values: ", topk_values)
+        print("Topk indices: ", topk_indices)
+        print(self.dimensions[0].offsets_to_nodes(topk_indices))
         return topk_values, self.dimensions[0].offsets_to_nodes(topk_indices)
 
     @overload
@@ -1095,7 +1098,7 @@ def greedily_collect_attribution(
         clear_grads(all_sources)
         root = torch.diag(torch.cat(values(target_batch), dim=1))
         root.sum().backward(retain_graph=True)
-        attribution[target_batch, None] = torch.cat(
+        attribution[Dimension.from_node_infos(target_batch), None] = torch.cat(
             [
                 einops.einsum(
                     value[: root.shape[0]],

@@ -46,10 +46,6 @@ def _dim(*node_infos: NodeInfo) -> Dimension:
     return Dimension.from_node_infos(list(node_infos))
 
 
-def _grouped(dimension: Dimension) -> list[NodeInfo]:
-    return [NodeInfo(key=node.key, indices=node.indices) for node in dimension.node_mappings.values()]
-
-
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -191,7 +187,7 @@ def test_offsets_to_nodes_full_first_node():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([0, 1])))
+    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([0, 1])).node_infos
     assert len(node_infos) == 1
     assert node_infos[0].key == "a"
     assert torch.equal(node_infos[0].indices, torch.tensor([[0], [3]]))
@@ -201,7 +197,7 @@ def test_offsets_to_nodes_full_second_node():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([2, 3])))
+    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([2, 3])).node_infos
     assert len(node_infos) == 1
     assert node_infos[0].key == "b"
     assert torch.equal(node_infos[0].indices, torch.tensor([[1], [2]]))
@@ -212,7 +208,7 @@ def test_offsets_to_nodes_single_offset_second_element():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([1])))
+    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([1])).node_infos
     assert len(node_infos) == 1
     assert node_infos[0].key == "a"
     assert torch.equal(node_infos[0].indices, torch.tensor([[3]]))
@@ -223,7 +219,7 @@ def test_offsets_to_nodes_across_two_nodes():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
-    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([0, 2])))
+    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([0, 2])).node_infos
     assert len(node_infos) == 2
     assert node_infos[0].key == "a"
     assert torch.equal(node_infos[0].indices, torch.tensor([[0]]))
@@ -243,7 +239,7 @@ def test_nodes_to_offsets_then_to_nodes_full_round_trip():
     )
     original = _dim(_ni("x", 5, 7, 9), _ni("y", 1, 3))
     offsets = t.dimensions[0].nodes_to_offsets(original)
-    recovered = _grouped(t.dimensions[0].offsets_to_nodes(offsets))
+    recovered = t.dimensions[0].offsets_to_nodes(offsets).node_infos
     assert len(recovered) == 2
     assert recovered[0].key == "x"
     assert torch.equal(recovered[0].indices, torch.tensor([[5], [7], [9]]))
@@ -257,7 +253,7 @@ def test_nodes_to_offsets_then_to_nodes_partial_round_trip():
     )
     original = _dim(_ni("x", 7), _ni("y", 1))
     offsets = t.dimensions[0].nodes_to_offsets(original)
-    recovered = _grouped(t.dimensions[0].offsets_to_nodes(offsets))
+    recovered = t.dimensions[0].offsets_to_nodes(offsets).node_infos
     assert len(recovered) == 2
     assert recovered[0].key == "x"
     assert torch.equal(recovered[0].indices, torch.tensor([[7]]))
@@ -283,7 +279,7 @@ def test_duality_with_merged_node():
     # a: offsets 0,1,2 for logical 0,3,7
     offsets = t.dimensions[0].nodes_to_offsets(_dim(_ni("a", 0, 3, 7)))
     assert torch.equal(offsets, torch.tensor([0, 1, 2]))
-    recovered = _grouped(t.dimensions[0].offsets_to_nodes(offsets))
+    recovered = t.dimensions[0].offsets_to_nodes(offsets).node_infos
     assert len(recovered) == 1
     assert recovered[0].key == "a"
     assert torch.equal(recovered[0].indices, torch.tensor([[0], [3], [7]]))
@@ -600,7 +596,7 @@ def test_vector_topk_values_and_nodes_same_key():
         dimensions=([_ni("p", 5, 7, 9), _ni("q", 1)],),
     )
     values, node_infos = v.topk(k=2)
-    node_infos = _grouped(node_infos)
+    node_infos = node_infos.node_infos
     # top-2: offset 2 (4.0 → p→9) then offset 0 (3.0 → p→5)
     assert torch.equal(values, torch.tensor([4.0, 3.0]))
     # both belong to "p" (consecutive), so they collapse into one NodeInfo
@@ -617,7 +613,7 @@ def test_vector_topk_values_and_nodes_different_keys():
         dimensions=([_ni("a", 0), _ni("b", 1), _ni("a", 2)],),
     )
     values, node_infos = v.topk(k=2)
-    node_infos = _grouped(node_infos)
+    node_infos = node_infos.node_infos
     # top-2: offset 1 (4.0 → b→1) then offset 2 (3.0 → a→2)
     assert torch.equal(values, torch.tensor([4.0, 3.0]))
     assert len(node_infos) == 2
@@ -695,7 +691,7 @@ def test_2d_nodes_to_offsets_cross_node():
 
 def test_2d_offsets_to_nodes_full_feat_node():
     t = _make_2d_tensor()
-    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([0, 1, 2])))
+    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([0, 1, 2])).node_infos
     assert len(node_infos) == 1
     assert node_infos[0].key == "feat"
     assert torch.equal(node_infos[0].indices, torch.tensor([[0, 1], [2, 3], [2, 5]]))
@@ -704,7 +700,7 @@ def test_2d_offsets_to_nodes_full_feat_node():
 def test_2d_offsets_to_nodes_partial_feat():
     t = _make_2d_tensor()
     # offset 2 → feat→(2,5)
-    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([2])))
+    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([2])).node_infos
     assert len(node_infos) == 1
     assert node_infos[0].key == "feat"
     assert torch.equal(node_infos[0].indices, torch.tensor([[2, 5]]))
@@ -712,7 +708,7 @@ def test_2d_offsets_to_nodes_partial_feat():
 
 def test_2d_offsets_to_nodes_full_err_node():
     t = _make_2d_tensor()
-    node_infos = _grouped(t.dimensions[0].offsets_to_nodes(torch.tensor([3, 4])))
+    node_infos = t.dimensions[0].offsets_to_nodes(torch.tensor([3, 4])).node_infos
     assert len(node_infos) == 1
     assert node_infos[0].key == "err"
     assert torch.equal(node_infos[0].indices, torch.tensor([[0, 0], [1, 0]]))
@@ -722,7 +718,7 @@ def test_2d_duality_nodes_to_offsets_to_nodes():
     t = _make_2d_tensor()
     original = _dim(_ni2("feat", (0, 1), (2, 5)), _ni2("err", (0, 0)))
     offsets = t.dimensions[0].nodes_to_offsets(original)
-    recovered = _grouped(t.dimensions[0].offsets_to_nodes(offsets))
+    recovered = t.dimensions[0].offsets_to_nodes(offsets).node_infos
     assert len(recovered) == 2
     assert recovered[0].key == "feat"
     assert torch.equal(recovered[0].indices, torch.tensor([[0, 1], [2, 5]]))
