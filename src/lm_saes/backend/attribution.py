@@ -197,7 +197,7 @@ def greedily_collect_attribution(
                 for value, grad in zip(values(all_sources), grads(all_sources))
             ],
             dim=1,
-        )
+        ).to(attribution.data.dtype)
 
     collected_intermediates_dimension = Dimension.empty(device=targets[0].ref.device)
     reduction_weight_vec: NodeIndexedVector = NodeIndexedVector.from_data(
@@ -234,7 +234,7 @@ def greedily_collect_attribution(
                     for value, grad in zip(values(all_sources), grads(all_sources))
                 ],
                 dim=1,
-            ),
+            ).to(attribution.data.dtype),
         )
 
     return attribution, collected_intermediates_dimension
