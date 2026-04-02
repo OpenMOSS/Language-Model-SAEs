@@ -304,8 +304,14 @@ class SparseDictionary(HookedRootModule, ABC):
     def save_pretrained(
         self,
         save_path: Path | str,
+        fold_activation_scale: bool = False,
     ) -> None:
         os.makedirs(Path(save_path), exist_ok=True)
+        if fold_activation_scale:
+            assert isinstance(self, DatasetNormStandardizable), (
+                f"{type(self).__name__} does not support dataset norm standardization (DatasetNormStandardizable)"
+            )
+            self.standardize_parameters_of_dataset_norm()
 
         if self.device_mesh is None:
             self.save_checkpoint(Path(save_path) / "sae_weights.safetensors")
