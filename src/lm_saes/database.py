@@ -14,7 +14,8 @@ from bson import ObjectId
 from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
 
-from lm_saes.backend.language_model import AttributionResult, LanguageModelConfig
+from lm_saes.backend.attribution import AttributionResult
+from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.config import DatasetConfig
 from lm_saes.models.sparse_dictionary import SAE_TYPE_TO_CONFIG_CLASS, SparseDictionaryConfig
 from lm_saes.utils.bytes import bytes_to_np, np_to_bytes

@@ -19,7 +19,7 @@ key (e.g. (token_pos, feature_idx)) use :func:`_ni2`.
 import pytest
 import torch
 
-from lm_saes.backend.language_model import (
+from lm_saes.backend.indexed_tensor import (
     Dimension,
     NodeIndexedMatrix,
     NodeIndexedTensor,

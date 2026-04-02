@@ -57,6 +57,9 @@ def apply_saes(model: "TransformerLensLanguageModel", saes: list["SparseDictiona
         hooks, hook_error = get_fwd_hooks(sae)
         fwd_hooks.extend(hooks)
         hook_errors.append((sae.cfg.hook_point_out, "error", hook_error))
+
+    assert model.model is not None, "model must be initialized"
+
     with mount_hooked_modules(model.model, [(sae.cfg.hook_point_out, "sae", sae) for sae in saes] + hook_errors):
         with model.hooks(fwd_hooks):
             yield model
@@ -84,6 +87,9 @@ def detach_at(
     fwd_hooks: list[tuple[str | Callable, Callable]] = [
         (hook_point, hook) for hook_point, (_, _, hook) in hooks.items()
     ]
+
+    assert model.model is not None, "model must be initialized"
+
     with mount_hooked_modules(
         model.model,
         [(hook_point, "pre", hook) for hook_point, (hook, _, _) in hooks.items()]

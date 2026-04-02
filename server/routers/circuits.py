@@ -11,7 +11,8 @@ import torch
 from fastapi import APIRouter, BackgroundTasks, Response
 from pydantic import BaseModel
 
-from lm_saes.backend.language_model import TransformerLensLanguageModel, prune_attribution
+from lm_saes.backend.attribution import prune_attribution
+from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
 from lm_saes.models.lorsa import LorsaConfig
 from lm_saes.models.molt import MOLTConfig
