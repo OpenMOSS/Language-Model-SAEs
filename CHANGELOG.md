@@ -1,3 +1,35 @@
+## v2.0.0b22 (2026-04-02)
+
+### Feat
+
+- **sparse-dictionary**: add fold_activation_scale parameter to save_pretrained method and update training settings
+- **language-model**: add device transfer methods to Dimension and NodeIndexedTensor classes
+- **language-model**: add support for bias leaves in qk trace
+
+### Fix
+
+- loading lorsa; distributed attribution (WIP)
+- **circuits**: type error and tests
+- **circuits**: resolve SAE config types from metadata
+- **sparse-dictionary**: change default value of fold_activation_scale to False
+- **circuits**: transfer attribution data to CUDA and reduce batch size in run_circuit_attribution
+- **circuits**: correct source and target node assignments in load_circuit_graph function
+- **language-model**: add attention detach hooks
+- **circuits**: improve SAE name handling and update logit probability mapping
+- attribution
+- **language-model**: fix bias hooks handling and improve module assertions
+
+### Refactor
+
+- **circuits**: modularize circuit tracing and attribution logic
+- **hooks**: clean up replace_biases_with_leaves
+- **server**: use new attribution logic
+
+### Perf
+
+- **circuits**: optimize attribution graph pruning
+- optimize circuit graph construction
+
 ## v2.0.0b21 (2026-03-26)
 
 ### Feat
