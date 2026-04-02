@@ -304,8 +304,14 @@ class SparseDictionary(HookedRootModule, ABC):
     def save_pretrained(
         self,
         save_path: Path | str,
+        fold_activation_scale: bool = False,
     ) -> None:
         os.makedirs(Path(save_path), exist_ok=True)
+        if fold_activation_scale:
+            assert isinstance(self, DatasetNormStandardizable), (
+                f"{type(self).__name__} does not support dataset norm standardization (DatasetNormStandardizable)"
+            )
+            self.standardize_parameters_of_dataset_norm()
 
         if self.device_mesh is None:
             self.save_checkpoint(Path(save_path) / "sae_weights.safetensors")
@@ -560,7 +566,7 @@ class SparseDictionary(HookedRootModule, ABC):
                     def load_tensor(key: str) -> DTensor:
                         tensor_slice = f.get_slice(key)
                         shape = tensor_slice.get_shape()
-                        dim_map = model.dim_maps()[key]
+                        dim_map = model.dim_maps().get(key, DimMap({}))
                         indices = dim_map.local_slices(shape, device_mesh)
                         local_tensor = tensor_slice[indices].to(model.override_dtypes().get(key, cfg.dtype))
                         return DTensor.from_local(
@@ -569,7 +575,7 @@ class SparseDictionary(HookedRootModule, ABC):
                             placements=dim_map.placements(device_mesh),
                         )
 
-                    state_dict = {k: load_tensor(k) if k in model.dim_maps() else f.get_tensor(k) for k in f.keys()}
+                    state_dict = {k: load_tensor(k) for k in f.keys()}
         elif ckpt_path.endswith(".pt"):
             state_dict: dict[str, torch.Tensor] = torch.load(
                 ckpt_path,
@@ -598,7 +604,7 @@ class SparseDictionary(HookedRootModule, ABC):
         pretrained_name_or_path: str,
         *,
         device_mesh: DeviceMesh | None = None,
-        fold_activation_scale: bool = True,
+        fold_activation_scale: bool = False,
         strict_loading: bool = True,
         **kwargs: Any,
     ) -> Self:

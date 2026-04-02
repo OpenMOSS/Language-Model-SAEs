@@ -1,6 +1,7 @@
 import functools
 import itertools
 import logging
+import re
 import threading
 import traceback
 from datetime import datetime
@@ -10,17 +11,15 @@ import torch
 from fastapi import APIRouter, BackgroundTasks, Response
 from pydantic import BaseModel
 
+from lm_saes.backend.attribution import prune_attribution
 from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.circuit.attribution import attribute
-from lm_saes.circuit.graph import Graph
-from lm_saes.circuit.replacement_model import ReplacementModel
-from lm_saes.circuit.utils.create_graph_files import serialize_graph
-from lm_saes.circuit.utils.transcoder_set import TranscoderSet, TranscoderSetConfig
 from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
-from lm_saes.models.lorsa import LowRankSparseAttention
-from lm_saes.models.sae import SparseAutoEncoder
+from lm_saes.models.lorsa import LorsaConfig
+from lm_saes.models.molt import MOLTConfig
+from lm_saes.models.sae import SAEConfig
+from lm_saes.utils.timer import timer
 from server.config import LRU_CACHE_SIZE_CIRCUITS, client, sae_series
-from server.logic.loaders import get_model, get_sae
+from server.logic.loaders import get_model, get_sae, get_sae_cfg
 from server.logic.samples import list_feature_data
 from server.utils.common import make_serializable, synchronized
 
@@ -122,6 +121,7 @@ class GenerateCircuitRequest(BaseModel):
     parent_id: Optional[str] = None
 
 
+@timer.time("concretize_graph_data")
 def concretize_graph_data(graph_data: dict[str, Any]):
     """Concretize a graph data by adding feature data. This will modify the graph data in place."""
     logger.info("Retrieving feature records for circuit")
@@ -131,7 +131,9 @@ def concretize_graph_data(graph_data: dict[str, Any]):
         [
             list_feature_data(sae_name=sae_name, indices=[node["feature"] for node in nodes], with_samplings=False)
             for sae_name, nodes in itertools.groupby(
-                sorted(filter(lambda x: x["sae_name"] is not None, graph_data["nodes"]), key=lambda x: x["sae_name"]),
+                sorted(
+                    filter(lambda x: x.get("sae_name") is not None, graph_data["nodes"]), key=lambda x: x["sae_name"]
+                ),
                 key=lambda x: x["sae_name"],
             )
         ],
@@ -139,7 +141,7 @@ def concretize_graph_data(graph_data: dict[str, Any]):
     )
 
     for node in graph_data["nodes"]:
-        if node["sae_name"] is not None:
+        if node.get("sae_name") is not None:
             if (node["sae_name"], node["feature"]) not in features:
                 return Response(
                     content=f"Feature {node['feature']} not found in SAE {node['sae_name']}", status_code=404
@@ -157,20 +159,169 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     if circuit.status != CircuitStatus.COMPLETED:
         raise ValueError(f"Circuit {circuit_id} is not completed (status: {circuit.status})")
 
-    raw_graph_dict = client.load_raw_graph(circuit_id)
-    if raw_graph_dict is None:
-        raise ValueError(f"Raw graph data not found for circuit {circuit_id}")
+    ar = client.load_attribution(circuit_id)
+    if ar is None:
+        raise ValueError(f"Attribution data not found for circuit {circuit_id}")
 
-    graph = Graph.from_dict(raw_graph_dict)
-    graph_data = serialize_graph(
-        graph=graph,
+    device = "cuda"
+    ar.attribution = ar.attribution.to(device)
+    ar.activations = ar.activations.to(device)
+    ar.logits = ar.logits.to(device)
+    ar.probs = ar.probs.to(device)
+
+    attribution = prune_attribution(
+        ar.attribution,
+        ar.probs,
         node_threshold=node_threshold,
         edge_threshold=edge_threshold,
-        clt_names=circuit.clt_names or [],
-        lorsa_names=circuit.lorsa_names,
-        use_lorsa=circuit.use_lorsa,
     )
+
+    sae_set = client.get_sae_set(name=circuit.sae_set_name)
+    if sae_set is None:
+        raise ValueError(f"SAE set {circuit.sae_set_name} not found")
+
+    sae_metadata: dict[str, dict[str, Any]] = {}
+    for sae_name in sae_set.sae_names:
+        cfg = get_sae_cfg(name=sae_name)
+        assert isinstance(cfg, SAEConfig | LorsaConfig | MOLTConfig)
+        layer_match = re.search(r"blocks\.(\d+)\.", cfg.hook_point_out)
+        layer_idx = int(layer_match.group(1)) if layer_match else 0
+        sae_metadata[cfg.hook_point_out] = {
+            "sae_name": sae_name,
+            "is_lorsa": isinstance(cfg, LorsaConfig),
+            "layer_idx": layer_idx,
+        }
+
+    def parse_hook_layer(hook_key: str) -> int:
+        match = re.search(r"blocks\.(\d+)\.", hook_key)
+        return int(match.group(1)) if match else 0
+
+    edge_weights, (targets, sources) = attribution.nonzero()
+    nodes = (sources + targets).unique()
+
+    node_activations = ar.activations[nodes].data
+
+    logit_token_map = {token_id: token for token_id, token in zip(ar.logit_token_ids, ar.logit_tokens)}
+    logit_prob_map = {token_id: float(prob.item()) for token_id, prob in zip(ar.logit_token_ids, ar.probs)}
+    target_vocab_index = int(targets.node_mappings["logits"].indices[0][0].item())
+    n_layers = max((int(item["layer_idx"]) for item in sae_metadata.values()), default=-1) + 1
+
+    @timer.time("make_node")
+    def make_node(node_key: str, indices_tuple: tuple[int, ...], activation: float) -> dict[str, Any]:
+        indices = list(indices_tuple)
+
+        if node_key == "hook_embed":
+            pos = indices[0]
+            token_id = int(ar.prompt_token_ids[pos]) if pos < len(ar.prompt_token_ids) else -1
+            token = ar.prompt_tokens[pos] if pos < len(ar.prompt_tokens) else ""
+            return {
+                "feature_type": "embedding",
+                "node_id": f"E_{token_id}_{pos}",
+                "layer": -1,
+                "ctx_idx": pos,
+                "token": token,
+                "is_target_logit": False,
+                "is_from_qk_tracing": False,
+            }
+
+        if node_key == "logits":
+            vocab_idx = indices[0]
+            ctx_idx = max(len(ar.prompt_token_ids) - 1, 0)
+            layer = 2 * n_layers
+            return {
+                "feature_type": "logit",
+                "node_id": f"{layer}_{vocab_idx}_{ctx_idx}",
+                "layer": layer,
+                "ctx_idx": ctx_idx,
+                "token_prob": logit_prob_map[vocab_idx],
+                "token": logit_token_map[vocab_idx],
+                "is_target_logit": vocab_idx == target_vocab_index,
+                "is_from_qk_tracing": False,
+            }
+
+        if node_key.endswith(".error"):
+            hook_point_out = node_key.removesuffix(".error")
+            metadata = sae_metadata.get(hook_point_out, None)
+            is_lorsa = bool(metadata["is_lorsa"]) if metadata is not None else False
+            layer_base = int(metadata["layer_idx"]) if metadata is not None else parse_hook_layer(hook_point_out)
+            layer = 2 * layer_base + int(not is_lorsa)
+            pos = indices[0]
+            return {
+                "feature_type": "lorsa error" if is_lorsa else "mlp reconstruction error",
+                "node_id": f"{layer}_error_{pos}",
+                "layer": layer,
+                "ctx_idx": pos,
+                "is_target_logit": False,
+                "is_from_qk_tracing": False,
+            }
+
+        if node_key.endswith(".sae.hook_feature_acts"):
+            hook_point_out = node_key.removesuffix(".sae.hook_feature_acts")
+            metadata = sae_metadata.get(hook_point_out, None)
+            is_lorsa = bool(metadata["is_lorsa"]) if metadata is not None else False
+            layer_base = int(metadata["layer_idx"]) if metadata is not None else parse_hook_layer(hook_point_out)
+            layer = 2 * layer_base + int(not is_lorsa)
+            pos = indices[0] if len(indices) > 0 else 0
+            feature_idx = indices[1] if len(indices) > 1 else 0
+            return {
+                "feature_type": "lorsa" if is_lorsa else "cross layer transcoder",
+                "node_id": f"{layer}_{feature_idx}_{pos}",
+                "layer": layer,
+                "ctx_idx": pos,
+                "feature": feature_idx,
+                "sae_name": metadata["sae_name"] if metadata is not None else None,
+                "activation": activation,
+                "qk_tracing_results": None,
+                "is_target_logit": False,
+                "is_from_qk_tracing": False,
+            }
+
+        fallback_id = f"{node_key}:{'_'.join(str(v) for v in indices)}"
+        return {
+            "feature_type": "bias",
+            "node_id": fallback_id,
+            "layer": 0,
+            "ctx_idx": indices[0] if len(indices) > 0 else 0,
+            "is_target_logit": False,
+            "is_from_qk_tracing": False,
+        }
+
+    node_entries = [
+        make_node(
+            str(ni.key),
+            tuple(ni.indices[0].tolist()),
+            float(activation),
+        )
+        for ni, activation in zip(nodes, node_activations)
+    ]
+    node_ids = [node_data["node_id"] for node_data in node_entries]
+
+    target_node_offsets = nodes.nodes_to_offsets(targets).tolist()
+    source_node_offsets = nodes.nodes_to_offsets(sources).tolist()
+    edge_weight_values = edge_weights.tolist()
+    links = [
+        {
+            "source": node_ids[source_node_offset],
+            "target": node_ids[target_node_offset],
+            "weight": float(weight),
+        }
+        for weight, source_node_offset, target_node_offset in zip(
+            edge_weight_values, source_node_offsets, target_node_offsets
+        )
+    ]
+
+    graph_data: dict[str, Any] = {
+        "metadata": {
+            "prompt_tokens": ar.prompt_tokens,
+            "prompt": circuit.prompt,
+            "schema_version": 1,
+        },
+        "nodes": node_entries,
+        "links": links,
+    }
+
     concretize_graph_data(graph_data)
+
     return graph_data
 
 
@@ -179,17 +330,13 @@ def run_circuit_attribution(
     sae_set_name: str,
     prompt: str,
     request: GenerateCircuitRequest,
-    use_lorsa: bool,
 ):
-    """Background task to run circuit attribution and store the result.
-
-    This function is designed to run in a background thread/task.
-    """
+    """Background task to run circuit attribution and store the result."""
     try:
         with _generation_lock:
             # Update status to running
             client.update_circuit_status(circuit_id, CircuitStatus.RUNNING)
-            client.update_circuit_progress(circuit_id, 0.0, "Initializing models...")
+            client.update_circuit_progress(circuit_id, 0.0, "Loading sparse dictionaries...")
 
             # Load SAE set and models
             sae_set = client.get_sae_set(name=sae_set_name)
@@ -203,39 +350,9 @@ def run_circuit_attribution(
                 "Circuit tracing only supports exact model of TransformerLens backend"
             )
 
-            client.update_circuit_progress(circuit_id, 5.0, "Loading transcoders...")
-
-            model_dtype = model.cfg.dtype
-            lorsas = {
-                sae_name: sae.to(model_dtype)
-                for sae_name, sae in saes.items()
-                if isinstance(sae, LowRankSparseAttention)
-            }
-            transcoders = {
-                sae_name: sae.to(model_dtype) for sae_name, sae in saes.items() if isinstance(sae, SparseAutoEncoder)
-            }
-
-            client.update_circuit_progress(circuit_id, 10.0, "Building replacement model...")
-
-            plt_set = TranscoderSet(
-                TranscoderSetConfig(
-                    n_layers=model.model.cfg.n_layers,
-                    d_sae=list(transcoders.values())[0].cfg.d_sae,
-                    feature_input_hook="ln2.hook_normalized",
-                    feature_output_hook="hook_mlp_out",
-                ),
-                {i: transcoder for i, transcoder in enumerate(transcoders.values())},
-            )
-
-            replacement_model = ReplacementModel.from_pretrained(
-                model.cfg, plt_set, list(lorsas.values()), use_lorsa=use_lorsa
-            )
-
             client.update_circuit_progress(circuit_id, 15.0, "Computing attribution...")
 
-            progress_checkpoints = [(15.0, 50.0, "Feature influence computation")]
-            if use_lorsa:
-                progress_checkpoints.append((50.0, 95.0, "Computing attention scores attribution"))
+            progress_checkpoints = [(15.0, 95.0, "Feature influence computation")]
 
             def progress_callback(current: float, total: float, phase: str):
                 phase_start, phase_end = next(
@@ -244,29 +361,17 @@ def run_circuit_attribution(
                 overall_progress = phase_start + (current / total) * (phase_end - phase_start)
                 client.update_circuit_progress(circuit_id, overall_progress, phase)
 
-            # Run attribution
-            graph = attribute(
-                prompt=prompt,
-                model=replacement_model,
+            attribution = model.attribute(
+                inputs=prompt,
+                replacement_modules=list(saes.values()),
                 max_n_logits=request.max_n_logits,
                 desired_logit_prob=request.desired_logit_prob,
-                batch_size=1,
-                max_feature_nodes=request.max_feature_nodes,
-                sae_series=sae_series,
-                qk_tracing_topk=request.qk_tracing_topk,
-                use_lorsa=use_lorsa,
-                list_of_features=request.list_of_features,
-                progress_callback=progress_callback,
+                batch_size=16,
+                max_features=request.max_feature_nodes,
             )
-            graph.cfg.tokenizer_name = model.cfg.model_from_pretrained_path or model.cfg.model_name
 
-            client.update_circuit_progress(circuit_id, 90.0, "Storing graph data...")
-
-            # Store raw graph to GridFS
-            graph_dict = graph.to_dict()
-            success = client.store_raw_graph(circuit_id, graph_dict)
-            if not success:
-                raise RuntimeError("Failed to store raw graph to GridFS")
+            client.update_circuit_progress(circuit_id, 90.0, "Storing attribution data...")
+            client.store_attribution(circuit_id, attribution)
 
             client.update_circuit_progress(circuit_id, 100.0, "Completed")
             client.update_circuit_status(circuit_id, CircuitStatus.COMPLETED)
@@ -291,7 +396,6 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest, backgroun
         return Response(content=f"SAE set {sae_set_name} not found", status_code=404)
 
     sae_names = sae_set.sae_names
-    saes = {sae_name: get_sae(name=sae_name) for sae_name in sae_names}
 
     model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
     model = get_model(name=model_name)
@@ -310,16 +414,6 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest, backgroun
         )
     else:
         return Response(content=f"Invalid input type: {request.input.input_type}", status_code=400)
-
-    # Determine CLT and LORSA names
-    lorsas = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, LowRankSparseAttention)}
-    transcoders = {sae_name: sae for sae_name, sae in saes.items() if isinstance(sae, SparseAutoEncoder)}
-    clt_names = list(transcoders.keys())
-    lorsa_names = list(lorsas.keys())
-    use_lorsa = len(lorsas) > 0
-
-    if not use_lorsa and request.qk_tracing_topk > 0:
-        return Response(content="QK tracing is only supported with Lorsas", status_code=400)
 
     # Create circuit config (without threshold params)
     config = CircuitConfig(
@@ -340,9 +434,6 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest, backgroun
         name=request.name,
         group=request.group,
         parent_id=request.parent_id,
-        clt_names=clt_names,
-        lorsa_names=lorsa_names,
-        use_lorsa=use_lorsa,
     )
 
     # Start background task
@@ -352,7 +443,6 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest, backgroun
         sae_set_name=sae_set_name,
         prompt=prompt,
         request=request,
-        use_lorsa=use_lorsa,
     )
 
     return {

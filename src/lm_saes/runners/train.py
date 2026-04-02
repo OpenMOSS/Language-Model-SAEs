@@ -81,6 +81,9 @@ class TrainSAESettings(BaseSettings):
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
 
+    fold_activation_scale: bool = True
+    """Whether to fold the activation scale."""
+
 
 def train_sae(settings: TrainSAESettings) -> None:
     """Train a SAE model.
@@ -175,7 +178,7 @@ def train_sae(settings: TrainSAESettings) -> None:
         sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
-            fold_activation_scale=settings.sae.fold_activation_scale,
+            fold_activation_scale=False,
             strict_loading=settings.sae.strict_loading,
             device=settings.sae.device,
             dtype=settings.sae.dtype,
@@ -224,6 +227,7 @@ def train_sae(settings: TrainSAESettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
+            fold_activation_scale=settings.fold_activation_scale,
         )
         if is_primary_rank(device_mesh) and mongo_client is not None:
             assert settings.sae_name is not None and settings.sae_series is not None, (
@@ -290,6 +294,9 @@ class TrainCrosscoderSettings(BaseSettings):
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+    fold_activation_scale: bool = True
+    """Whether to fold the activation scale."""
 
 
 def train_crosscoder(settings: TrainCrosscoderSettings) -> None:
@@ -402,7 +409,7 @@ def train_crosscoder(settings: TrainCrosscoderSettings) -> None:
         sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
-            fold_activation_scale=settings.sae.fold_activation_scale,
+            fold_activation_scale=False,
             strict_loading=settings.sae.strict_loading,
             device=settings.sae.device,
             dtype=settings.sae.dtype,
@@ -448,6 +455,7 @@ def train_crosscoder(settings: TrainCrosscoderSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
+            fold_activation_scale=settings.fold_activation_scale,
         )
         if is_primary_rank(device_mesh) and mongo_client is not None:
             assert settings.sae_name is not None and settings.sae_series is not None, (
@@ -514,6 +522,9 @@ class TrainCLTSettings(BaseSettings):
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+    fold_activation_scale: bool = True
+    """Whether to fold the activation scale."""
 
 
 def train_clt(settings: TrainCLTSettings) -> None:
@@ -608,7 +619,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
         sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
-            fold_activation_scale=settings.sae.fold_activation_scale,
+            fold_activation_scale=False,
             strict_loading=settings.sae.strict_loading,
             device=settings.sae.device,
             dtype=settings.sae.dtype,
@@ -657,6 +668,7 @@ def train_clt(settings: TrainCLTSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
+            fold_activation_scale=settings.fold_activation_scale,
         )
         if is_primary_rank(device_mesh) and mongo_client is not None:
             assert settings.sae_name is not None and settings.sae_series is not None, (
@@ -723,6 +735,9 @@ class TrainLorsaSettings(BaseSettings):
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+    fold_activation_scale: bool = True
+    """Whether to fold the activation scale."""
 
 
 def train_lorsa(settings: TrainLorsaSettings) -> None:
@@ -818,7 +833,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
         sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
-            fold_activation_scale=settings.sae.fold_activation_scale,
+            fold_activation_scale=False,
             strict_loading=settings.sae.strict_loading,
             device=settings.sae.device,
             dtype=settings.sae.dtype,
@@ -868,6 +883,7 @@ def train_lorsa(settings: TrainLorsaSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
+            fold_activation_scale=settings.fold_activation_scale,
         )
         if is_primary_rank(device_mesh) and mongo_client is not None:
             assert settings.sae_name is not None and settings.sae_series is not None, (
@@ -934,6 +950,9 @@ class TrainMOLTSettings(BaseSettings):
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+    fold_activation_scale: bool = True
+    """Whether to fold the activation scale."""
 
 
 def train_molt(settings: TrainMOLTSettings) -> None:
@@ -1029,7 +1048,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
         sae = SparseDictionary.from_pretrained(
             settings.sae.pretrained_name_or_path,
             device_mesh=device_mesh,
-            fold_activation_scale=settings.sae.fold_activation_scale,
+            fold_activation_scale=False,
             strict_loading=settings.sae.strict_loading,
             device=settings.sae.device,
             dtype=settings.sae.dtype,
@@ -1078,6 +1097,7 @@ def train_molt(settings: TrainMOLTSettings) -> None:
     else:
         sae.save_pretrained(
             save_path=settings.trainer.exp_result_path,
+            fold_activation_scale=settings.fold_activation_scale,
         )
         if is_primary_rank(device_mesh) and mongo_client is not None:
             assert settings.sae_name is not None and settings.sae_series is not None, (
@@ -1151,6 +1171,9 @@ class SweepSAESettings(BaseSettings):
 
     device_type: str = "cuda"
     """Device type to use for distributed training ('cuda' or 'cpu')"""
+
+    fold_activation_scale: bool = True
+    """Whether to fold the activation scale."""
 
 
 def sweep_sae(settings: SweepSAESettings) -> None:
@@ -1256,7 +1279,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
         sae = SparseDictionary.from_pretrained(
             item.sae.pretrained_name_or_path,
             device_mesh=sae_device_mesh,
-            fold_activation_scale=item.sae.fold_activation_scale,
+            fold_activation_scale=False,
             strict_loading=item.sae.strict_loading,
             device=item.sae.device,
             dtype=item.sae.dtype,
@@ -1295,6 +1318,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
     logger.info("Training completed, saving sweep item")
     sae.save_pretrained(
         save_path=item.trainer.exp_result_path,
+        fold_activation_scale=settings.fold_activation_scale,
     )
     if is_primary_rank(device_mesh) and mongo_client is not None:
         assert item.sae_name is not None and item.sae_series is not None, (

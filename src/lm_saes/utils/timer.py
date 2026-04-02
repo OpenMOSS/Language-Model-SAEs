@@ -1,8 +1,12 @@
+import functools
 import time
 from contextlib import contextmanager
-from typing import Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, ParamSpec, Set, TypeVar
 
 import torch
+
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 class TimerNode:
@@ -130,6 +134,45 @@ class Timer:
             yield
         finally:
             self.stop(name)
+
+    def profile(
+        self,
+        name: str,
+        *,
+        log_fn: Callable[[str], Any] = print,
+        message_fn: Optional[Callable[[str, tuple[Any, ...], dict[str, Any]], str]] = None,
+    ) -> Callable[[Callable[P, R]], Callable[P, R]]:
+        """Decorate a function for one-off profiling with automatic summary logging.
+
+        If the timer is already enabled, this behaves like ``@timer.time(name)``
+        and does not reset, summarize, or disable the active session.
+        """
+
+        def decorator(func: Callable[P, R]) -> Callable[P, R]:
+            @functools.wraps(func)
+            def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+                manage_timer = not self.enabled
+                if manage_timer:
+                    self.enable()
+                    self.reset()
+
+                try:
+                    with self.time(name):
+                        return func(*args, **kwargs)
+                finally:
+                    if manage_timer:
+                        summary = self.summary()
+                        message = (
+                            message_fn(summary, args, kwargs)
+                            if message_fn is not None
+                            else f"Timer summary for {name}:\n{summary}"
+                        )
+                        log_fn(message)
+                        self.disable()
+
+            return wrapper
+
+        return decorator
 
     def start(self, name: str):
         """Start a timer.
