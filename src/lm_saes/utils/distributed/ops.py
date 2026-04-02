@@ -1,11 +1,16 @@
-from typing import Literal, Tuple, Union, overload
+from typing import Any, Callable, Literal, Tuple, Union, overload
 
 import torch
+import torch.utils._pytree as pytree
 from jaxtyping import Float
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
-from torch.distributed.tensor.placement_types import Shard
+from torch.distributed.tensor.experimental import local_map
+from torch.distributed.tensor.placement_types import Replicate, Shard
+from torch.types import Number
+
+from lm_saes.utils.distributed.utils import all_gather_dict
 
 
 def full_tensor(x: Tensor) -> Tensor:
@@ -25,6 +30,76 @@ def to_local(x: Tensor) -> Tensor:
 def item(x: Tensor) -> float:
     """Extract item from a Tensor. A dedicated function is necessary because DTensor.item() silently returns the local value."""
     return full_tensor(x).item()
+
+
+def maybe_local_map(
+    func: Callable[..., Any],
+    out_placements=None,
+    in_placements=None,
+    in_grad_placements=None,
+    device_mesh=None,
+    *,
+    redistribute_inputs=False,
+) -> Callable[..., Any]:
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if pytree.tree_any(lambda x: isinstance(x, DTensor), args) or pytree.tree_any(
+            lambda x: isinstance(x, DTensor), kwargs
+        ):
+            return local_map(
+                func,
+                out_placements=out_placements,
+                in_placements=in_placements,
+                in_grad_placements=in_grad_placements,
+                device_mesh=device_mesh,
+                redistribute_inputs=redistribute_inputs,
+            )(*args, **kwargs)
+        else:
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+@overload
+def nonzero(x: Tensor, *, as_tuple: Literal[False] = False) -> Tensor: ...
+
+
+@overload
+def nonzero(x: Tensor, *, as_tuple: Literal[True]) -> tuple[Tensor, ...]: ...
+
+
+def nonzero(x: Tensor, *, as_tuple: bool = False) -> Tensor | tuple[Tensor, ...]:
+    """Compute nonzero for Tensor or DTensor.
+
+    For a sharded 1-D mesh DTensor, this computes local nonzero indices, shifts them
+    to global coordinates, gathers all local results, and returns a replicated DTensor.
+    """
+    if not isinstance(x, DTensor):
+        return torch.nonzero(x, as_tuple=as_tuple)
+
+    assert as_tuple is False, "as_tuple is not supported for DTensor"
+
+    local = x.to_local()
+    local_indices = torch.nonzero(local, as_tuple=False)
+
+    if local_indices.numel() > 0:
+        offsets = torch.zeros_like(local_indices[0])
+        for mesh_dim, placement in enumerate(x.placements):
+            if not isinstance(placement, Shard):
+                continue
+            shard_dim: int = placement.dim
+            offsets[shard_dim] = x.device_mesh.get_local_rank(mesh_dim) * local.shape[shard_dim]
+
+        local_indices = local_indices + offsets
+
+    # print(f"[Rank {dist.get_rank()}] local_indices: {local_indices}")
+
+    all_indices: list[Tensor] = [entry["indices"] for entry in all_gather_dict({"indices": local_indices.contiguous()})]
+    indices = torch.cat(all_indices, dim=0)
+
+    return DTensor.from_local(indices, device_mesh=x.device_mesh, placements=tuple(Replicate() for _ in x.placements))
+
+
+diag = maybe_local_map(torch.diag)
 
 
 @overload
@@ -197,3 +272,27 @@ def slice_fill(
     else:
         x[slice_tuple] = value
         return x
+
+
+def searchsorted(
+    sorted_sequence: Float[Tensor, "..."],
+    values: Float[Tensor, "..."] | Number,
+    *,
+    right: bool = False,
+    side: Literal["left", "right"] | None = None,
+) -> Float[Tensor, "..."]:
+    """
+    Perform searchsorted operation on a Tensor.
+    """
+    if isinstance(sorted_sequence, DTensor):
+        assert all(isinstance(placement, Replicate) for placement in sorted_sequence.placements), (
+            "Only replicated tensors are supported"
+        )
+        sorted_sequence_local = sorted_sequence.to_local()
+        return DTensor.from_local(
+            torch.searchsorted(sorted_sequence_local, values, right=right, side=side),
+            device_mesh=sorted_sequence.device_mesh,
+            placements=sorted_sequence.placements,
+        )
+    else:
+        return torch.searchsorted(sorted_sequence, values, right=right, side=side)

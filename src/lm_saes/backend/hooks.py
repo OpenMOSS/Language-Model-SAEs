@@ -8,11 +8,12 @@ from transformer_lens.hook_points import HookedRootModule, HookPoint
 from lm_saes.backend.tl_addons import mount_hooked_modules
 
 if TYPE_CHECKING:
+    from lm_saes.backend.language_model import TransformerLensLanguageModel
     from lm_saes.models.sparse_dictionary import SparseDictionary
 
 
 @contextmanager
-def apply_saes(model: HookedRootModule, saes: list["SparseDictionary"]):
+def apply_saes(model: "TransformerLensLanguageModel", saes: list["SparseDictionary"]):
     from lm_saes.models.lorsa import LowRankSparseAttention
     from lm_saes.models.molt import MixtureOfLinearTransform
     from lm_saes.models.sae import SparseAutoEncoder
@@ -56,14 +57,14 @@ def apply_saes(model: HookedRootModule, saes: list["SparseDictionary"]):
         hooks, hook_error = get_fwd_hooks(sae)
         fwd_hooks.extend(hooks)
         hook_errors.append((sae.cfg.hook_point_out, "error", hook_error))
-    with mount_hooked_modules(model, [(sae.cfg.hook_point_out, "sae", sae) for sae in saes] + hook_errors):
+    with mount_hooked_modules(model.model, [(sae.cfg.hook_point_out, "sae", sae) for sae in saes] + hook_errors):
         with model.hooks(fwd_hooks):
             yield model
 
 
 @contextmanager
 def detach_at(
-    model: HookedRootModule,
+    model: "TransformerLensLanguageModel",
     hook_points: list[str],
 ):
     """
@@ -84,7 +85,7 @@ def detach_at(
         (hook_point, hook) for hook_point, (_, _, hook) in hooks.items()
     ]
     with mount_hooked_modules(
-        model,
+        model.model,
         [(hook_point, "pre", hook) for hook_point, (hook, _, _) in hooks.items()]
         + [(hook_point, "post", hook) for hook_point, (_, hook, _) in hooks.items()],
     ):
@@ -106,7 +107,6 @@ def replace_biases_with_leaves(
     batch_size: int,
     seq_len: int,
 ):
-
     from lm_saes.models.lorsa import LowRankSparseAttention
     from lm_saes.models.molt import MixtureOfLinearTransform
     from lm_saes.models.sae import SparseAutoEncoder

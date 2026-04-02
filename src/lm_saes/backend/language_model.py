@@ -49,6 +49,7 @@ from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.discrete import DiscreteMapper
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed.ops import diag, nonzero, searchsorted, to_local
 from lm_saes.utils.misc import ensure_tokenized, pad_and_truncate_tokens, tensor_id
 from lm_saes.utils.timer import timer
 
@@ -862,7 +863,7 @@ def _find_influence_threshold(scores: torch.Tensor, threshold: float) -> torch.T
         return torch.tensor(0.0, device=scores.device, dtype=scores.dtype)
     sorted_scores = torch.sort(scores.view(-1), descending=True).values
     cumulative_score = torch.cumsum(sorted_scores, dim=0) / torch.sum(sorted_scores).clamp(min=1e-8)
-    threshold_index = torch.searchsorted(cumulative_score, threshold)
+    threshold_index = searchsorted(cumulative_score, threshold)
     threshold_index = min(int(threshold_index.item()), len(cumulative_score) - 1)
     return sorted_scores[threshold_index]
 
@@ -1095,7 +1096,7 @@ def greedily_collect_attribution(
 
     for target_batch in queue.iter(batch_size):
         clear_grads(all_sources)
-        root = torch.diag(torch.cat(values(target_batch), dim=1))
+        root = diag(torch.cat(values(target_batch), dim=1))
 
         with timer.time("backward"):
             root.sum().backward(retain_graph=True)
@@ -1128,7 +1129,7 @@ def greedily_collect_attribution(
 
         clear_grads(all_sources)
         node_refs = retrieval_from_intermediates(selected_nodes, intermediates)
-        root = torch.diag(torch.cat(values(node_refs), dim=1))
+        root = diag(torch.cat(values(node_refs), dim=1))
 
         with timer.time("backward"):
             root.sum().backward(retain_graph=True)
@@ -1350,7 +1351,7 @@ class TransformerLensLanguageModel(LanguageModel):
         with torch.no_grad():
             probs = torch.softmax(batch_logits[0, -1], dim=-1)
             top_p, top_idx = torch.topk(probs, max_n_logits)
-            cutoff = int(torch.searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
+            cutoff = int(searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
             top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
 
         seq_len = cache["hook_embed.post"].shape[1]
@@ -1383,12 +1384,12 @@ class TransformerLensLanguageModel(LanguageModel):
                 NodeInfoRef(
                     key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
                     ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"],
-                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"][0].nonzero(),
+                    indices=nonzero(cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"][0]),
                 ),
                 NodeInfoRef(
                     key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
                     ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
-                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0].nonzero(),
+                    indices=nonzero(cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0]),
                 ),
             )
             for replacement_module in replacement_modules
@@ -1517,7 +1518,9 @@ class TransformerLensLanguageModel(LanguageModel):
                 NodeInfoRef(
                     key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
                     ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
-                    indices=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0].nonzero(),
+                    indices=to_local(
+                        nonzero(cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0])
+                    ),
                 )
                 for replacement_module in replacement_modules
             ]
@@ -1657,15 +1660,20 @@ class TransformerLensLanguageModel(LanguageModel):
                 device_mesh=self.device_mesh,
                 placements=DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)),
             )
-            if isinstance(input, torch.Tensor)
+            if isinstance(input, torch.Tensor) and not isinstance(input, DTensor)
             else input
         )
 
     def _wrap_hook_for_local(self, hook_fn):
         def wrapped_hook_fn(*args, **kwargs):
-            args = pytree.tree_map(self._to_dtensor, args)
-            kwargs = pytree.tree_map(self._to_dtensor, kwargs)
-            return pytree.tree_map(self._to_tensor, hook_fn(*args, **kwargs))
+            if pytree.tree_any(lambda x: isinstance(x, DTensor), args) or pytree.tree_any(
+                lambda x: isinstance(x, DTensor), kwargs
+            ):
+                return hook_fn(*args, **kwargs)
+            else:
+                args = pytree.tree_map(self._to_dtensor, args)
+                kwargs = pytree.tree_map(self._to_dtensor, kwargs)
+                return pytree.tree_map(self._to_tensor, hook_fn(*args, **kwargs))
 
         return wrapped_hook_fn
 
@@ -1731,13 +1739,13 @@ class TransformerLensLanguageModel(LanguageModel):
     @contextmanager
     def apply_saes(self, saes: list[SparseDictionary]):
         assert self.model is not None, "model must be initialized"
-        with apply_saes(self.model, saes):
+        with apply_saes(self, saes):
             yield self
 
     @contextmanager
     def detach_at(self, hook_points: list[str]):
         assert self.model is not None, "model must be initialized"
-        with detach_at(self.model, hook_points):
+        with detach_at(self, hook_points):
             yield self
 
     def run_with_ref_cache(self, *args, **kwargs) -> Any:

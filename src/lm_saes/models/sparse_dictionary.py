@@ -566,7 +566,7 @@ class SparseDictionary(HookedRootModule, ABC):
                     def load_tensor(key: str) -> DTensor:
                         tensor_slice = f.get_slice(key)
                         shape = tensor_slice.get_shape()
-                        dim_map = model.dim_maps()[key]
+                        dim_map = model.dim_maps().get(key, DimMap({}))
                         indices = dim_map.local_slices(shape, device_mesh)
                         local_tensor = tensor_slice[indices].to(model.override_dtypes().get(key, cfg.dtype))
                         return DTensor.from_local(
@@ -575,7 +575,7 @@ class SparseDictionary(HookedRootModule, ABC):
                             placements=dim_map.placements(device_mesh),
                         )
 
-                    state_dict = {k: load_tensor(k) if k in model.dim_maps() else f.get_tensor(k) for k in f.keys()}
+                    state_dict = {k: load_tensor(k) for k in f.keys()}
         elif ckpt_path.endswith(".pt"):
             state_dict: dict[str, torch.Tensor] = torch.load(
                 ckpt_path,

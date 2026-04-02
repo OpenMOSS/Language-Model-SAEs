@@ -1,5 +1,5 @@
 from .dimmap import DimMap
-from .ops import distributed_topk, full_tensor, item, masked_fill, slice_fill, to_local
+from .ops import distributed_topk, full_tensor, item, masked_fill, nonzero, slice_fill, to_local
 from .utils import (
     all_gather_dict,
     all_gather_list,
@@ -17,6 +17,7 @@ __all__ = [
     "distributed_topk",
     "item",
     "masked_fill",
+    "nonzero",
     "slice_fill",
     "to_local",
     "full_tensor",
