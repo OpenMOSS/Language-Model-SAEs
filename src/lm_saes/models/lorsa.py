@@ -785,6 +785,7 @@ class LowRankSparseAttention(
         Float[torch.Tensor, "batch seq_len n_ov_heads"],
     ]:
         """Compute queries, keys, values."""
+        x = x.to(self.W_Q.dtype)
         q = (
             torch.einsum(
                 "bsd,Qdq->bsQq",
