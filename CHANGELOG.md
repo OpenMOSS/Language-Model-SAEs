@@ -1,3 +1,12 @@
+## v2.0.0b23 (2026-04-03)
+
+### Fix
+
+- **circuit**: fix edge score computation in pruning
+- **circuit**: some other dtensor issues (WIP)
+- **circuit**: dtensor issues
+- **attribution**: use consistent dtype for attribution (#194)
+
 ## v2.0.0b22 (2026-04-02)
 
 ### Feat
