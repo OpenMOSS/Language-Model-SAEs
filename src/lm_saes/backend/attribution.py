@@ -332,11 +332,14 @@ def prune_attribution(
         attribution.dimensions[1].filter_keys(lambda key: key.endswith(".error")) + intermediates_dimension
     )
 
-    edge_scores = compute_intermediates_attribution(
-        attribution, attribution.dimensions[0], intermediates_dimension, max_iter=100
-    )
-    node_scores = (
-        NodeIndexedVector.from_data(logit_weights, dimensions=(logits_dimension,)) @ edge_scores[logits_dimension, None]
+    node_scores = NodeIndexedVector.from_data(
+        logit_weights, dimensions=(logits_dimension,)
+    ) @ compute_intermediates_attribution(attribution, logits_dimension, intermediates_dimension, max_iter=100)
+    influence = node_scores[intermediates_dimension]
+    influence.add_nodes(logits_dimension, logit_weights)
+    edge_scores = NodeIndexedMatrix.from_data(
+        get_normalized_matrix(attribution).data * influence[attribution.dimensions[0]].data[:, None],
+        dimensions=attribution.dimensions,
     )
 
     node_mask = node_scores.map(lambda x: x >= _find_influence_threshold(x, node_threshold))
@@ -393,7 +396,7 @@ class QKTraceResult:
     attribution: float
 
 
-@timer.profile("collect_cache")
+@timer.time("collect_cache")
 def collect_cache(
     model: TransformerLensLanguageModel,
     inputs: torch.Tensor | str,
