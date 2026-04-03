@@ -17,7 +17,7 @@ from tqdm import tqdm
 from lm_saes.backend.hooks import replace_biases_with_leaves
 from lm_saes.backend.indexed_tensor import Dimension, NodeIndexedMatrix, NodeIndexedVector, NodeInfo
 from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.distributed.ops import diag, nonzero, searchsorted
+from lm_saes.utils.distributed.ops import maybe_local_map, nonzero, searchsorted
 from lm_saes.utils.misc import ensure_tokenized
 from lm_saes.utils.timer import timer
 
@@ -126,14 +126,27 @@ def compute_intermediates_attribution(
 
 
 def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-    return [node_info.ref[:, *node_info.indices.unbind(dim=1)] for node_info in node_infos]
+    return [
+        node_info.ref[:, *node_info.indices.unbind(dim=1)]
+        if not isinstance(node_info.ref, DTensor)
+        else DimMap({}).redistribute(node_info.ref[:, *node_info.indices.unbind(dim=1)])  # pyright: ignore
+        for node_info in node_infos
+    ]
 
 
 def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
     return [
-        node_info.ref.grad[:, *node_info.indices.unbind(dim=1)]
+        (
+            node_info.ref.grad[:, *node_info.indices.unbind(dim=1)]
+            if not isinstance(node_info.ref.grad, DTensor)
+            else DimMap({}).redistribute(node_info.ref.grad[:, *node_info.indices.unbind(dim=1)])  # pyright: ignore
+        )
         if node_info.ref.grad is not None
-        else torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)])
+        else (
+            torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)])
+            if not isinstance(node_info.ref, DTensor)
+            else DimMap({}).redistribute(torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)]))  # pyright: ignore
+        )
         for node_info in node_infos
     ]
 
@@ -176,6 +189,7 @@ def greedily_collect_attribution(
         dimensions=(targets_dimension, all_sources_dimension),
         device=targets[0].ref.device,
         dtype=targets[0].ref.dtype,
+        device_mesh=targets[0].ref.device_mesh if isinstance(targets[0].ref, DTensor) else None,
     )
 
     batch_size = targets[0].ref.shape[0]
@@ -184,7 +198,7 @@ def greedily_collect_attribution(
 
     for target_batch in queue.iter(batch_size):
         clear_grads(all_sources)
-        root = diag(torch.cat(values(target_batch), dim=1))
+        root = maybe_local_map(torch.diag)(torch.cat(values(target_batch), dim=1))
 
         with timer.time("backward"):
             root.sum().backward(retain_graph=True)
@@ -201,7 +215,10 @@ def greedily_collect_attribution(
             dim=1,
         ).to(attribution.data.dtype)
 
-    collected_intermediates_dimension = Dimension.empty(device=targets[0].ref.device)
+    collected_intermediates_dimension = Dimension.empty(
+        device=targets[0].ref.device,
+        device_mesh=targets[0].ref.device_mesh if isinstance(targets[0].ref, DTensor) else None,
+    )
     reduction_weight_vec: NodeIndexedVector = NodeIndexedVector.from_data(
         reduction_weight, dimensions=(targets_dimension,)
     )
@@ -219,7 +236,7 @@ def greedily_collect_attribution(
 
         clear_grads(all_sources)
         node_refs = retrieval_from_intermediates(selected_nodes, intermediates)
-        root = diag(torch.cat(values(node_refs), dim=1))
+        root = maybe_local_map(torch.diag)(torch.cat(values(node_refs), dim=1))
 
         with timer.time("backward"):
             root.sum().backward(retain_graph=True)

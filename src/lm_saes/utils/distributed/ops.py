@@ -99,9 +99,6 @@ def nonzero(x: Tensor, *, as_tuple: bool = False) -> Tensor | tuple[Tensor, ...]
     return DTensor.from_local(indices, device_mesh=x.device_mesh, placements=tuple(Replicate() for _ in x.placements))
 
 
-diag = maybe_local_map(torch.diag)
-
-
 @overload
 def distributed_topk(
     x: Float[DTensor, "batch n_layers d_sae"],

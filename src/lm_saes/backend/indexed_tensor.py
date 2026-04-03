@@ -13,10 +13,14 @@ from typing import (
 )
 
 import torch
-from torch._tensor import Tensor
+from torch import Tensor
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
 from torch.types import Number
 
 from lm_saes.utils.discrete import DiscreteMapper
+from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.distributed.ops import full_tensor, maybe_local_map
 from lm_saes.utils.misc import tensor_id
 from lm_saes.utils.timer import timer
 
@@ -46,6 +50,26 @@ class Node:
 
     def __len__(self) -> int:
         return self.indices.shape[0]
+
+    def to(self, device: torch.device | str | None = None, *, device_mesh: DeviceMesh | None = None) -> Self:
+        if device is not None:
+            return replace(
+                self,
+                indices=self.indices.to(device),
+                offsets=self.offsets.to(device),
+                _inv_indices=self._inv_indices.to(device) if self._inv_indices is not None else None,
+            )
+        elif device_mesh is not None:
+            return replace(
+                self,
+                indices=DimMap({}).distribute(self.indices, device_mesh),
+                offsets=DimMap({}).distribute(self.offsets, device_mesh),
+                _inv_indices=DimMap({}).distribute(self._inv_indices, device_mesh)
+                if self._inv_indices is not None
+                else None,
+            )
+        else:
+            return self
 
 
 @dataclass
@@ -82,6 +106,7 @@ class NodeInfo:
             yield self[slice(i, i + 1)]
 
 
+@maybe_local_map
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
     inv_indices = torch.empty(
         [int(indices[:, i].max() + 1) for i in range(indices.shape[1])],
@@ -97,12 +122,13 @@ class Dimension:
     device: torch.device | str
     mapper: DiscreteMapper
     node_mappings: dict[Any, Node]
+    device_mesh: DeviceMesh | None = field(default=None, repr=False)
     _offset_mapping: dict[str, torch.Tensor] | None = field(default=None, repr=False)
     _nodes_to_offsets_cache: dict[int, torch.Tensor] = field(default_factory=dict)
 
     @classmethod
-    def empty(cls, device: torch.device | str) -> Self:
-        return cls(device=device, mapper=DiscreteMapper(), node_mappings={})
+    def empty(cls, device: torch.device | str, device_mesh: DeviceMesh | None = None) -> Self:
+        return cls(device=device, mapper=DiscreteMapper(), node_mappings={}, device_mesh=device_mesh)
 
     @classmethod
     def _from_node_mappings(
@@ -110,6 +136,7 @@ class Dimension:
         node_mappings: dict[Any, Node],
         device: torch.device | str | None = None,
         mapper: DiscreteMapper | None = None,
+        device_mesh: DeviceMesh | None = None,
     ) -> Self:
         mapper = mapper if mapper is not None else DiscreteMapper()
         if device is None:
@@ -123,6 +150,7 @@ class Dimension:
             device=device,
             mapper=mapper,
             node_mappings=dict(node_mappings),
+            device_mesh=device_mesh,
         )
 
     @property
@@ -130,24 +158,60 @@ class Dimension:
         if self._offset_mapping is None:
             n_elements = len(self)
             offset_mapping = {
-                "keys": torch.empty(n_elements, device=self.device, dtype=torch.long),
-                "indices": torch.empty(n_elements, device=self.device, dtype=torch.long),
+                "keys": torch.empty(n_elements, device=self.device, dtype=torch.long)
+                if self.device_mesh is None
+                else DimMap({}).distribute(
+                    torch.empty(n_elements, device=self.device, dtype=torch.long), self.device_mesh
+                ),
+                "indices": torch.empty(n_elements, device=self.device, dtype=torch.long)
+                if self.device_mesh is None
+                else DimMap({}).distribute(
+                    torch.empty(n_elements, device=self.device, dtype=torch.long), self.device_mesh
+                ),
             }
             encoded_keys = self.mapper.encode(list(self.node_mappings.keys()))
             for key, encoded_key in zip(self.node_mappings.keys(), encoded_keys):
                 node = self.node_mappings[key]
-                offset_mapping["keys"][node.offsets] = encoded_key
-                offset_mapping["indices"][node.offsets] = torch.arange(
-                    node.indices.shape[0], device=self.device, dtype=torch.long
-                )
+                if self.device_mesh is None:
+                    offset_mapping["keys"][node.offsets] = encoded_key
+                    offset_mapping["indices"][node.offsets] = torch.arange(
+                        node.indices.shape[0], device=self.device, dtype=torch.long
+                    )
+                else:
+                    offset_mapping["keys"] = DimMap({}).distribute(
+                        full_tensor(offset_mapping["keys"]).index_put(
+                            (full_tensor(node.offsets),),
+                            torch.tensor(encoded_key, device=self.device, dtype=torch.long),
+                        ),
+                        device_mesh=self.device_mesh,
+                    )
+                    offset_mapping["indices"] = DimMap({}).distribute(
+                        full_tensor(offset_mapping["indices"]).index_put(
+                            (full_tensor(node.offsets),),
+                            torch.arange(node.indices.shape[0], device=self.device, dtype=torch.long),
+                        ),
+                        device_mesh=self.device_mesh,
+                    )
             self._offset_mapping = offset_mapping
         return cast(dict[str, torch.Tensor], self._offset_mapping)
 
     @classmethod
-    def from_node_infos(cls, node_infos: Sequence[NodeInfo], device: torch.device | str | None = None) -> Self:
+    def from_node_infos(
+        cls,
+        node_infos: Sequence[NodeInfo],
+        device: torch.device | str | None = None,
+        device_mesh: DeviceMesh | None = None,
+    ) -> Self:
         if len(node_infos) == 0 and device is None:
             raise ValueError("Cannot build Dimension from empty `node_infos` without an explicit device.")
         device = device if device is not None else node_infos[0].indices.device
+        device_mesh = (
+            device_mesh
+            if device_mesh is not None
+            else node_infos[0].indices.device_mesh
+            if isinstance(node_infos[0].indices, DTensor)
+            else None
+        )
 
         nodes = functools.reduce(
             lambda acc, ni: (
@@ -156,7 +220,11 @@ class Dimension:
                     Node(
                         key=ni.key,
                         indices=ni.indices,
-                        offsets=torch.arange(acc[1], acc[1] + len(ni), device=device, dtype=torch.long),
+                        offsets=torch.arange(acc[1], acc[1] + len(ni), device=device, dtype=torch.long)
+                        if device_mesh is None
+                        else DimMap({}).distribute(
+                            torch.arange(acc[1], acc[1] + len(ni), device=device, dtype=torch.long), device_mesh
+                        ),
                     )
                 ],
                 acc[1] + len(ni),
@@ -181,17 +249,22 @@ class Dimension:
                 for key, group in grouped.items()
             },
             device=device,
+            device_mesh=device_mesh,
         )
 
     @property
     def node_infos(self) -> Sequence[NodeInfo]:
         if len(self) == 0:
             return []
-        offsets = torch.arange(len(self), device=self.device, dtype=torch.long)
+        offsets = (
+            torch.arange(len(self), device=self.device, dtype=torch.long)
+            if self.device_mesh is None
+            else DimMap({}).distribute(torch.arange(len(self), device=self.device, dtype=torch.long), self.device_mesh)
+        )
         keys_encoded = self.offset_mapping["keys"][offsets]
         indices = self.offset_mapping["indices"][offsets]
         unique_keys_encoded, inverse_indices = torch.unique_consecutive(keys_encoded, return_inverse=True)
-        unique_keys = self.mapper.decode(unique_keys_encoded.tolist())
+        unique_keys = self.mapper.decode(full_tensor(unique_keys_encoded).tolist())
         return [
             NodeInfo(
                 key=unique_keys[i], indices=self.node_mappings[unique_keys[i]].indices[indices[inverse_indices == i]]
@@ -248,40 +321,50 @@ class Dimension:
             return cached_offsets
 
         offsets = torch.empty(len(dimension), device=self.device, dtype=torch.long)
+
+        # NotImplementedError: Operator aten.index_put_.default does not have a sharding strategy registered.
+        # Set it locally as a workaround.
         for node in dimension.node_mappings.values():
-            offsets[node.offsets] = self.node_mappings[node.key].offsets[
-                self.node_mappings[node.key].inv_indices[node.indices.unbind(dim=1)]
-            ]
+            offsets[full_tensor(node.offsets)] = full_tensor(
+                self.node_mappings[node.key].offsets[
+                    self.node_mappings[node.key].inv_indices[node.indices.unbind(dim=1)]
+                ]
+            )
+
+        if self.device_mesh is not None:
+            offsets = DimMap({}).distribute(offsets, self.device_mesh)
 
         self._nodes_to_offsets_cache[cache_key] = offsets
         return offsets
 
     @timer.time("offsets_to_nodes")
     def offsets_to_nodes(self, offsets: torch.Tensor) -> "Dimension":
-        keys_encoded = self.offset_mapping["keys"][offsets]
-        indices = self.offset_mapping["indices"][offsets]
+        keys_encoded = full_tensor(self.offset_mapping["keys"][offsets])
+        indices = full_tensor(self.offset_mapping["indices"][offsets])
         if offsets.numel() == 0:
-            return self.__class__.empty(device=self.device)
+            return self.__class__.empty(device=self.device, device_mesh=self.device_mesh)
         unique_keys_encoded, inverse_indices = torch.unique(keys_encoded, sorted=False, return_inverse=True)
         unique_keys = self.mapper.decode(unique_keys_encoded.tolist())
         node_mappings = {
             key: Node(
                 key=key,
-                indices=self.node_mappings[key].indices[indices[inverse_indices == i]],
+                indices=full_tensor(self.node_mappings[key].indices)[indices[inverse_indices == i]],
                 offsets=(inverse_indices == i).nonzero(as_tuple=False).squeeze(-1),
-            )
+            ).to(device_mesh=self.device_mesh)
             for i, key in enumerate(unique_keys)
         }
-        return self.__class__._from_node_mappings(node_mappings=node_mappings, device=self.device, mapper=self.mapper)
+        return self.__class__._from_node_mappings(
+            node_mappings=node_mappings, device=self.device, device_mesh=self.device_mesh, mapper=self.mapper
+        )
 
     def __iter__(self) -> Iterator[NodeInfo]:
         """Iterate over any single node in the dimension."""
         if len(self) == 0:
             return
 
-        unique_keys_encoded = torch.unique(self.offset_mapping["keys"], sorted=False)
-        unique_keys = self.mapper.decode(unique_keys_encoded.tolist())
-        key_lookup = dict(zip(unique_keys_encoded.tolist(), unique_keys))
+        unique_keys_encoded = maybe_local_map(torch.unique)(self.offset_mapping["keys"], sorted=False)
+        unique_keys = self.mapper.decode(full_tensor(unique_keys_encoded).tolist())
+        key_lookup = dict(zip(full_tensor(unique_keys_encoded).tolist(), unique_keys))
 
         for offset in range(len(self)):
             key = key_lookup[int(self.offset_mapping["keys"][offset].item())]
@@ -294,13 +377,14 @@ class Dimension:
             for node in self.node_mappings.values()
             if predicate(NodeInfo(key=node.key, indices=node.indices))
         ]
-        return self.__class__.from_node_infos(filtered, device=self.device)
+        return self.__class__.from_node_infos(filtered, device=self.device, device_mesh=self.device_mesh)
 
     @timer.time("filter_keys")
     def filter_keys(self, predicate: Callable[[str], bool]) -> Self:
         return self.__class__.from_node_infos(
             [NodeInfo(key=key, indices=node.indices) for key, node in self.node_mappings.items() if predicate(key)],
             device=self.device,
+            device_mesh=self.device_mesh,
         )
 
     @timer.time("unique")
@@ -308,6 +392,7 @@ class Dimension:
         return self.__class__.from_node_infos(
             [NodeInfo(key=key, indices=node.indices.unique(dim=0)) for key, node in self.node_mappings.items()],
             device=self.device,
+            device_mesh=self.device_mesh,
         )
 
     def to(self, device: torch.device | str) -> Self:
@@ -354,12 +439,18 @@ class NodeIndexedTensor:
         dimensions: tuple[Sequence[NodeInfo] | Dimension, ...],
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
+        device_mesh: DeviceMesh | None = None,
     ) -> Self:
         shape = [
             len(dimension) if isinstance(dimension, Dimension) else sum([len(ni) for ni in dimension])
             for dimension in dimensions
         ]
-        return cls.from_data(torch.zeros(shape, dtype=dtype, device=device), dimensions)
+        return cls.from_data(
+            torch.zeros(shape, dtype=dtype, device=device)
+            if device_mesh is None
+            else DimMap({}).distribute(torch.zeros(shape, dtype=dtype, device=device), device_mesh),
+            dimensions,
+        )
 
     @timer.time("extend")
     def extend(self, dimension: Dimension, dim: int, data: torch.Tensor | None = None):
@@ -382,6 +473,7 @@ class NodeIndexedTensor:
         )
 
     @timer.time("__getitem__")
+    @torch.no_grad()
     def __getitem__(self, key: tuple[Dimension | None, ...] | Dimension | None) -> Self:
         """Index the tensor with Dimension selections for each dimension.
 
@@ -423,6 +515,7 @@ class NodeIndexedTensor:
         return self.__class__.from_data(data=data, dimensions=dimensions)
 
     @timer.time("__setitem__")
+    @torch.no_grad()
     def __setitem__(
         self,
         key: tuple[Dimension | None, ...] | Dimension | None,
@@ -455,12 +548,25 @@ class NodeIndexedTensor:
                 self.dimensions[dim].nodes_to_offsets(dimension)
                 if dimension is not None
                 else torch.arange(self.data.shape[dim], device=self.data.device, dtype=torch.long)
+                if not isinstance(self.data, DTensor)
+                else DimMap({}).distribute(
+                    torch.arange(self.data.shape[dim], device=self.data.device, dtype=torch.long),
+                    self.data.device_mesh,
+                )
             )
             view_shape = [1] * self.n_dims
             view_shape[dim] = offsets.shape[0]
             indexers.append(offsets.view(*view_shape))
 
-        self.data[tuple(indexers)] = value
+        if not isinstance(self.data, DTensor):
+            self.data[tuple(indexers)] = value
+        else:
+            self.data = DimMap({}).distribute(
+                full_tensor(self.data).index_put(
+                    tuple(full_tensor(indexer) for indexer in indexers), full_tensor(value)
+                ),
+                device_mesh=self.data.device_mesh,
+            )
         return self
 
     def __add__(self, other: Self):
