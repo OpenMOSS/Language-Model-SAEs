@@ -320,6 +320,7 @@ class SparseAutoEncoder(
                 Tuple of (feature_acts, hidden_pre) where both have shape (batch, d_sae) or (batch, seq_len, d_sae)
         """
         # Pass through encoder
+        x = x.to(self.W_E.dtype)
         hidden_pre = x @ self.W_E + self.b_E
 
         # Apply GLU if configured
