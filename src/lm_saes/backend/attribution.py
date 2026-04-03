@@ -11,10 +11,12 @@ from typing import (
 
 import einops
 import torch
+from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.backend.hooks import replace_biases_with_leaves
 from lm_saes.backend.indexed_tensor import Dimension, NodeIndexedMatrix, NodeIndexedVector, NodeInfo
+from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.distributed.ops import diag, nonzero, searchsorted
 from lm_saes.utils.misc import ensure_tokenized
 from lm_saes.utils.timer import timer
@@ -152,7 +154,7 @@ def retrieval_from_intermediates(
     ]
 
 
-@timer.profile("greedily_collect_attribution")
+@timer.time("greedily_collect_attribution")
 def greedily_collect_attribution(
     targets: Sequence[NodeInfoRef],
     sources: Sequence[NodeInfoRef],
@@ -488,17 +490,26 @@ def attribute(
         )
     ]
 
+    seq_indices = (
+        torch.arange(seq_len, device=model.device).unsqueeze(-1)
+        if model.device_mesh is None
+        else DTensor.from_local(
+            torch.arange(seq_len, device=model.device).unsqueeze(-1),
+            device_mesh=model.device_mesh,
+            placements=DimMap({}).placements(model.device_mesh),
+        )
+    )
     sources: list[NodeInfoRef] = [
         NodeInfoRef(
             key="hook_embed",
             ref=cache["hook_embed.post"],
-            indices=torch.arange(seq_len, device=model.device).unsqueeze(-1),
+            indices=seq_indices,
         )
     ] + [
         NodeInfoRef(
             key=replacement_module.cfg.hook_point_out + ".error",
             ref=cache[replacement_module.cfg.hook_point_out + ".error.post"],
-            indices=torch.arange(seq_len, device=model.device).unsqueeze(-1),
+            indices=seq_indices,
         )
         for (replacement_module) in replacement_modules_cast
     ]
