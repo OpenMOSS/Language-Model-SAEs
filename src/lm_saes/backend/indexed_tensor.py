@@ -303,7 +303,9 @@ class Dimension:
             for key in all_keys
         }
 
-        ret = self.__class__._from_node_mappings(node_mappings=node_mappings, device=self.device, mapper=self.mapper)
+        ret = self.__class__._from_node_mappings(
+            node_mappings=node_mappings, device=self.device, mapper=self.mapper, device_mesh=self.device_mesh
+        )
         assert len(ret) == len(self) + len(other), "Dimension length mismatch"
         return ret
 
@@ -619,7 +621,16 @@ class NodeIndexedVector(NodeIndexedTensor):
         data = self.data
         if ignore_indices is not None:
             data = data.clone()
-            data[ignore_indices] = float("-inf")
+            if not isinstance(data, DTensor):
+                data[ignore_indices] = float("-inf")
+            else:
+                data = DimMap({}).distribute(
+                    full_tensor(data).index_put(
+                        (full_tensor(ignore_indices),),
+                        torch.tensor(float("-inf"), device=data.device),
+                    ),
+                    device_mesh=data.device_mesh,
+                )
         topk_values, topk_indices = torch.topk(data, k=k, dim=0)
         return topk_values, self.dimensions[0].offsets_to_nodes(topk_indices)
 
