@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
-    Any,
+    Generic,
     Iterator,
     Sequence,
+    TypeVar,
     cast,
 )
 
@@ -36,14 +37,17 @@ class NodeInfoRef(NodeInfo):
     ref: torch.Tensor
 
 
-class NodeInfoQueue[T: NodeInfo]:
-    def __init__(self, node_infos: Sequence[T] = []):
+NodeInfoT = TypeVar("NodeInfoT", bound=NodeInfo)
+
+
+class NodeInfoQueue(Generic[NodeInfoT]):
+    def __init__(self, node_infos: Sequence[NodeInfoT] = ()):
         self.queue = list(node_infos)
 
-    def enqueue(self, node_info: Sequence[T]):
+    def enqueue(self, node_info: Sequence[NodeInfoT]):
         self.queue.extend(node_info)
 
-    def dequeue(self, batch_size: int) -> Sequence[T]:
+    def dequeue(self, batch_size: int) -> Sequence[NodeInfoT]:
         accumulated = 0
         results = []
         while accumulated < batch_size and len(self.queue) > 0:
@@ -56,31 +60,9 @@ class NodeInfoQueue[T: NodeInfo]:
                 accumulated += len(results[-1])
         return results
 
-    def iter(self, batch_size: int) -> Iterator[Sequence[T]]:
+    def iter(self, batch_size: int) -> Iterator[Sequence[NodeInfoT]]:
         while len(self.queue) > 0:
             yield self.dequeue(batch_size)
-
-
-class NodeInfoSet[T: NodeInfo]:
-    def __init__(self, node_infos: Sequence[T] = []):
-        self.node_dict: dict[Any, T] = {}
-        self.extend(node_infos)
-
-    def extend(self, node_infos: Sequence[T]):
-        for node_info in node_infos:
-            if node_info.key not in self.node_dict:
-                self.node_dict[node_info.key] = replace(node_info)
-            else:
-                self.node_dict[node_info.key].indices = torch.cat(
-                    [self.node_dict[node_info.key].indices, node_info.indices],
-                    dim=0,
-                )
-
-    def __len__(self) -> int:
-        return sum(len(node_info) for node_info in self.node_dict.values())
-
-    def to_list(self) -> list[T]:
-        return list(self.node_dict.values())
 
 
 @dataclass
