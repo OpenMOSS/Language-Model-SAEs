@@ -1,3 +1,9 @@
+## v2.0.0b24 (2026-04-04)
+
+### Fix
+
+- **circuit**: detach attributions & activations and fix some other dtensor issues; result consistency is not fixed
+
 ## v2.0.0b23 (2026-04-03)
 
 ### Fix
