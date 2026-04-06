@@ -282,6 +282,7 @@ class CrossLayerTranscoder(
                         x,
                         k=self.current_k,
                         dim=-1,
+                        abs=True,
                     )
 
             return topk_activation
@@ -314,6 +315,7 @@ class CrossLayerTranscoder(
                         x,
                         k=self.current_k,
                         dim=(-2, -1),
+                        abs=True,
                     )
 
             return layer_topk
@@ -345,6 +347,7 @@ class CrossLayerTranscoder(
                         x,
                         k=self.current_k * x.size(0),
                         dim=(0, -1),
+                        abs=True,
                     )
                     return result
 
@@ -379,6 +382,7 @@ class CrossLayerTranscoder(
                         x,
                         k=self.current_k * x.size(0),
                         dim=(0, -1, -2),
+                        abs=True,
                     )
                     return result
 

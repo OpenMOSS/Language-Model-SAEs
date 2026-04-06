@@ -11,8 +11,10 @@ from torch.distributed.tensor.placement_types import Replicate, Shard
 from torch.types import Number
 
 from lm_saes.utils.distributed.utils import all_gather_dict
+from lm_saes.utils.timer import timer
 
 
+@timer.time("full_tensor")
 def full_tensor(x: Tensor) -> Tensor:
     """Convert DTensor to regular Tensor if needed."""
     if isinstance(x, DTensor):
@@ -20,6 +22,7 @@ def full_tensor(x: Tensor) -> Tensor:
     return x
 
 
+@timer.time("to_local")
 def to_local(x: Tensor) -> Tensor:
     """Convert DTensor to local Tensor if needed."""
     if isinstance(x, DTensor):
@@ -127,12 +130,13 @@ def distributed_topk(
 ) -> Tuple[Float[DTensor, "batch n_layers d_sae"], Float[Tensor, ""]]: ...
 
 
+@timer.time("distributed_topk")
 def distributed_topk(
     x: Float[DTensor, "batch n_layers d_sae"],
     k: int,
     device_mesh: DeviceMesh,
     dim: Union[int, Tuple[int, ...]] = -1,
-    tolerance: int = 1,
+    tolerance: int = 0,
     max_iterations: int = 50,
     mesh_dim_name: str = "model",
     *,

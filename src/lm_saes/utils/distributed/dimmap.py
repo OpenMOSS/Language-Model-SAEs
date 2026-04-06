@@ -5,6 +5,8 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Placement, distribute_tensor
 from torch.distributed.tensor.placement_types import Replicate, Shard
 
+from lm_saes.utils.timer import timer
+
 
 class DimMap:
     """A class representing the mapping between tensor dimensions and device mesh dimensions.
@@ -118,6 +120,7 @@ class DimMap:
             for i, dim_size in enumerate(shape)
         )
 
+    @timer.time("distribute")
     def distribute(self, tensor: torch.Tensor, device_mesh: DeviceMesh) -> DTensor:
         """Distribute a tensor on the device mesh according to the dimension map.
 
@@ -131,6 +134,17 @@ class DimMap:
         placements = self.placements(device_mesh)
         return distribute_tensor(tensor, device_mesh, placements)
 
+    @timer.time("from_local")
+    def from_local(self, tensor: torch.Tensor, device_mesh: DeviceMesh) -> DTensor:
+        """Create a distributed tensor from a local tensor according to the dimension map.
+
+        Args:
+            tensor: The local tensor to create a distributed tensor from.
+            device_mesh: The device mesh to create the distributed tensor on.
+        """
+        return DTensor.from_local(tensor, device_mesh, placements=self.placements(device_mesh))
+
+    @timer.time("redistribute")
     def redistribute(self, tensor: DTensor) -> DTensor:
         """Redistribute a distributed tensor on the device mesh according to the dimension map.
 
