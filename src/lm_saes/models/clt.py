@@ -242,7 +242,7 @@ class CrossLayerTranscoder(
             "layertopk",
         ], f"Not implemented activation function {self.cfg.act_fn}"
         if self.cfg.act_fn.lower() == "relu":
-            return lambda x: x.gt(0).to(x.dtype)
+            return lambda x: x * x.gt(0).to(x.dtype)
         elif self.cfg.act_fn.lower() == "jumprelu":
             return JumpReLU(
                 self.cfg.jumprelu_threshold_window,
@@ -278,11 +278,11 @@ class CrossLayerTranscoder(
                 ):
                     from lm_saes.utils.math import topk
 
+                    x = x * x.gt(0).to(x.dtype)
                     return topk(
                         x,
                         k=self.current_k,
                         dim=-1,
-                        abs=True,
                     )
 
             return topk_activation
@@ -294,7 +294,6 @@ class CrossLayerTranscoder(
                 def layer_topk(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
-                    x = x * x.gt(0).to(x.dtype)
                     assert isinstance(x, DTensor), "x must be a DTensor when device_mesh is not None"
                     return distributed_topk(
                         x,
@@ -315,7 +314,6 @@ class CrossLayerTranscoder(
                         x,
                         k=self.current_k,
                         dim=(-2, -1),
-                        abs=True,
                     )
 
             return layer_topk
@@ -347,7 +345,6 @@ class CrossLayerTranscoder(
                         x,
                         k=self.current_k * x.size(0),
                         dim=(0, -1),
-                        abs=True,
                     )
                     return result
 
@@ -382,7 +379,6 @@ class CrossLayerTranscoder(
                         x,
                         k=self.current_k * x.size(0),
                         dim=(0, -1, -2),
-                        abs=True,
                     )
                     return result
 

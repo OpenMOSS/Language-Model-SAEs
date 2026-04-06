@@ -725,13 +725,13 @@ class SparseDictionary(HookedRootModule, ABC):
                         mesh_dim_name="model",
                     )
                 else:
+                    x = x * x.gt(0).to(x.dtype)
                     x = topk(
                         x,
                         k=self.current_k,
                         dim=-1,
-                        abs=True,
                     )
-                    return x * x.gt(0).to(x.dtype)
+                    return x
 
             return topk_activation
 
