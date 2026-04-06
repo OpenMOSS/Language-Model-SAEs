@@ -107,6 +107,7 @@ def compute_intermediates_attribution(
     return influence
 
 
+@timer.time("values")
 def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
     return [
         node_info.ref[:, *node_info.indices.unbind(dim=1)]
@@ -116,6 +117,7 @@ def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
     ]
 
 
+@timer.time("grads")
 def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
     return [
         (
@@ -138,14 +140,18 @@ def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
         node_info.ref.grad = None
 
 
-def retrieval_from_intermediates(
-    node_infos: Sequence[NodeInfo] | Dimension, intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]]
-):
+def retrieval_from_intermediates(dimension: Dimension, intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]]):
     return [
-        NodeInfoRef(key=node_info.key, indices=node_info.indices, ref=intermediate[0].ref)
-        for node_info in node_infos
+        NodeInfoRef(
+            key=node.key,
+            indices=node.indices
+            if dimension.device_mesh is None
+            else DimMap({}).from_local(node.indices, dimension.device_mesh),
+            ref=intermediate[0].ref,
+        )
+        for node in dimension.node_mappings.values()
         for intermediate in intermediates
-        if node_info.key == intermediate[0].key
+        if node.key == intermediate[0].key
     ]
 
 
