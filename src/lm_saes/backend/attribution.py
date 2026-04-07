@@ -18,7 +18,7 @@ from tqdm import tqdm
 from lm_saes.backend.hooks import replace_biases_with_leaves
 from lm_saes.backend.indexed_tensor import Dimension, NodeIndexedMatrix, NodeIndexedVector, NodeInfo
 from lm_saes.utils.distributed import DimMap, full_tensor
-from lm_saes.utils.distributed.ops import maybe_local_map, nonzero, searchsorted
+from lm_saes.utils.distributed.ops import batch_index, maybe_local_map, nonzero, searchsorted
 from lm_saes.utils.misc import ensure_tokenized
 from lm_saes.utils.timer import timer
 
@@ -109,28 +109,15 @@ def compute_intermediates_attribution(
 
 @timer.time("values")
 def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-    return [
-        node_info.ref[:, *node_info.indices.unbind(dim=1)]
-        if not isinstance(node_info.ref, DTensor)
-        else DimMap({}).redistribute(node_info.ref[:, *node_info.indices.unbind(dim=1)])  # pyright: ignore
-        for node_info in node_infos
-    ]
+    return [batch_index(node_info.ref, node_info.indices, n_batch_dims=1) for node_info in node_infos]
 
 
 @timer.time("grads")
 def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
     return [
-        (
-            node_info.ref.grad[:, *node_info.indices.unbind(dim=1)]
-            if not isinstance(node_info.ref.grad, DTensor)
-            else DimMap({}).redistribute(node_info.ref.grad[:, *node_info.indices.unbind(dim=1)])  # pyright: ignore
-        )
+        (batch_index(node_info.ref.grad, node_info.indices, n_batch_dims=1))
         if node_info.ref.grad is not None
-        else (
-            torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)])
-            if not isinstance(node_info.ref, DTensor)
-            else DimMap({}).redistribute(torch.zeros_like(node_info.ref[:, *node_info.indices.unbind(dim=1)]))  # pyright: ignore
-        )
+        else torch.zeros_like(batch_index(node_info.ref, node_info.indices, n_batch_dims=1))
         for node_info in node_infos
     ]
 
@@ -183,6 +170,8 @@ def greedily_collect_attribution(
     batch_size = targets[0].ref.shape[0]
 
     queue = NodeInfoQueue(targets)
+    with torch.no_grad():
+        source_values = [value.detach() for value in values(all_sources)]
 
     for target_batch in queue.iter(batch_size):
         clear_grads(all_sources)
@@ -194,11 +183,11 @@ def greedily_collect_attribution(
         attribution[Dimension.from_node_infos(target_batch), None] = torch.cat(
             [
                 einops.einsum(
-                    value.detach()[: root.shape[0]],
+                    value[: root.shape[0]],
                     grad.detach()[: root.shape[0]],
                     "batch n_elements ..., batch n_elements ... -> batch n_elements",
                 )
-                for value, grad in zip(values(all_sources), grads(all_sources))
+                for value, grad in zip(source_values, grads(all_sources))
             ],
             dim=1,
         ).to(attribution.data.dtype)
@@ -234,11 +223,11 @@ def greedily_collect_attribution(
             torch.cat(
                 [
                     einops.einsum(
-                        value.detach()[: root.shape[0]],
+                        value[: root.shape[0]],
                         grad.detach()[: root.shape[0]],
                         "batch n_elements ..., batch n_elements ... -> batch n_elements",
                     )
-                    for value, grad in zip(values(all_sources), grads(all_sources))
+                    for value, grad in zip(source_values, grads(all_sources))
                 ],
                 dim=1,
             ).to(attribution.data.dtype),
@@ -555,9 +544,9 @@ def attribute(
 
     intermediate_ref_map = {node_info.key: node_info.ref.detach() for node_info, _ in intermediates}
     activations = torch.cat(
-        [node_info.ref.detach()[0, *node_info.indices.unbind(dim=1)] for node_info in targets]
+        [batch_index(node_info.ref[0], node_info.indices) for node_info in targets]
         + [
-            intermediate_ref_map[node_info.key][0, *node_info.indices.unbind(dim=1)]
+            batch_index(intermediate_ref_map[node_info.key][0], node_info.indices)
             for node_info in collected_intermediates
         ]
         + [torch.ones_like(node_info.indices[:, 0], dtype=node_info.ref.dtype) for node_info in sources],
