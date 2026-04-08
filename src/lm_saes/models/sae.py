@@ -27,6 +27,7 @@ from lm_saes.models.sparse_dictionary import (
     register_sae_model,
 )
 from lm_saes.utils.distributed import DimMap
+from lm_saes.utils.timer import timer
 
 
 @register_sae_config("sae")
@@ -321,7 +322,8 @@ class SparseAutoEncoder(
         """
         # Pass through encoder
         x = x.to(self.W_E.dtype)
-        hidden_pre = x @ self.W_E + self.b_E
+        with timer.time("compute_hidden_pre"):
+            hidden_pre = x @ self.W_E + self.b_E
 
         # Apply GLU if configured
         if self.cfg.use_glu_encoder:
@@ -332,13 +334,15 @@ class SparseAutoEncoder(
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
-            hidden_pre = hidden_pre * self.decoder_norm()
+            with timer.time("scale_by_decoder_norm"):
+                hidden_pre = hidden_pre * self.decoder_norm()
 
         feature_acts = self.activation_function(hidden_pre)
 
         if self.cfg.sparsity_include_decoder_norm:
-            feature_acts = feature_acts / self.decoder_norm()
-            hidden_pre = hidden_pre / self.decoder_norm()
+            with timer.time("scale_back_by_decoder_norm"):
+                feature_acts = feature_acts / self.decoder_norm()
+                hidden_pre = hidden_pre / self.decoder_norm()
 
         if return_hidden_pre:
             return self.hook_feature_acts(feature_acts), hidden_pre

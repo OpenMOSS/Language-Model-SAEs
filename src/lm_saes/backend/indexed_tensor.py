@@ -654,7 +654,7 @@ class NodeIndexedVector(NodeIndexedTensor):
                 data = DimMap({}).from_local(
                     data.to_local().index_put(
                         (cast(DTensor, ignore_indices).to_local(),),
-                        torch.tensor(float("-inf"), device=data.device),
+                        torch.tensor(float("-inf"), device=data.device, dtype=data.dtype),
                     ),
                     device_mesh=data.device_mesh,
                 )
