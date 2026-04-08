@@ -43,7 +43,10 @@ def apply_saes(model: "TransformerLensLanguageModel", saes: list["SparseDictiona
         @timer.time(f"hook_in_{sae.cfg.sae_type}")
         def hook_in(tensor: torch.Tensor, hook: HookPoint):
             nonlocal x
-            x = sae.encode(tensor, hook_attn_scores=True)
+            if (
+                x is None
+            ):  # Only encode once to prevent re-encoding when a hook is called multiple times, like `blocks.0.ln1.hook_normalized` is called respectively for Q, K and V.
+                x = sae.encode(tensor, hook_attn_scores=True)
             return tensor
 
         @timer.time(f"hook_out_{sae.cfg.sae_type}")
