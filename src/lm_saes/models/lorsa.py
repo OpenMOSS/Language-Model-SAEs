@@ -36,7 +36,6 @@ from lm_saes.models.sparse_dictionary import (
 )
 from lm_saes.utils.distributed import DimMap, masked_fill, mesh_dim_size
 from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.timer import timer
 
 logger = get_distributed_logger("lorsa")
 
@@ -723,37 +722,31 @@ class LowRankSparseAttention(
         else:
             # Attention pattern
             # n_qk_heads batch q_pos k_pos
-            with timer.time("permute_q_k"):
-                q = q.permute(2, 0, 1, 3)  # (n_qk_heads, batch, seq_len, d_qk_head)
-                k = k.permute(2, 0, 3, 1)  # (n_qk_heads, batch, d_qk_head, seq_len)
-            with timer.time("compute_scores"):
-                scores = torch.einsum("nbqd,nbdk->nbqk", q, k) / self.attn_scale
-                scores = cast(
-                    torch.Tensor, self.hook_attn_score(self._apply_causal_mask(scores))
-                )  # (n_qk_heads, batch, q_pos, k_pos)
-            with timer.time("compute_pattern"):
-                # Hook called on (batch, n_qk_heads, q_pos, k_pos); permute back for internal use
-                pattern = cast(
-                    torch.Tensor,
-                    self.hook_attn_pattern(F.softmax(scores, dim=-1).permute(1, 0, 2, 3)).permute(1, 0, 2, 3),
-                )
-            with timer.time("compute_head_outputs"):
-                # Head outputs
-                hidden_pre = self._compute_head_outputs(pattern, v)
+            q = q.permute(2, 0, 1, 3)  # (n_qk_heads, batch, seq_len, d_qk_head)
+            k = k.permute(2, 0, 3, 1)  # (n_qk_heads, batch, d_qk_head, seq_len)
+            scores = torch.einsum("nbqd,nbdk->nbqk", q, k) / self.attn_scale
+            scores = cast(
+                torch.Tensor, self.hook_attn_score(self._apply_causal_mask(scores))
+            )  # (n_qk_heads, batch, q_pos, k_pos)
+            # Hook called on (batch, n_qk_heads, q_pos, k_pos); permute back for internal use
+            pattern = cast(
+                torch.Tensor,
+                self.hook_attn_pattern(F.softmax(scores, dim=-1).permute(1, 0, 2, 3)).permute(1, 0, 2, 3),
+            )
+            # Head outputs
+            hidden_pre = self._compute_head_outputs(pattern, v)
 
         hidden_pre = self.hook_hidden_pre(hidden_pre)
 
         # Scale feature activations by decoder norm if configured
         if self.cfg.sparsity_include_decoder_norm:
-            with timer.time("scale_by_decoder_norm"):
-                hidden_pre = hidden_pre * self.decoder_norm()
+            hidden_pre = hidden_pre * self.decoder_norm()
 
         feature_acts = self.activation_function(hidden_pre)
 
         if self.cfg.sparsity_include_decoder_norm:
-            with timer.time("scale_back_by_decoder_norm"):
-                feature_acts = feature_acts / self.decoder_norm()
-                hidden_pre = hidden_pre / self.decoder_norm()
+            feature_acts = feature_acts / self.decoder_norm()
+            hidden_pre = hidden_pre / self.decoder_norm()
 
         return_values: list[torch.Tensor] = [self.hook_feature_acts(feature_acts)]
         if return_hidden_pre:
