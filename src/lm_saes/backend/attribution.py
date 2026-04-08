@@ -18,7 +18,7 @@ from tqdm import tqdm
 from lm_saes.backend.hooks import replace_biases_with_leaves
 from lm_saes.backend.indexed_tensor import Dimension, NodeIndexedMatrix, NodeIndexedVector, NodeInfo
 from lm_saes.utils.distributed import DimMap, full_tensor
-from lm_saes.utils.distributed.ops import batch_index, maybe_local_map, nonzero, searchsorted
+from lm_saes.utils.distributed.ops import maybe_local_map, multi_batch_index, nonzero, searchsorted
 from lm_saes.utils.misc import ensure_tokenized
 from lm_saes.utils.timer import timer
 
@@ -109,17 +109,23 @@ def compute_intermediates_attribution(
 
 @timer.time("values")
 def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-    return [batch_index(node_info.ref, node_info.indices, n_batch_dims=1) for node_info in node_infos]
+    return multi_batch_index(
+        [node_info.ref for node_info in node_infos],
+        [node_info.indices for node_info in node_infos],
+        n_batch_dims=1,
+    )
 
 
 @timer.time("grads")
 def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-    return [
-        (batch_index(node_info.ref.grad, node_info.indices, n_batch_dims=1))
-        if node_info.ref.grad is not None
-        else torch.zeros_like(batch_index(node_info.ref, node_info.indices, n_batch_dims=1))
-        for node_info in node_infos
-    ]
+    return multi_batch_index(
+        [
+            node_info.ref.grad if node_info.ref.grad is not None else torch.zeros_like(node_info.ref)
+            for node_info in node_infos
+        ],
+        [node_info.indices for node_info in node_infos],
+        n_batch_dims=1,
+    )
 
 
 def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
@@ -544,11 +550,14 @@ def attribute(
 
     intermediate_ref_map = {node_info.key: node_info.ref.detach() for node_info, _ in intermediates}
     activations = torch.cat(
-        [batch_index(node_info.ref[0], node_info.indices) for node_info in targets]
-        + [
-            batch_index(intermediate_ref_map[node_info.key][0], node_info.indices)
-            for node_info in collected_intermediates
-        ]
+        multi_batch_index(
+            [node_info.ref[0] for node_info in targets],
+            [node_info.indices for node_info in targets],
+        )
+        + multi_batch_index(
+            [intermediate_ref_map[node_info.key][0] for node_info in collected_intermediates],
+            [node_info.indices for node_info in collected_intermediates],
+        )
         + [torch.ones_like(node_info.indices[:, 0], dtype=node_info.ref.dtype) for node_info in sources],
         dim=0,
     )

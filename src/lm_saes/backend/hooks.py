@@ -6,6 +6,7 @@ import torch.nn as nn
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
 from lm_saes.backend.tl_addons import mount_hooked_modules
+from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
     from lm_saes.backend.language_model import TransformerLensLanguageModel
@@ -39,11 +40,13 @@ def apply_saes(model: "TransformerLensLanguageModel", saes: list["SparseDictiona
         x = None
         hook_error = HookPoint()
 
+        @timer.time(f"hook_in_{sae.cfg.sae_type}")
         def hook_in(tensor: torch.Tensor, hook: HookPoint):
             nonlocal x
             x = sae.encode(tensor, hook_attn_scores=True)
             return tensor
 
+        @timer.time(f"hook_out_{sae.cfg.sae_type}")
         def hook_out(tensor: torch.Tensor, hook: HookPoint):
             nonlocal x
             assert x is not None, "hook_in must be called before hook_out."

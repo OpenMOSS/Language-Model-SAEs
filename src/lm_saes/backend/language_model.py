@@ -46,6 +46,7 @@ from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import pad_and_truncate_tokens
+from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
     from lm_saes.models.sparse_dictionary import SparseDictionary
@@ -408,6 +409,7 @@ class TransformerLensLanguageModel(LanguageModel):
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
+    @timer.time("to_tensor")
     def _to_tensor(self, input: torch.Tensor) -> torch.Tensor:
         if isinstance(input, DTensor):
             assert input.placements == tuple(DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)))
@@ -415,6 +417,7 @@ class TransformerLensLanguageModel(LanguageModel):
         else:
             return input
 
+    @timer.time("to_dtensor")
     def _to_dtensor(self, input: torch.Tensor) -> torch.Tensor:
         return (
             DTensor.from_local(
