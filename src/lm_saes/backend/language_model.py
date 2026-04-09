@@ -530,6 +530,8 @@ class TransformerLensLanguageModel(LanguageModel):
         desired_logit_prob: float = 0.95,
         batch_size: int = 512,
         max_features: int | None = None,
+        enable_qk_tracing: bool = False,
+        qk_top_fraction: float = 0.6,
     ):
         return attribute(
             self,
@@ -539,6 +541,8 @@ class TransformerLensLanguageModel(LanguageModel):
             desired_logit_prob,
             batch_size,
             max_features,
+            enable_qk_tracing,
+            qk_top_fraction,
         )
 
     def qk_trace(

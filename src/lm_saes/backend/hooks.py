@@ -141,7 +141,7 @@ def replace_biases_with_leaves(
         saved_state.append((module, attr_name, param.data.clone(), False))
         leaf = _make_bias_leaf(param.data, batch_size, seq_len)
         bias_leaves[cache_key] = leaf
-        param.zero_()
+        param.data.zero_()
 
         def _hook(tensor: torch.Tensor, hook: HookPoint, _leaf: torch.Tensor = leaf) -> torch.Tensor:
             return tensor + _leaf

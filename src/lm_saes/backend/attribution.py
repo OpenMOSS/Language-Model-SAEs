@@ -75,6 +75,7 @@ class AttributionResult:
     prompt_tokens: list[str] = field(default_factory=list)
     logit_token_ids: list[int] = field(default_factory=list)
     logit_tokens: list[str] = field(default_factory=list)
+    qk_trace_results: list[tuple[NodeInfo, list[QKTraceResult]]] = field(default_factory=list)
 
 
 def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
@@ -365,18 +366,32 @@ class QKTraceRequest:
     def dedup_key(self) -> tuple[str, int, int, int]:
         return (self.lorsa.cfg.hook_point_out, self.head_idx, self.q_pos, self.k_pos)
 
-    @classmethod
-    def from_lorsa_feature(cls, node_info: NodeInfo, lorsa: LowRankSparseAttention, attn_scores: torch.Tensor):
-        head_idx = node_info.indices[0][1] // lorsa.cfg.ov_group_size
-        attn_score = attn_scores[head_idx, 0, :, :]  # (q_pos, k_pos)
-        q_pos, k_pos = torch.unravel_index(attn_score.argmax(), attn_score.shape)
-        return cls(lorsa, int(head_idx), int(q_pos.item()), int(k_pos.item()))
-
 
 @dataclass
 class QKTraceResult:
     nodes: tuple[NodeInfo, NodeInfo]
     attribution: float
+
+
+def lorsa_node_info_to_qk_requests(
+    node_info: NodeInfo,
+    lorsa: LowRankSparseAttention,
+    attn_scores: torch.Tensor,
+) -> list[QKTraceRequest]:
+    """Build one ``QKTraceRequest`` per feature row in ``node_info.indices``.
+
+    ``node_info.indices`` is shaped ``(n_features, 2)`` where column 1 is the
+    LORSA feature index. Each row becomes a separate request, so callers do
+    not need to pre-split multi-feature ``NodeInfo`` objects.
+    """
+    indices = full_tensor(node_info.indices)
+    requests: list[QKTraceRequest] = []
+    for row_idx in range(indices.shape[0]):
+        head_idx = int(indices[row_idx, 1].item()) // lorsa.cfg.ov_group_size
+        attn_score = attn_scores[head_idx, 0, :, :]  # (q_pos, k_pos)
+        q_pos, k_pos = torch.unravel_index(attn_score.argmax(), attn_score.shape)
+        requests.append(QKTraceRequest(lorsa, int(head_idx), int(q_pos.item()), int(k_pos.item())))
+    return requests
 
 
 @timer.time("collect_cache")
@@ -464,6 +479,8 @@ def attribute(
     desired_logit_prob: float = 0.95,
     batch_size: int = 512,
     max_features: int | None = None,
+    enable_qk_tracing: bool = False,
+    qk_top_fraction: float = 0.6,
 ):
     from lm_saes.models.lorsa import LowRankSparseAttention
     from lm_saes.models.molt import MixtureOfLinearTransform
@@ -474,7 +491,10 @@ def attribute(
         list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
     )
     batch_logits, cache = collect_cache(
-        model, einops.repeat(tokens, "n -> b n", b=batch_size), replacement_modules_cast
+        model,
+        einops.repeat(tokens, "n -> b n", b=batch_size),
+        replacement_modules_cast,
+        with_bias_leaves=enable_qk_tracing,
     )
 
     with torch.no_grad():
@@ -570,6 +590,42 @@ def attribute(
     prompt_token_ids = full_tensor(tokens).detach().cpu().tolist()
     logit_token_ids = full_tensor(top_idx).detach().cpu().tolist()
 
+    qk_trace_results: list[tuple[NodeInfo, list[QKTraceResult]]] = []
+    if enable_qk_tracing:
+        lorsa_features = collected_intermediates.filter_keys(
+            lambda key: any(
+                isinstance(rm, LowRankSparseAttention) and key == rm.cfg.hook_point_out + ".sae.hook_feature_acts"
+                for rm in replacement_modules_cast
+            )
+        )
+
+        if len(lorsa_features) > 0:
+            logits_dimension = Dimension.from_node_infos(targets)
+            intermediates_attribution = compute_intermediates_attribution(
+                attribution, logits_dimension, collected_intermediates, max_iter
+            )
+
+            reduction_weight_vec = NodeIndexedVector.from_data(top_p, dimensions=(logits_dimension,))
+            lorsa_influence = reduction_weight_vec @ intermediates_attribution[None, lorsa_features]
+            _, top_lorsa_features = lorsa_influence.topk(k=max(1, int(len(lorsa_features) * qk_top_fraction)))
+
+            top_lorsa_node_infos = list(top_lorsa_features)
+            unique_requests, request_indices = features_to_qk_requests(
+                top_lorsa_node_infos, replacement_modules_cast, cache
+            )
+            unique_results = qk_trace_from_request(
+                model=model,
+                requests=unique_requests,
+                cache=cache,
+                replacement_modules=replacement_modules_cast,
+                topk=10,
+            )
+            qk_results = [unique_results[idx] for idx in request_indices]
+
+            qk_trace_results = cast(
+                list[tuple[NodeInfo, list[QKTraceResult]]], list(zip(top_lorsa_node_infos, qk_results))
+            )
+
     return AttributionResult(
         activations=activations_vec,
         attribution=attribution,
@@ -579,7 +635,43 @@ def attribute(
         prompt_tokens=[model.tokenizer.decode([token_id]) for token_id in prompt_token_ids],
         logit_token_ids=logit_token_ids,
         logit_tokens=[model.tokenizer.decode([token_id]) for token_id in logit_token_ids],
+        qk_trace_results=qk_trace_results,
     )
+
+
+def features_to_qk_requests(
+    lorsa_features: Sequence[NodeInfo],
+    replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
+    cache: dict[str, torch.Tensor],
+) -> tuple[list[QKTraceRequest], list[int]]:
+    from lm_saes.models.lorsa import LowRankSparseAttention
+
+    rm_mapping = {
+        replacement_module.cfg.hook_point_out: replacement_module for replacement_module in replacement_modules
+    }
+
+    requests: list[QKTraceRequest] = []
+    for lorsa_feature in lorsa_features:
+        hp = lorsa_feature.key.replace(".sae.hook_feature_acts", "")
+        requests.extend(
+            lorsa_node_info_to_qk_requests(
+                lorsa_feature,
+                cast(LowRankSparseAttention, rm_mapping[hp]),
+                cache[hp + ".sae.hook_attn_score"],
+            )
+        )
+
+    unique_map: dict[tuple[str, int, int, int], int] = {}
+    unique_requests: list[QKTraceRequest] = []
+    request_indices: list[int] = []
+    for req in requests:
+        key = req.dedup_key
+        if key not in unique_map:
+            unique_map[key] = len(unique_requests)
+            unique_requests.append(req)
+        request_indices.append(unique_map[key])
+
+    return unique_requests, request_indices
 
 
 @timer.profile("qk_trace")
@@ -602,29 +694,8 @@ def qk_trace(
     _, cache = collect_cache(
         model, einops.repeat(tokens, "n -> b n", b=batch_size * topk), replacement_modules_cast, with_bias_leaves=True
     )
-    # print(cache["blocks.24.hook_attn_out.sae.hook_feature_acts.post"][0][2].nonzero())
-    rm_mapping = {
-        replacement_module.cfg.hook_point_out: replacement_module for replacement_module in replacement_modules_cast
-    }
-    requests = [
-        QKTraceRequest.from_lorsa_feature(
-            lorsa_feature,
-            cast(LowRankSparseAttention, rm_mapping[lorsa_feature.key]),
-            cache[lorsa_feature.key + ".sae.hook_attn_score"],
-        )
-        for lorsa_feature in lorsa_features
-    ]
 
-    unique_map: dict[tuple[str, int, int, int], int] = {}
-    unique_requests: list[QKTraceRequest] = []
-    request_indices: list[int] = []
-    for req in requests:
-        key = req.dedup_key
-        if key not in unique_map:
-            unique_map[key] = len(unique_requests)
-            unique_requests.append(req)
-        request_indices.append(unique_map[key])
-
+    unique_requests, request_indices = features_to_qk_requests(lorsa_features, replacement_modules_cast, cache)
     unique_results = qk_trace_from_request(model, unique_requests, cache, replacement_modules_cast, topk)
     return [unique_results[idx] for idx in request_indices]
 
@@ -684,71 +755,104 @@ def qk_trace_from_request(
 
     sources_dimension = Dimension.from_node_infos(sources)
     results = []
-    for batch_start in range(0, len(requests), bwd_batch_size):
+    source_refs = [s.ref for s in sources]
+    source_indices = [s.indices for s in sources]
+
+    for batch_start in tqdm(range(0, len(requests), bwd_batch_size), desc="QK trace"):
         request_batch = requests[batch_start : batch_start + bwd_batch_size]
-        clear_grads(sources)
-        bwd_scores = torch.stack(
-            [
-                cache[request.lorsa.cfg.hook_point_out + ".sae.hook_attn_score"][
-                    request.head_idx, batch_idx * topk : (batch_idx + 1) * topk, request.q_pos, request.k_pos
-                ]
-                for batch_idx, request in enumerate(request_batch)
-            ],
-            dim=0,
-        )
-        bwd_scores.sum().backward(create_graph=True, retain_graph=True)
-        first_order_gradients = torch.cat(
-            [
-                einops.einsum(
-                    value.detach(),
-                    grad,
-                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                )
-                for value, grad in zip(values(sources), grads(sources))
-            ],
-            dim=1,
-        )  # fwd_batch_size, n_sources
-        second_sources = []
-        all_topk_indices = []
-        for batch_idx in range(len(request_batch)):
-            _, topk_indices = first_order_gradients[batch_idx * topk].topk(topk)  # get the first row of each request
-            second_sources.extend(sources_dimension.offsets_to_nodes(topk_indices))
-            all_topk_indices.append(topk_indices)
-
-        all_topk_indices = torch.stack(all_topk_indices, dim=0)  # (len(request_batch), topk)
-        batch_row_indices = torch.arange(len(request_batch), device=model.device).unsqueeze(1) * topk + torch.arange(
-            topk, device=model.device
-        ).unsqueeze(0)  # (len(request_batch), topk)
-        second_bwd_values = first_order_gradients[batch_row_indices, all_topk_indices].reshape(-1)
-        clear_grads(sources)
-        second_bwd_values.sum().backward(retain_graph=True)
-
-        second_order_gradients = torch.cat(
-            [
-                einops.einsum(
-                    value.detach(),
-                    grad,
-                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                )
-                for value, grad in zip(values(sources), grads(sources))
-            ],
-            dim=1,
-        )  # fwd_batch_size, n_sources
-
-        for batch_idx in range(len(request_batch)):
-            batch_results = []
-            for k_idx in range(topk):
-                idx = batch_idx * topk + k_idx
-                topk_values, topk_indices = second_order_gradients[idx].topk(topk)
-                topk_nodes = list(sources_dimension.offsets_to_nodes(topk_indices))
-                batch_results.append(
-                    QKTraceResult(
-                        nodes=(second_sources[idx], topk_nodes[k_idx]),
-                        attribution=topk_values[k_idx].item(),
+        with timer.time("qk_trace.build_bwd_scores"):
+            bwd_scores = torch.stack(
+                [
+                    cache[request.lorsa.cfg.hook_point_out + ".sae.hook_attn_score"][
+                        request.head_idx, batch_idx * topk : (batch_idx + 1) * topk, request.q_pos, request.k_pos
+                    ]
+                    for batch_idx, request in enumerate(request_batch)
+                ],
+                dim=0,
+            )
+        with timer.time("qk_trace.first_backward"):
+            first_grads_raw = torch.autograd.grad(
+                bwd_scores.sum(),
+                source_refs,
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True,
+            )
+            first_grads_raw = [
+                g if g is not None else torch.zeros_like(r) for g, r in zip(first_grads_raw, source_refs)
+            ]
+        with timer.time("qk_trace.first_order_einsum"):
+            first_grads_indexed = multi_batch_index(first_grads_raw, source_indices, n_batch_dims=1)
+            first_order_gradients = torch.cat(
+                [
+                    einops.einsum(
+                        value.detach(),
+                        grad,
+                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
                     )
-                )
+                    for value, grad in zip(values(sources), first_grads_indexed)
+                ],
+                dim=1,
+            )  # fwd_batch_size, n_sources
+        with timer.time("qk_trace.first_topk"):
+            second_sources = []
+            all_topk_indices = []
+            for batch_idx in range(len(request_batch)):
+                _, topk_indices = first_order_gradients[batch_idx * topk].topk(
+                    topk
+                )  # get the first row of each request
+                second_sources.extend(sources_dimension.offsets_to_nodes(topk_indices))
+                all_topk_indices.append(topk_indices)
 
-            batch_results.sort(key=lambda x: x.attribution, reverse=True)
-            results.append(batch_results[:topk])
+            all_topk_indices = torch.stack(all_topk_indices, dim=0)  # (len(request_batch), topk)
+            batch_row_indices = torch.arange(len(request_batch), device=model.device).unsqueeze(
+                1
+            ) * topk + torch.arange(topk, device=model.device).unsqueeze(0)  # (len(request_batch), topk)
+            second_bwd_values = first_order_gradients[batch_row_indices, all_topk_indices].reshape(-1)
+        with timer.time("qk_trace.second_backward"):
+            second_grads_raw = torch.autograd.grad(
+                second_bwd_values.sum(),
+                source_refs,
+                retain_graph=True,
+                allow_unused=True,
+            )
+            # release the second-order graph held by first_grads_* before computing the result
+            del first_grads_raw, first_grads_indexed, first_order_gradients, second_bwd_values, bwd_scores
+            second_grads_raw = [
+                g if g is not None else torch.zeros_like(r) for g, r in zip(second_grads_raw, source_refs)
+            ]
+        with timer.time("qk_trace.second_order_einsum"):
+            second_grads_indexed = multi_batch_index(second_grads_raw, source_indices, n_batch_dims=1)
+            second_order_gradients = torch.cat(
+                [
+                    einops.einsum(
+                        value.detach(),
+                        grad,
+                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                    )
+                    for value, grad in zip(values(sources), second_grads_indexed)
+                ],
+                dim=1,
+            )  # fwd_batch_size, n_sources
+            del second_grads_raw, second_grads_indexed
+
+        with timer.time("qk_trace.collect_results"):
+            for batch_idx in range(len(request_batch)):
+                batch_results = []
+                for k_idx in range(topk):
+                    idx = batch_idx * topk + k_idx
+                    topk_values, topk_indices = second_order_gradients[idx].topk(topk)
+                    topk_nodes = list(sources_dimension.offsets_to_nodes(topk_indices))
+                    batch_results.append(
+                        QKTraceResult(
+                            nodes=(second_sources[idx], topk_nodes[k_idx]),
+                            attribution=topk_values[k_idx].item(),
+                        )
+                    )
+
+                batch_results.sort(key=lambda x: x.attribution, reverse=True)
+                results.append(batch_results[:topk])
+
+            del second_order_gradients
 
     return results
