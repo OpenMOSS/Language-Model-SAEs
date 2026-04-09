@@ -551,7 +551,7 @@ def attribute(
     intermediate_ref_map = {node_info.key: node_info.ref.detach() for node_info, _ in intermediates}
     activations = torch.cat(
         multi_batch_index(
-            [node_info.ref[0] for node_info in targets],
+            [node_info.ref[0].detach() for node_info in targets],
             [node_info.indices for node_info in targets],
         )
         + multi_batch_index(
