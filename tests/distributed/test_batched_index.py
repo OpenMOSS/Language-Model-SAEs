@@ -1,0 +1,267 @@
+import pytest
+import torch
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import distribute_tensor
+from torch.distributed.tensor.placement_types import Replicate, Shard
+
+from lm_saes.testing import distributed_test
+from lm_saes.utils.distributed.ops import batch_index
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
+def test_batch_index_no_batch():
+    device_mesh = init_device_mesh("cuda", (2,), mesh_dim_names=("model",))
+
+    x = distribute_tensor(
+        torch.tensor(
+            [
+                [0, 1, 2, 3],
+                [4, 5, 6, 7],
+                [8, 9, 10, 11],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+        device_mesh,
+        [Shard(1)],
+    ).requires_grad_(True)
+    indices = distribute_tensor(torch.tensor([[0, 0], [1, 2], [2, 3]], device="cuda"), device_mesh, [Replicate()])
+
+    result = batch_index(x, indices)
+    result.sum().backward()
+
+    assert torch.allclose(result.full_tensor(), torch.tensor([0, 6, 11], device="cuda", dtype=torch.float32))
+    assert torch.allclose(
+        x.grad.full_tensor(),
+        torch.tensor(
+            [
+                [1, 0, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
+def test_batch_index_with_batch():
+    device_mesh = init_device_mesh("cuda", (2,), mesh_dim_names=("model",))
+
+    x = distribute_tensor(
+        torch.tensor(
+            [
+                [0, 1, 2, 3],
+                [4, 5, 6, 7],
+                [8, 9, 10, 11],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+        device_mesh,
+        [Shard(1)],
+    ).requires_grad_(True)
+    indices = distribute_tensor(torch.tensor([[0], [1], [2]], device="cuda"), device_mesh, [Replicate()])
+
+    result = batch_index(x, indices, n_batch_dims=1)
+    result.sum().backward()
+
+    assert torch.allclose(
+        result.full_tensor(), torch.tensor([[0, 1, 2], [4, 5, 6], [8, 9, 10]], device="cuda", dtype=torch.float32)
+    )
+    assert torch.allclose(
+        x.grad.full_tensor(),
+        torch.tensor(
+            [
+                [1, 1, 1, 0],
+                [1, 1, 1, 0],
+                [1, 1, 1, 0],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
+def test_batch_index_no_full_index():
+    device_mesh = init_device_mesh("cuda", (2,), mesh_dim_names=("model",))
+
+    x = distribute_tensor(
+        torch.tensor(
+            [
+                [0, 1, 2, 3],
+                [4, 5, 6, 7],
+                [8, 9, 10, 11],
+                [12, 13, 14, 15],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+        device_mesh,
+        [Shard(0)],
+    ).requires_grad_(True)
+    indices = distribute_tensor(torch.tensor([[0], [2], [3]], device="cuda"), device_mesh, [Replicate()])
+
+    result = batch_index(x, indices, n_batch_dims=0)
+    result.sum().backward()
+
+    assert torch.allclose(
+        result.full_tensor(),
+        torch.tensor([[0, 1, 2, 3], [8, 9, 10, 11], [12, 13, 14, 15]], device="cuda", dtype=torch.float32),
+    )
+    assert torch.allclose(
+        x.grad.full_tensor(),
+        torch.tensor(
+            [
+                [1, 1, 1, 1],
+                [0, 0, 0, 0],
+                [1, 1, 1, 1],
+                [1, 1, 1, 1],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=4, backend="nccl")
+def test_batch_index_shard2():
+    device_mesh = init_device_mesh("cuda", (2, 2), mesh_dim_names=("a", "b"))
+
+    x = distribute_tensor(
+        torch.tensor(
+            [
+                [0, 1, 2, 3],
+                [4, 5, 6, 7],
+                [8, 9, 10, 11],
+                [12, 13, 14, 15],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+        device_mesh,
+        [Shard(0), Shard(1)],
+    ).requires_grad_(True)
+
+    indices = distribute_tensor(
+        torch.tensor([[0, 1], [0, 3], [2, 2]], device="cuda"), device_mesh, [Replicate(), Replicate()]
+    )
+
+    result = batch_index(x, indices)
+    result.sum().backward()
+
+    assert torch.allclose(
+        result.full_tensor(),
+        torch.tensor([1, 3, 10], device="cuda", dtype=torch.float32),
+    )
+    assert torch.allclose(
+        x.grad.full_tensor(),
+        torch.tensor(
+            [
+                [0, 1, 0, 1],
+                [0, 0, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 0],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
+def test_batch_index_dim3():
+    device_mesh = init_device_mesh("cuda", (2,), mesh_dim_names=("model",))
+
+    x = distribute_tensor(
+        torch.tensor(
+            [
+                [[0, 1], [2, 3]],
+                [[4, 5], [6, 7]],
+                [[8, 9], [10, 11]],
+                [[12, 13], [14, 15]],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+        device_mesh,
+        [Shard(2)],
+    ).requires_grad_(True)
+
+    indices = distribute_tensor(torch.tensor([[0, 1], [1, 0], [1, 1]], device="cuda"), device_mesh, [Replicate()])
+
+    result = batch_index(x, indices, n_batch_dims=1)
+    result.sum().backward()
+
+    print(result.full_tensor())
+
+    assert torch.allclose(
+        result.full_tensor(),
+        torch.tensor([[1, 2, 3], [5, 6, 7], [9, 10, 11], [13, 14, 15]], device="cuda", dtype=torch.float32),
+    )
+    assert torch.allclose(
+        x.grad.full_tensor(),
+        torch.tensor(
+            [
+                [[0, 1], [1, 1]],
+                [[0, 1], [1, 1]],
+                [[0, 1], [1, 1]],
+                [[0, 1], [1, 1]],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
+def test_batch_index_dim3_no_reserve_order():
+    device_mesh = init_device_mesh("cuda", (2,), mesh_dim_names=("model",))
+
+    x = distribute_tensor(
+        torch.tensor(
+            [
+                [[0, 1], [2, 3]],
+                [[4, 5], [6, 7]],
+                [[8, 9], [10, 11]],
+                [[12, 13], [14, 15]],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+        device_mesh,
+        [Shard(2)],
+    ).requires_grad_(True)
+
+    indices = distribute_tensor(torch.tensor([[0, 1], [1, 0], [1, 1]], device="cuda"), device_mesh, [Replicate()])
+
+    result = batch_index(x, indices, n_batch_dims=1, preserve_order=False)
+    result.sum().backward()
+
+    print(result.full_tensor())
+
+    assert torch.allclose(
+        result.full_tensor(),
+        torch.tensor([[2, 1, 3], [6, 5, 7], [10, 9, 11], [14, 13, 15]], device="cuda", dtype=torch.float32),
+    )
+    assert torch.allclose(
+        x.grad.full_tensor(),
+        torch.tensor(
+            [
+                [[0, 1], [1, 1]],
+                [[0, 1], [1, 1]],
+                [[0, 1], [1, 1]],
+                [[0, 1], [1, 1]],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        ),
+    )
