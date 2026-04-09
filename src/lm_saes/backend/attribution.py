@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import (
     TYPE_CHECKING,
     Generic,
     Iterator,
+    Self,
     Sequence,
     TypeVar,
     cast,
@@ -75,7 +76,7 @@ class AttributionResult:
     prompt_tokens: list[str] = field(default_factory=list)
     logit_token_ids: list[int] = field(default_factory=list)
     logit_tokens: list[str] = field(default_factory=list)
-    qk_trace_results: list[tuple[NodeInfo, list[QKTraceResult]]] = field(default_factory=list)
+    qk_trace_results: list[tuple[NodeInfo, list[QKTraceResult]]] | None = None
 
     def to(self, device: torch.device | str) -> AttributionResult:
         return AttributionResult(
@@ -85,6 +86,14 @@ class AttributionResult:
             probs=self.probs.to(device),
             prompt_token_ids=self.prompt_token_ids,
             prompt_tokens=self.prompt_tokens,
+            logit_token_ids=self.logit_token_ids,
+            logit_tokens=self.logit_tokens,
+            qk_trace_results=[
+                (node_info.to(device), [qk_trace_result.to(device) for qk_trace_result in qk_trace_results])
+                for node_info, qk_trace_results in self.qk_trace_results
+            ]
+            if self.qk_trace_results is not None
+            else None,
         )
 
     def full_tensor(self) -> AttributionResult:
@@ -97,6 +106,12 @@ class AttributionResult:
             prompt_tokens=self.prompt_tokens,
             logit_token_ids=self.logit_token_ids,
             logit_tokens=self.logit_tokens,
+            qk_trace_results=[
+                (node_info.full_tensor(), [qk_trace_result.full_tensor() for qk_trace_result in qk_trace_results])
+                for node_info, qk_trace_results in self.qk_trace_results
+            ]
+            if self.qk_trace_results is not None
+            else None,
         )
 
 
@@ -393,6 +408,12 @@ class QKTraceRequest:
 class QKTraceResult:
     nodes: tuple[NodeInfo, NodeInfo]
     attribution: float
+
+    def to(self, device: torch.device | str) -> Self:
+        return replace(self, nodes=(self.nodes[0].to(device), self.nodes[1].to(device)))
+
+    def full_tensor(self) -> Self:
+        return replace(self, nodes=(self.nodes[0].full_tensor(), self.nodes[1].full_tensor()))
 
 
 def lorsa_node_info_to_qk_requests(

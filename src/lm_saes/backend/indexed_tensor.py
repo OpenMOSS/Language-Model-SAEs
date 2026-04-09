@@ -104,6 +104,12 @@ class NodeInfo:
         for i in range(len(self)):
             yield self[slice(i, i + 1)]
 
+    def to(self, device: torch.device | str) -> Self:
+        return replace(self, indices=self.indices.to(device))
+
+    def full_tensor(self) -> Self:
+        return replace(self, indices=full_tensor(self.indices))
+
 
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
     inv_indices = torch.empty(
