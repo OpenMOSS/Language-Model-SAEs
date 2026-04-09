@@ -77,6 +77,28 @@ class AttributionResult:
     logit_tokens: list[str] = field(default_factory=list)
     qk_trace_results: list[tuple[NodeInfo, list[QKTraceResult]]] = field(default_factory=list)
 
+    def to(self, device: torch.device | str) -> AttributionResult:
+        return AttributionResult(
+            activations=self.activations.to(device),
+            attribution=self.attribution.to(device),
+            logits=self.logits.to(device),
+            probs=self.probs.to(device),
+            prompt_token_ids=self.prompt_token_ids,
+            prompt_tokens=self.prompt_tokens,
+        )
+
+    def full_tensor(self) -> AttributionResult:
+        return AttributionResult(
+            activations=self.activations.full_tensor(),
+            attribution=self.attribution.full_tensor(),
+            logits=full_tensor(self.logits),
+            probs=full_tensor(self.probs),
+            prompt_token_ids=self.prompt_token_ids,
+            prompt_tokens=self.prompt_tokens,
+            logit_token_ids=self.logit_token_ids,
+            logit_tokens=self.logit_tokens,
+        )
+
 
 def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
     return NodeIndexedMatrix.from_data(

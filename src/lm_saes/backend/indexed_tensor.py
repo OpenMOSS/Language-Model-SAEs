@@ -419,6 +419,9 @@ class Dimension:
         }
         return self.__class__._from_node_mappings(node_mappings=node_mappings, device=device)
 
+    def full_tensor(self) -> Self:
+        return replace(self, device_mesh=None)
+
 
 class NodeIndexedTensor:
     def __init__(
@@ -616,6 +619,12 @@ class NodeIndexedTensor:
 
     def to(self, device: torch.device | str) -> Self:
         return self.__class__.from_data(self.data.to(device), tuple(dim.to(device) for dim in self.dimensions))
+
+    def full_tensor(self) -> Self:
+        return self.__class__.from_data(
+            full_tensor(self.data),
+            tuple(dim.full_tensor() for dim in self.dimensions),
+        )
 
 
 class NodeIndexedVector(NodeIndexedTensor):
