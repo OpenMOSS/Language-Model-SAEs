@@ -9,7 +9,8 @@ from lm_saes.testing import distributed_test
 from lm_saes.utils.distributed.ops import nonzero
 
 
-@distributed_test(nproc_per_node=2, backend="cuda")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
 def test_nonzero_dtensor_matches_torch_nonzero():
     world_size = int(dist.get_world_size())
     device = "cuda" if torch.cuda.is_available() and dist.get_backend() == "nccl" else "cpu"
@@ -35,7 +36,8 @@ def test_nonzero_dtensor_matches_torch_nonzero():
     assert torch.equal(result.to_local().cpu(), expected.cpu())
 
 
-@distributed_test(nproc_per_node=2, backend="cuda")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
 def test_nonzero_dtensor_handles_empty_local_results():
     world_size = int(dist.get_world_size())
     device = "cuda" if torch.cuda.is_available() and dist.get_backend() == "nccl" else "cpu"
@@ -60,7 +62,8 @@ def test_nonzero_dtensor_handles_empty_local_results():
     assert torch.equal(result.to_local().cpu(), expected.cpu())
 
 
-@distributed_test(nproc_per_node=2, backend="cuda")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@distributed_test(nproc_per_node=2, backend="nccl")
 def test_nonzero_dtensor_rejects_as_tuple():
     world_size = int(dist.get_world_size())
     device = "cuda" if torch.cuda.is_available() and dist.get_backend() == "nccl" else "cpu"
