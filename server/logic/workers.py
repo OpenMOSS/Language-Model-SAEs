@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import inspect
 import os
 import time
@@ -20,7 +21,7 @@ class DistributedWorkerRegistry:
     _result_queue: Optional[Queue] = None
     _num_workers: int = 0
     _initialized: bool = False
-    _functions: dict[str, Callable] = {}
+    _functions: dict[tuple[str, str], Callable] = {}
 
     @classmethod
     def initialize(cls, num_workers: int):
@@ -78,11 +79,14 @@ class DistributedWorkerRegistry:
             if task is None:  # Shutdown signal
                 break
 
-            task_id, fn_name, args, kwargs = task
+            task_id, fn_module, fn_name, args, kwargs = task
             try:
-                fn = cls._functions.get(fn_name)
+                if fn_name not in cls._functions:
+                    importlib.import_module(fn_module)
+
+                fn = cls._functions.get((fn_module, fn_name))
                 if fn is None:
-                    raise ValueError(f"Function {fn_name} not registered")
+                    raise ValueError(f"Function {fn_name} not registered (module: {fn_module})")
 
                 result = fn(*args, **kwargs, device_mesh=device_mesh)
 
@@ -100,17 +104,17 @@ class DistributedWorkerRegistry:
         print(f"Worker {rank} terminated")
 
     @classmethod
-    def register_function(cls, fn_name: str, fn: Callable):
+    def register_function(cls, fn_module: str, fn_name: str, fn: Callable):
         """Register a function for workers to execute"""
-        cls._functions[fn_name] = fn
+        cls._functions[(fn_module, fn_name)] = fn
 
     @classmethod
-    def submit_to_all_workers(cls, fn_name: str, *args, **kwargs) -> str:
+    def submit_to_all_workers(cls, fn_module: str, fn_name: str, *args, **kwargs) -> str:
         """Submit task to all workers and return task_id"""
         task_id = str(uuid.uuid4())
 
         for queue in cls._task_queues:
-            queue.put((task_id, fn_name, args, kwargs))
+            queue.put((task_id, fn_module, fn_name, args, kwargs))
 
         return task_id
 
@@ -174,15 +178,14 @@ def distributed(fn: Callable) -> Callable:
         ```
     """
 
-    fn_name = fn.__name__
-    DistributedWorkerRegistry.register_function(fn_name, fn)
+    DistributedWorkerRegistry.register_function(fn.__module__, fn.__name__, fn)
 
     @wraps(fn)
     async def async_wrapper(*args, **kwargs):
         if not DistributedWorkerRegistry._initialized:
             raise RuntimeError("Workers not initialized. Call init_workers(num_workers) first.")
 
-        task_id = DistributedWorkerRegistry.submit_to_all_workers(fn_name, *args, **kwargs)
+        task_id = DistributedWorkerRegistry.submit_to_all_workers(fn.__module__, fn.__name__, *args, **kwargs)
         result = await DistributedWorkerRegistry.get_result(task_id)
 
         return result

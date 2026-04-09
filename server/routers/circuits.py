@@ -20,7 +20,7 @@ from lm_saes.models.sae import SAEConfig
 from lm_saes.utils.distributed import is_primary_rank
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.timer import timer
-from server.config import LRU_CACHE_SIZE_CIRCUITS, client, sae_series
+from server.config import LRU_CACHE_SIZE_CIRCUITS, client, device, sae_series
 from server.logic.loaders import get_model, get_sae, get_sae_cfg
 from server.logic.samples import list_feature_data
 from server.logic.workers import distributed
@@ -163,12 +163,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     ar = client.load_attribution(circuit_id)
     if ar is None:
         raise ValueError(f"Attribution data not found for circuit {circuit_id}")
-
-    device = "cuda"
-    ar.attribution = ar.attribution.to(device)
-    ar.activations = ar.activations.to(device)
-    ar.logits = ar.logits.to(device)
-    ar.probs = ar.probs.to(device)
+    ar = ar.to(device)
 
     attribution = prune_attribution(
         ar.attribution,
