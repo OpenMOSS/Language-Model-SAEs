@@ -390,20 +390,12 @@ class TransformerLensLanguageModel(LanguageModel):
 
     def forward(self, *args, **kwargs):
         assert self.model is not None, "model must be initialized"
-        # Collect all tensor arguments
-        tensors = [arg for arg in args if isinstance(arg, torch.Tensor)] + [
-            v for v in kwargs.values() if isinstance(v, torch.Tensor)
-        ]
-        # Check if all tensors are DTensors
-        is_distributed = len(tensors) > 0 and all(isinstance(t, DTensor) for t in tensors)
         if self.device_mesh is not None:
-            assert is_distributed, "All tensor inputs must be DTensor when device_mesh is not None"
             return local_map(
                 self.model.forward,
                 out_placements=DimMap({"data": 0}).placements(self.device_mesh),
             )(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)  # type: ignore
         else:
-            assert not is_distributed, "Input should not contain DTensor when device_mesh is None"
             return self.model.forward(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)
 
     def __call__(self, *args, **kwargs):
