@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Any, Callable, Literal, Tuple, Union, cast, overload
 
 import torch
@@ -459,13 +460,12 @@ def multi_batch_index(
 
     results: list[Float[Tensor, "..."] | None] = [None] * len(xs)
 
-    from collections import defaultdict
-
     groups = defaultdict(list)
     for i, (x, indices) in enumerate(zip(xs, indices_list)):
         assert isinstance(indices, DTensor) and all(
             isinstance(placement, Replicate) for placement in indices.placements
         ), "Indices must be replicated"
+        assert isinstance(x, DTensor)
         key = (x.shape, x.dtype, x.device_mesh, x.placements, indices.shape[1])
         groups[key].append((i, x, indices))
 
