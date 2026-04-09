@@ -1,6 +1,5 @@
 import functools
 import itertools
-import logging
 import re
 import threading
 import traceback
@@ -10,6 +9,7 @@ from typing import Any, Optional
 import torch
 from fastapi import APIRouter, BackgroundTasks, Response
 from pydantic import BaseModel
+from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.backend.attribution import prune_attribution
 from lm_saes.backend.language_model import TransformerLensLanguageModel
@@ -17,13 +17,16 @@ from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
 from lm_saes.models.lorsa import LorsaConfig
 from lm_saes.models.molt import MOLTConfig
 from lm_saes.models.sae import SAEConfig
+from lm_saes.utils.distributed import is_primary_rank
+from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.timer import timer
 from server.config import LRU_CACHE_SIZE_CIRCUITS, client, sae_series
 from server.logic.loaders import get_model, get_sae, get_sae_cfg
 from server.logic.samples import list_feature_data
+from server.logic.workers import distributed
 from server.utils.common import make_serializable, synchronized
 
-logger = logging.getLogger(__name__)
+logger = get_distributed_logger(__name__)
 
 router = APIRouter(tags=["circuits"])
 
@@ -37,13 +40,14 @@ class PreviewRequest(BaseModel):
 
 
 @router.post("/preview")
-def preview(request: PreviewRequest):
+@distributed
+def preview(request: PreviewRequest, device_mesh: DeviceMesh | None = None):
     """Preview the prompt and predicted next tokens."""
     sae_set = client.get_sae_set(name=request.sae_set_name)
     assert sae_set is not None, f"SAE set {request.sae_set_name} not found"
     sae_names = sae_set.sae_names
     model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
-    model = get_model(name=model_name)
+    model = get_model(name=model_name, device_mesh=device_mesh)
     assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
         f"Preview only supports TransformerLens backend, got {type(model)}"
     )
@@ -103,9 +107,6 @@ def create_sae_set(request: CreateSaeSetRequest):
 
 class GenerateCircuitRequest(BaseModel):
     """Request to generate a new circuit graph.
-
-    Note: node_threshold and edge_threshold are no longer part of generation.
-    They are now query-time parameters for dynamic pruning.
 
     list_of_features: list of (layer, feature_idx, pos, is_lorsa) tuples
     """
@@ -325,32 +326,36 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     return graph_data
 
 
+@distributed
 def run_circuit_attribution(
     circuit_id: str,
     sae_set_name: str,
     prompt: str,
     request: GenerateCircuitRequest,
+    device_mesh: DeviceMesh | None = None,
 ):
     """Background task to run circuit attribution and store the result."""
     try:
         with _generation_lock:
             # Update status to running
-            client.update_circuit_status(circuit_id, CircuitStatus.RUNNING)
-            client.update_circuit_progress(circuit_id, 0.0, "Loading sparse dictionaries...")
+            if is_primary_rank(device_mesh):
+                client.update_circuit_status(circuit_id, CircuitStatus.RUNNING)
+                client.update_circuit_progress(circuit_id, 0.0, "Loading sparse dictionaries...")
 
             # Load SAE set and models
             sae_set = client.get_sae_set(name=sae_set_name)
             assert sae_set is not None, f"SAE set {sae_set_name} not found"
             sae_names = sae_set.sae_names
-            saes = {sae_name: get_sae(name=sae_name) for sae_name in sae_names}
+            saes = {sae_name: get_sae(name=sae_name, device_mesh=device_mesh) for sae_name in sae_names}
 
             model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
-            model = get_model(name=model_name)
+            model = get_model(name=model_name, device_mesh=device_mesh)
             assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
                 "Circuit tracing only supports exact model of TransformerLens backend"
             )
 
-            client.update_circuit_progress(circuit_id, 15.0, "Computing attribution...")
+            if is_primary_rank(device_mesh):
+                client.update_circuit_progress(circuit_id, 15.0, "Computing attribution...")
 
             progress_checkpoints = [(15.0, 95.0, "Feature influence computation")]
 
@@ -359,7 +364,8 @@ def run_circuit_attribution(
                     (p_start, p_end) for p_start, p_end, p_phase in progress_checkpoints if p_phase == phase
                 )
                 overall_progress = phase_start + (current / total) * (phase_end - phase_start)
-                client.update_circuit_progress(circuit_id, overall_progress, phase)
+                if is_primary_rank(device_mesh):
+                    client.update_circuit_progress(circuit_id, overall_progress, phase)
 
             attribution = model.attribute(
                 inputs=prompt,
@@ -368,13 +374,14 @@ def run_circuit_attribution(
                 desired_logit_prob=request.desired_logit_prob,
                 batch_size=16,
                 max_features=request.max_feature_nodes,
-            )
+            ).full_tensor()
 
-            client.update_circuit_progress(circuit_id, 90.0, "Storing attribution data...")
-            client.store_attribution(circuit_id, attribution)
+            if is_primary_rank(device_mesh):
+                client.update_circuit_progress(circuit_id, 90.0, "Storing attribution data...")
+                client.store_attribution(circuit_id, attribution)
 
-            client.update_circuit_progress(circuit_id, 100.0, "Completed")
-            client.update_circuit_status(circuit_id, CircuitStatus.COMPLETED)
+                client.update_circuit_progress(circuit_id, 100.0, "Completed")
+                client.update_circuit_status(circuit_id, CircuitStatus.COMPLETED)
 
             logger.info(f"Circuit {circuit_id} attribution completed successfully")
 
@@ -399,7 +406,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest, backgroun
 
     model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
     model = get_model(name=model_name)
-    if not isinstance(model, TransformerLensLanguageModel) or model.model is None:
+    if not isinstance(model, TransformerLensLanguageModel):
         return Response(
             content="Circuit tracing only supports TransformerLens backend",
             status_code=400,

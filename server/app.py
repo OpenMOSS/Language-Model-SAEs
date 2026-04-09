@@ -7,12 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from server.logic.loaders import get_dataset, get_model, get_sae
+from server.logic.workers import DistributedWorkerRegistry
 from server.routers import admin, bookmarks, circuits, dictionaries
 from server.routers.circuits import load_circuit_graph
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    torch.multiprocessing.set_start_method("spawn", force=True)
+    DistributedWorkerRegistry.initialize(num_workers=int(os.environ["NUM_WORKERS"]))
     preload_models = os.environ["PRELOAD_MODELS"].strip().split(",") if os.environ.get("PRELOAD_MODELS") else []
     for model in preload_models:
         get_model(name=model)
