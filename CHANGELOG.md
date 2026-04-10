@@ -1,3 +1,90 @@
+## v2.0.0b25 (2026-04-10)
+
+
+- Merge pull request #206 from OpenMOSS/dev
+- Release: QK Tracing
+- feat(server): support qk tracing
+- refactor(circuits): move Dimensioned to indexed_tensor
+- feat(server): support host mode
+- feat(circuits): support nodes_to_offsets with unregistered nodes (returns -1)
+- refactor(attribution): replace generic D container with Dimensioned for improved type safety and clarity
+- refactor(attribution): unify QK tracing via generic D container and Hessian matrix
+- chore: enforce commitizen pre-commit rules
+- chore: ignore claude artifacts and drop BaseSAEConfig alias
+- refactor(circuits): serialize AttributionResult using torch.save
+- fix(server): preload models on workers & fix distributed function registration
+- fix(circuits): fix full_tensor and to device to transfer all fields properly
+- feat(server): support distributed circuit tracing
+- fix(backend): relax input constraint to allow non-tensor input in distributed settings
+- feat(circuits): support full_tensor and to device in AttributionResult
+- feat(examples): add script for QK tracing in attribute() with model loading and replacement modules
+- feat(circuits): integrate QK tracing into attribute() pipeline
+- chore(deps): bump pygments from 2.19.2 to 2.20.0
+- Bumps [pygments](https://github.com/pygments/pygments) from 2.19.2 to 2.20.0.
+- [Release notes](https://github.com/pygments/pygments/releases)
+- [Changelog](https://github.com/pygments/pygments/blob/master/CHANGES)
+- [Commits](https://github.com/pygments/pygments/compare/2.19.2...2.20.0)
+- ---
+updated-dependencies:
+- dependency-name: pygments
+  dependency-version: 2.20.0
+  dependency-type: indirect
+...
+- Signed-off-by: dependabot[bot] <support@github.com>
+- chore(deps): bump requests from 2.32.5 to 2.33.0
+- Bumps [requests](https://github.com/psf/requests) from 2.32.5 to 2.33.0.
+- [Release notes](https://github.com/psf/requests/releases)
+- [Changelog](https://github.com/psf/requests/blob/main/HISTORY.md)
+- [Commits](https://github.com/psf/requests/compare/v2.32.5...v2.33.0)
+- ---
+updated-dependencies:
+- dependency-name: requests
+  dependency-version: 2.33.0
+  dependency-type: indirect
+...
+- Signed-off-by: dependabot[bot] <support@github.com>
+- chore(deps): bump nltk from 3.9.3 to 3.9.4
+- Bumps [nltk](https://github.com/nltk/nltk) from 3.9.3 to 3.9.4.
+- [Changelog](https://github.com/nltk/nltk/blob/develop/ChangeLog)
+- [Commits](https://github.com/nltk/nltk/compare/3.9.3...3.9.4)
+- ---
+updated-dependencies:
+- dependency-name: nltk
+  dependency-version: 3.9.4
+  dependency-type: indirect
+...
+- Signed-off-by: dependabot[bot] <support@github.com>
+- chore(deps): bump aiohttp from 3.13.3 to 3.13.4
+- ---
+updated-dependencies:
+- dependency-name: aiohttp
+  dependency-version: 3.13.4
+  dependency-type: indirect
+...
+- Signed-off-by: dependabot[bot] <support@github.com>
+- chore(deps): bump tornado from 6.5.4 to 6.5.5
+- Bumps [tornado](https://github.com/tornadoweb/tornado) from 6.5.4 to 6.5.5.
+- [Changelog](https://github.com/tornadoweb/tornado/blob/master/docs/releases.rst)
+- [Commits](https://github.com/tornadoweb/tornado/compare/v6.5.4...v6.5.5)
+- ---
+updated-dependencies:
+- dependency-name: tornado
+  dependency-version: 6.5.5
+  dependency-type: indirect
+...
+- Signed-off-by: dependabot[bot] <support@github.com>
+- fix(circuits): detach ref tensor
+- chore: remove some timers in lorsa and sae
+- chore(dependencies): add numba to dev dependencies
+- fix(circuits): only encode once in apply_saes
+- perf(circuits): use multi_batch_index
+- perf(circuits): use batch index & move source values out of loop
+- feat: implement batch_index to replace the torch DTensor indexing
+- perf: improve tp attribution
+- Use local Dimension; merge NodeInfoRef before doing values
+- fix: abstopk
+- fix: use abstopk in feature activation function
+
 ## v2.0.0b24 (2026-04-04)
 
 ### Fix
