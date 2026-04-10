@@ -196,7 +196,7 @@ version = "2.7.4.post1"
 requires-dist = ["torch", "einops"]
 
 [tool.commitizen]
-name = "cz_conventional_commits"
+name = "cz_customize"
 tag_format = "v$version"
 version_scheme = "pep440"
 version_provider = "uv"
@@ -207,3 +207,16 @@ version_files = [
     "docs/index.md:uv add lm-saes==",
     "docs/index.md:pip install lm-saes==",
 ]
+
+[tool.commitizen.customize]
+# Enforce restricted conventional commits.
+# Scope is optional; if present, it must be one of the pre-defined values listed below.
+schema = "<type>(<scope>)?: <subject>"
+schema_pattern = "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\\((backend|activation|circuits|analyzer|runners|database|trainer|evaluator|initializer|kernels|utils|cli|server|ui|ui/circuits|ui/dictionaries|ui/features|ui/bookmarks|ui/admin|ui/embed|deps|docs|examples|tests|ci|release)\\))?!?: .+"
+change_type_map = {"feat" = "Feat", "fix" = "Fix", "refactor" = "Refactor", "perf" = "Perf"}
+info = """Commit messages must follow restricted conventional commits.
+Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
+Scope is optional; if used, must be one of the pre-defined scopes listed in
+pyproject.toml under [tool.commitizen.customize] (e.g. backend, circuits, server,
+ui, ui/circuits, deps, ...).
+"""
