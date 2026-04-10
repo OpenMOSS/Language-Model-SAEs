@@ -70,6 +70,17 @@ class Node:
         else:
             return self
 
+    def state_dict(self) -> dict:
+        return {
+            "key": self.key,
+            "indices": self.indices,
+            "offsets": self.offsets,
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict) -> "Node":
+        return cls(key=state["key"], indices=state["indices"], offsets=state["offsets"])
+
 
 @dataclass
 class NodeInfo:
@@ -109,6 +120,13 @@ class NodeInfo:
 
     def full_tensor(self) -> Self:
         return replace(self, indices=full_tensor(self.indices))
+
+    def state_dict(self) -> dict:
+        return {"key": self.key, "indices": self.indices}
+
+    @classmethod
+    def from_state_dict(cls, state: dict) -> "NodeInfo":
+        return cls(key=state["key"], indices=state["indices"])
 
 
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
@@ -428,6 +446,18 @@ class Dimension:
     def full_tensor(self) -> Self:
         return replace(self, device_mesh=None)
 
+    def state_dict(self) -> dict:
+        """Serialize to a minimal dict — only keys, indices, and offsets per node."""
+        return {
+            "nodes": [node.state_dict() for node in self.node_mappings.values()],
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "Dimension":
+        """Reconstruct from state_dict.  mapper, caches, and device_mesh are rebuilt."""
+        node_mappings = {node_state["key"]: Node.from_state_dict(node_state) for node_state in state["nodes"]}
+        return cls._from_node_mappings(node_mappings=node_mappings, device=device)
+
 
 class NodeIndexedTensor:
     def __init__(
@@ -631,6 +661,18 @@ class NodeIndexedTensor:
             full_tensor(self.data),
             tuple(dim.full_tensor() for dim in self.dimensions),
         )
+
+    def state_dict(self) -> dict:
+        return {
+            "data": self.data,
+            "dimensions": [dim.state_dict() for dim in self.dimensions],
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> Self:
+        dimensions = tuple(Dimension.from_state_dict(dim_state, device=device) for dim_state in state["dimensions"])
+        data = state["data"].to(device)
+        return cls.from_data(data=data, dimensions=dimensions)
 
 
 class NodeIndexedVector(NodeIndexedTensor):

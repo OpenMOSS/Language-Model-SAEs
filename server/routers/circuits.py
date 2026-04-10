@@ -160,10 +160,9 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     if circuit.status != CircuitStatus.COMPLETED:
         raise ValueError(f"Circuit {circuit_id} is not completed (status: {circuit.status})")
 
-    ar = client.load_attribution(circuit_id)
+    ar = client.load_attribution(circuit_id, device=device)
     if ar is None:
         raise ValueError(f"Attribution data not found for circuit {circuit_id}")
-    ar = ar.to(device)
 
     attribution = prune_attribution(
         ar.attribution,

@@ -114,6 +114,56 @@ class AttributionResult:
             else None,
         )
 
+    _STATE_DICT_VERSION = 1
+
+    def state_dict(self) -> dict:
+        qk_state: list[dict] | None = None
+        if self.qk_trace_results is not None:
+            qk_state = [
+                {
+                    "node_info": node_info.state_dict(),
+                    "results": [r.state_dict() for r in results],
+                }
+                for node_info, results in self.qk_trace_results
+            ]
+        return {
+            "_version": self._STATE_DICT_VERSION,
+            "activations": self.activations.state_dict(),
+            "attribution": self.attribution.state_dict(),
+            "logits": self.logits,
+            "probs": self.probs,
+            "prompt_token_ids": self.prompt_token_ids,
+            "prompt_tokens": self.prompt_tokens,
+            "logit_token_ids": self.logit_token_ids,
+            "logit_tokens": self.logit_tokens,
+            "qk_trace_results": qk_state,
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "AttributionResult":
+        # version = state.get("_version", 1)  # reserved for future migrations
+        qk_trace_results: list[tuple[NodeInfo, list[QKTraceResult]]] | None = None
+        if state["qk_trace_results"] is not None:
+            qk_trace_results = [
+                (
+                    NodeInfo.from_state_dict(entry["node_info"]),
+                    [QKTraceResult.from_state_dict(r) for r in entry["results"]],
+                )
+                for entry in state["qk_trace_results"]
+            ]
+        result = cls(
+            activations=NodeIndexedVector.from_state_dict(state["activations"], device=device),
+            attribution=NodeIndexedMatrix.from_state_dict(state["attribution"], device=device),
+            logits=state["logits"].to(device),
+            probs=state["probs"].to(device),
+            prompt_token_ids=state["prompt_token_ids"],
+            prompt_tokens=state["prompt_tokens"],
+            logit_token_ids=state["logit_token_ids"],
+            logit_tokens=state["logit_tokens"],
+            qk_trace_results=qk_trace_results,
+        )
+        return result
+
 
 def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
     return NodeIndexedMatrix.from_data(
@@ -414,6 +464,19 @@ class QKTraceResult:
 
     def full_tensor(self) -> Self:
         return replace(self, nodes=(self.nodes[0].full_tensor(), self.nodes[1].full_tensor()))
+
+    def state_dict(self) -> dict:
+        return {
+            "nodes": (self.nodes[0].state_dict(), self.nodes[1].state_dict()),
+            "attribution": self.attribution,
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict) -> "QKTraceResult":
+        return cls(
+            nodes=(NodeInfo.from_state_dict(state["nodes"][0]), NodeInfo.from_state_dict(state["nodes"][1])),
+            attribution=state["attribution"],
+        )
 
 
 def lorsa_node_info_to_qk_requests(
