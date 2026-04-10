@@ -32,6 +32,12 @@ class DistributedWorkerRegistry:
             raise RuntimeError("Cannot initialize worker registry from a worker process")
 
         cls._num_workers = num_workers
+
+        if num_workers == 0:
+            cls._initialized = True
+            print("Initialized distributed registry with 0 workers (host-execution mode)")
+            return
+
         cls._result_queue = Queue()
 
         # Create one task queue per worker
@@ -141,6 +147,11 @@ class DistributedWorkerRegistry:
     @classmethod
     def shutdown(cls):
         """Shutdown all workers"""
+        if cls._num_workers == 0:
+            cls._initialized = False
+            print("Distributed registry shut down (host-execution mode)")
+            return
+
         for queue in cls._task_queues:
             queue.put(None)
 
@@ -160,17 +171,11 @@ def distributed(fn: Callable) -> Callable:
     Usage:
         ```python
         @distributed
-        def my_model_inference(rank, world_size, input_data):
+        def my_model_inference(input_data, device_mesh: DeviceMesh | None = None):
             # This runs on ALL workers
             # Each worker has access to rank and world_size
-            model = load_model_shard(rank)
-            result = model(input_data)
-
-            # Synchronize across workers if needed
-            if world_size > 1:
-                dist.all_reduce(result)
-
-            return result  # Only rank 0's result is returned to caller
+            model = load_model_shard(device_mesh=device_mesh)
+            return model(input_data)
 
         async def predict(data: InputData):
             result = await my_model_inference(data.input)
@@ -180,18 +185,28 @@ def distributed(fn: Callable) -> Callable:
 
     DistributedWorkerRegistry.register_function(fn.__module__, fn.__name__, fn)
 
+    sig = inspect.signature(fn)
+    accepts_device_mesh = "device_mesh" in sig.parameters
+
     @wraps(fn)
     async def async_wrapper(*args, **kwargs):
         if not DistributedWorkerRegistry._initialized:
             raise RuntimeError("Workers not initialized. Call init_workers(num_workers) first.")
+
+        if DistributedWorkerRegistry._num_workers == 0:
+            # Host-execution mode: run directly in the current process with no device mesh.
+            call_kwargs = {**kwargs, "device_mesh": None} if accepts_device_mesh else kwargs
+            result = fn(*args, **call_kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
 
         task_id = DistributedWorkerRegistry.submit_to_all_workers(fn.__module__, fn.__name__, *args, **kwargs)
         result = await DistributedWorkerRegistry.get_result(task_id)
 
         return result
 
-    sig = inspect.signature(fn)
-    if "device_mesh" in sig.parameters:
+    if accepts_device_mesh:
         new_params = [p for p in sig.parameters.values() if p.name != "device_mesh"]
         async_wrapper.__signature__ = sig.replace(parameters=new_params)  # type: ignore
 
