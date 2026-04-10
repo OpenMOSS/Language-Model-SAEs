@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes.backend.attribution import prune_attribution
+from lm_saes.backend.indexed_tensor import Dimension, Dimensioned
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
 from lm_saes.models.lorsa import LorsaConfig
@@ -192,9 +193,25 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
         return int(match.group(1)) if match else 0
 
     edge_weights, (targets, sources) = attribution.nonzero()
-    nodes = (sources + targets).unique()
+    ov_nodes = (sources + targets).unique()
 
-    node_activations = ar.activations[nodes].data
+    qk_nodes = (
+        (
+            sum(
+                [results.dimensions[0] + results.dimensions[1] for results, _ in ar.qk_trace_results],
+                Dimension.empty(device=device),
+            ).unique()  # pyright: ignore[reportAttributeAccessIssue]
+            - ov_nodes
+        )
+        if ar.qk_trace_results is not None
+        else Dimension.empty(device=device)
+    )
+    is_from_qk_tracings = torch.zeros(len(ov_nodes) + len(qk_nodes), device=device, dtype=torch.bool)
+    is_from_qk_tracings[len(ov_nodes) :] = True
+    node_activations = torch.zeros(len(ov_nodes) + len(qk_nodes), device=device, dtype=torch.float32)
+    node_activations[: len(ov_nodes)] = ar.activations[ov_nodes].data
+
+    nodes = ov_nodes + qk_nodes
 
     logit_token_map = {token_id: token for token_id, token in zip(ar.logit_token_ids, ar.logit_tokens)}
     logit_prob_map = {token_id: float(prob.item()) for token_id, prob in zip(ar.logit_token_ids, ar.probs)}
@@ -202,7 +219,9 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     n_layers = max((int(item["layer_idx"]) for item in sae_metadata.values()), default=-1) + 1
 
     @timer.time("make_node")
-    def make_node(node_key: str, indices_tuple: tuple[int, ...], activation: float) -> dict[str, Any]:
+    def make_node(
+        node_key: str, indices_tuple: tuple[int, ...], activation: float, is_from_qk_tracing: bool
+    ) -> dict[str, Any]:
         indices = list(indices_tuple)
 
         if node_key == "hook_embed":
@@ -216,7 +235,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
                 "ctx_idx": pos,
                 "token": token,
                 "is_target_logit": False,
-                "is_from_qk_tracing": False,
+                "is_from_qk_tracing": is_from_qk_tracing,
             }
 
         if node_key == "logits":
@@ -231,7 +250,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
                 "token_prob": logit_prob_map[vocab_idx],
                 "token": logit_token_map[vocab_idx],
                 "is_target_logit": vocab_idx == target_vocab_index,
-                "is_from_qk_tracing": False,
+                "is_from_qk_tracing": is_from_qk_tracing,
             }
 
         if node_key.endswith(".error"):
@@ -247,7 +266,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
                 "layer": layer,
                 "ctx_idx": pos,
                 "is_target_logit": False,
-                "is_from_qk_tracing": False,
+                "is_from_qk_tracing": is_from_qk_tracing,
             }
 
         if node_key.endswith(".sae.hook_feature_acts"):
@@ -268,17 +287,15 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
                 "activation": activation,
                 "qk_tracing_results": None,
                 "is_target_logit": False,
-                "is_from_qk_tracing": False,
+                "is_from_qk_tracing": is_from_qk_tracing,
             }
-
-        fallback_id = f"{node_key}:{'_'.join(str(v) for v in indices)}"
         return {
             "feature_type": "bias",
-            "node_id": fallback_id,
+            "node_id": f"{node_key}:{'_'.join(str(v) for v in indices)}",
             "layer": 0,
             "ctx_idx": indices[0] if len(indices) > 0 else 0,
             "is_target_logit": False,
-            "is_from_qk_tracing": False,
+            "is_from_qk_tracing": is_from_qk_tracing,
         }
 
     node_entries = [
@@ -286,8 +303,9 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             str(ni.key),
             tuple(ni.indices[0].tolist()),
             float(activation),
+            bool(is_from_qk_tracing),
         )
-        for ni, activation in zip(nodes, node_activations)
+        for ni, activation, is_from_qk_tracing in zip(nodes, node_activations, is_from_qk_tracings)
     ]
     node_ids = [node_data["node_id"] for node_data in node_entries]
 
@@ -304,6 +322,24 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             edge_weight_values, source_node_offsets, target_node_offsets
         )
     ]
+
+    if ar.qk_trace_results is not None:
+        qk_targets_node_offsets = nodes.nodes_to_offsets(ar.qk_trace_results.dimensions[0]).tolist()
+
+        def make_qk_contributors(qk_trace_results: Dimensioned[torch.Tensor]) -> list[tuple[str, str, float]]:
+            q_node_offsets = nodes.nodes_to_offsets(qk_trace_results.dimensions[0]).tolist()
+            k_node_offsets = nodes.nodes_to_offsets(qk_trace_results.dimensions[1]).tolist()
+            return [
+                (node_ids[q_node_offset], node_ids[k_node_offset], float(result))
+                for q_node_offset, k_node_offset, result in zip(q_node_offsets, k_node_offsets, qk_trace_results.value)
+            ]
+
+        for qk_target_node_offset, (qk_trace_results, _) in zip(qk_targets_node_offsets, ar.qk_trace_results):
+            node_entries[qk_target_node_offset]["qk_tracing_results"] = {
+                "pair_wise_contributors": make_qk_contributors(qk_trace_results),
+                "top_q_marginal_contributors": [],
+                "top_k_marginal_contributors": [],
+            }
 
     graph_data: dict[str, Any] = {
         "metadata": {
@@ -368,6 +404,7 @@ def run_circuit_attribution(
                 desired_logit_prob=request.desired_logit_prob,
                 batch_size=16,
                 max_features=request.max_feature_nodes,
+                enable_qk_tracing=request.qk_tracing_topk > 0,
             ).full_tensor()
 
             if is_primary_rank(device_mesh):
