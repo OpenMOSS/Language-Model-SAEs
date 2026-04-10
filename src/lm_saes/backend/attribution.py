@@ -6,6 +6,7 @@ from typing import (
     Any,
     Generic,
     Iterator,
+    Protocol,
     Self,
     Sequence,
     TypeVar,
@@ -41,11 +42,18 @@ class NodeInfoRef(NodeInfo):
 
 NodeInfoT = TypeVar("NodeInfoT", bound=NodeInfo)
 
-V = TypeVar("V")
+T_co = TypeVar("T_co", covariant=True)
+
+
+class SupportsGetItem(Protocol[T_co]):
+    def __getitem__(self, index: Any, /) -> T_co: ...
+
+
+V = TypeVar("V", bound=SupportsGetItem[Any])
 
 
 @dataclass
-class D(Generic[V]):
+class Dimensioned(Generic[V]):
     value: V
     dimensions: tuple[Dimension, ...]
 
@@ -55,30 +63,19 @@ class D(Generic[V]):
     def __iter__(self) -> Iterator[tuple]:
         dim_nodes = [list(d) for d in self.dimensions]
         for i in range(len(self)):
-            yield (self.value[i], *(dn[i] for dn in dim_nodes))  # pyright: ignore[reportIndexIssue]
+            yield (self.value[i], *(dn[i] for dn in dim_nodes))
 
     def to(self, device: torch.device | str) -> Self:
         new_value: Any
         if isinstance(self.value, torch.Tensor):
-            new_value = self.value.to(device)
+            new_value = cast(torch.Tensor, self.value).to(device)
         else:
-            new_value = [v.to(device) for v in cast(Sequence["D"], self.value)]
+            new_value = [v.to(device) for v in cast(Sequence["Dimensioned"], self.value)]
         return replace(
             self,
             value=new_value,
             dimensions=tuple(d.to(device) for d in self.dimensions),
         )
-
-    def full_tensor(self) -> Self:
-        new_value: Any
-        if isinstance(self.value, torch.Tensor):
-            new_value = full_tensor(self.value)
-        else:
-            new_value = [v.full_tensor() for v in cast(Sequence["D"], self.value)]
-        new_dims = tuple(
-            Dimension.from_node_infos([ni.full_tensor() for ni in d]) if len(d) > 0 else d for d in self.dimensions
-        )
-        return replace(self, value=new_value, dimensions=new_dims)
 
     def state_dict(self) -> dict:
         if isinstance(self.value, torch.Tensor):
@@ -86,7 +83,7 @@ class D(Generic[V]):
         else:
             value_state = {
                 "kind": "list",
-                "data": [v.state_dict() for v in cast(Sequence["D"], self.value)],
+                "data": self.value,
             }
         return {
             "value": value_state,
@@ -94,13 +91,13 @@ class D(Generic[V]):
         }
 
     @classmethod
-    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "D":
+    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "Dimensioned":
         value_state = state["value"]
         value: Any
         if value_state["kind"] == "tensor":
             value = value_state["data"].to(device)
         else:
-            value = [cls.from_state_dict(sub, device=device) for sub in value_state["data"]]
+            value = value_state["data"]
         dimensions = tuple(Dimension.from_state_dict(d, device=device) for d in state["dimensions"])
         return cls(value=value, dimensions=dimensions)
 
@@ -140,7 +137,7 @@ class AttributionResult:
     prompt_tokens: list[str] = field(default_factory=list)
     logit_token_ids: list[int] = field(default_factory=list)
     logit_tokens: list[str] = field(default_factory=list)
-    qk_trace_results: D[list[D[torch.Tensor]]] | None = None
+    qk_trace_results: Dimensioned[list[Dimensioned[torch.Tensor]]] | None = None
 
     def to(self, device: torch.device | str) -> AttributionResult:
         return AttributionResult(
@@ -165,7 +162,7 @@ class AttributionResult:
             prompt_tokens=self.prompt_tokens,
             logit_token_ids=self.logit_token_ids,
             logit_tokens=self.logit_tokens,
-            qk_trace_results=self.qk_trace_results.full_tensor() if self.qk_trace_results is not None else None,
+            qk_trace_results=self.qk_trace_results,
         )
 
     _STATE_DICT_VERSION = 1
@@ -187,8 +184,8 @@ class AttributionResult:
     @classmethod
     def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "AttributionResult":
         # version = state.get("_version", 1)  # reserved for future migrations
-        qk_trace_results: D[list[D[torch.Tensor]]] | None = (
-            D.from_state_dict(state["qk_trace_results"], device=device)
+        qk_trace_results: Dimensioned[list[Dimensioned[torch.Tensor]]] | None = (
+            Dimensioned.from_state_dict(state["qk_trace_results"], device=device)
             if state["qk_trace_results"] is not None
             else None
         )
@@ -756,7 +753,7 @@ def attribute(
             ]
 
             hessian = compute_hessian_matrix(unique_qk_targets, qk_sources, topk=qk_topk)
-            qk_trace_results = D(
+            qk_trace_results = Dimensioned(
                 value=[hessian.value[i] for i in feature_to_unique],
                 dimensions=(Dimension.from_node_infos(top_lorsa_node_infos),),
             )
@@ -781,7 +778,7 @@ def qk_trace(
     lorsa_features: list[NodeInfo],
     topk: int = 10,
     batch_size: int = 1,
-) -> D[list["D[torch.Tensor]"]]:
+) -> Dimensioned[list["Dimensioned[torch.Tensor]"]]:
     from lm_saes.models.lorsa import LowRankSparseAttention
     from lm_saes.models.molt import MixtureOfLinearTransform
     from lm_saes.models.sae import SparseAutoEncoder
@@ -852,7 +849,7 @@ def qk_trace(
         feature_to_unique.append(unique_map[dedup_key])
 
     hessian = compute_hessian_matrix(unique_qk_targets, sources, topk=topk)
-    return D(
+    return Dimensioned(
         value=[hessian.value[i] for i in feature_to_unique],
         dimensions=(Dimension.from_node_infos(flat_features),),
     )
@@ -862,13 +859,13 @@ def compute_hessian_matrix(
     targets: Sequence[NodeInfoRef],
     sources: Sequence[NodeInfoRef],
     topk: int,
-) -> D[list["D[torch.Tensor]"]]:
+) -> Dimensioned[list["Dimensioned[torch.Tensor]"]]:
 
     sources_dimension = Dimension.from_node_infos(sources)
     fwd_batch_size = sources[0].ref.shape[0]
     bwd_batch_size = fwd_batch_size // topk
 
-    per_slot_results: list[D[torch.Tensor]] = []
+    per_slot_results: list[Dimensioned[torch.Tensor]] = []
 
     target_queue = NodeInfoQueue(list(targets))
     for target_batch in target_queue.iter(bwd_batch_size):
@@ -955,18 +952,14 @@ def compute_hessian_matrix(
             order = [i for i in order if pair_attrs[i].item() != 0.0]
             device = pair_attrs.device
             per_slot_results.append(
-                D(
+                Dimensioned(
                     value=pair_attrs[order] if len(order) > 0 else pair_attrs[:0],
                     dimensions=(
-                        Dimension.from_node_infos(
-                            [first_nodes[i] for i in order], device=device
-                        ),
-                        Dimension.from_node_infos(
-                            [second_nodes[i] for i in order], device=device
-                        ),
+                        Dimension.from_node_infos([first_nodes[i] for i in order], device=device),
+                        Dimension.from_node_infos([second_nodes[i] for i in order], device=device),
                     ),
                 )
             )
 
     targets_dim = Dimension.from_node_infos(list(targets))
-    return D(value=per_slot_results, dimensions=(targets_dim,))
+    return Dimensioned(value=per_slot_results, dimensions=(targets_dim,))
