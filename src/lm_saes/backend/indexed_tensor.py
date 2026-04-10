@@ -5,9 +5,12 @@ from dataclasses import dataclass, field, replace
 from typing import (
     Any,
     Callable,
+    Generic,
     Iterator,
+    Protocol,
     Self,
     Sequence,
+    TypeVar,
     cast,
     overload,
 )
@@ -835,3 +838,72 @@ class NodeIndexedMatrix(NodeIndexedTensor):
 
     def __matmul__(self, other: NodeIndexedVector | NodeIndexedMatrix):
         return self.matmul(other)
+
+
+T_co = TypeVar("T_co", covariant=True)
+
+
+class SupportsGetItem(Protocol[T_co]):
+    def __getitem__(self, index: Any, /) -> T_co: ...
+
+
+V = TypeVar("V", bound=SupportsGetItem[Any])
+
+
+@dataclass
+class Dimensioned(Generic[V]):
+    value: V
+    dimensions: tuple[Dimension, ...]
+
+    def __len__(self) -> int:
+        return len(self.dimensions[0])
+
+    def __iter__(self) -> Iterator[tuple]:
+        dim_nodes = [list(d) for d in self.dimensions]
+        for i in range(len(self)):
+            yield (self.value[i], *(dn[i] for dn in dim_nodes))
+
+    def to(self, device: torch.device | str) -> Self:
+        new_value: Any
+        if isinstance(self.value, torch.Tensor):
+            new_value = cast(torch.Tensor, self.value).to(device)
+        else:
+            new_value = [v.to(device) for v in cast(Sequence["Dimensioned"], self.value)]
+        return replace(
+            self,
+            value=new_value,
+            dimensions=tuple(d.to(device) for d in self.dimensions),
+        )
+
+    def state_dict(self) -> dict:
+        return {
+            "value": _encode_value(self.value),
+            "dimensions": [d.state_dict() for d in self.dimensions],
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "Dimensioned":
+        value = _decode_value(state["value"], device=device)
+        dimensions = tuple(Dimension.from_state_dict(d, device=device) for d in state["dimensions"])
+        return cls(value=value, dimensions=dimensions)
+
+
+def _encode_value(v: Any) -> dict:
+    if isinstance(v, torch.Tensor):
+        return {"kind": "tensor", "data": v}
+    if isinstance(v, Dimensioned):
+        return {"kind": "dimensioned", "data": v.state_dict()}
+    if isinstance(v, list):
+        return {"kind": "list", "data": [_encode_value(x) for x in v]}
+    raise TypeError(f"Dimensioned does not know how to serialize value of type {type(v).__name__}")
+
+
+def _decode_value(state: dict, device: torch.device | str) -> Any:
+    kind = state["kind"]
+    if kind == "tensor":
+        return cast(torch.Tensor, state["data"]).to(device)
+    if kind == "dimensioned":
+        return Dimensioned.from_state_dict(state["data"], device=device)
+    if kind == "list":
+        return [_decode_value(x, device=device) for x in state["data"]]
+    raise ValueError(f"Unknown Dimensioned value kind: {kind!r}")

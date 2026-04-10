@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
-    Any,
     Generic,
     Iterator,
-    Protocol,
-    Self,
     Sequence,
     TypeVar,
     cast,
@@ -19,7 +16,13 @@ from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.backend.hooks import replace_biases_with_leaves
-from lm_saes.backend.indexed_tensor import Dimension, NodeIndexedMatrix, NodeIndexedVector, NodeInfo
+from lm_saes.backend.indexed_tensor import (
+    Dimension,
+    Dimensioned,
+    NodeIndexedMatrix,
+    NodeIndexedVector,
+    NodeInfo,
+)
 from lm_saes.utils.distributed import DimMap, full_tensor
 from lm_saes.utils.distributed.ops import maybe_local_map, multi_batch_index, nonzero, searchsorted
 from lm_saes.utils.misc import ensure_tokenized
@@ -41,65 +44,6 @@ class NodeInfoRef(NodeInfo):
 
 
 NodeInfoT = TypeVar("NodeInfoT", bound=NodeInfo)
-
-T_co = TypeVar("T_co", covariant=True)
-
-
-class SupportsGetItem(Protocol[T_co]):
-    def __getitem__(self, index: Any, /) -> T_co: ...
-
-
-V = TypeVar("V", bound=SupportsGetItem[Any])
-
-
-@dataclass
-class Dimensioned(Generic[V]):
-    value: V
-    dimensions: tuple[Dimension, ...]
-
-    def __len__(self) -> int:
-        return len(self.dimensions[0])
-
-    def __iter__(self) -> Iterator[tuple]:
-        dim_nodes = [list(d) for d in self.dimensions]
-        for i in range(len(self)):
-            yield (self.value[i], *(dn[i] for dn in dim_nodes))
-
-    def to(self, device: torch.device | str) -> Self:
-        new_value: Any
-        if isinstance(self.value, torch.Tensor):
-            new_value = cast(torch.Tensor, self.value).to(device)
-        else:
-            new_value = [v.to(device) for v in cast(Sequence["Dimensioned"], self.value)]
-        return replace(
-            self,
-            value=new_value,
-            dimensions=tuple(d.to(device) for d in self.dimensions),
-        )
-
-    def state_dict(self) -> dict:
-        if isinstance(self.value, torch.Tensor):
-            value_state: dict = {"kind": "tensor", "data": self.value}
-        else:
-            value_state = {
-                "kind": "list",
-                "data": self.value,
-            }
-        return {
-            "value": value_state,
-            "dimensions": [d.state_dict() for d in self.dimensions],
-        }
-
-    @classmethod
-    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "Dimensioned":
-        value_state = state["value"]
-        value: Any
-        if value_state["kind"] == "tensor":
-            value = value_state["data"].to(device)
-        else:
-            value = value_state["data"]
-        dimensions = tuple(Dimension.from_state_dict(d, device=device) for d in state["dimensions"])
-        return cls(value=value, dimensions=dimensions)
 
 
 class NodeInfoQueue(Generic[NodeInfoT]):
@@ -860,7 +804,6 @@ def compute_hessian_matrix(
     sources: Sequence[NodeInfoRef],
     topk: int,
 ) -> Dimensioned[list["Dimensioned[torch.Tensor]"]]:
-
     sources_dimension = Dimension.from_node_infos(sources)
     fwd_batch_size = sources[0].ref.shape[0]
     bwd_batch_size = fwd_batch_size // topk
