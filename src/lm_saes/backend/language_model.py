@@ -524,6 +524,7 @@ class TransformerLensLanguageModel(LanguageModel):
         max_features: int | None = None,
         enable_qk_tracing: bool = False,
         qk_top_fraction: float = 0.6,
+        qk_topk: int = 10,
     ):
         return attribute(
             self,
@@ -535,6 +536,7 @@ class TransformerLensLanguageModel(LanguageModel):
             max_features,
             enable_qk_tracing,
             qk_top_fraction,
+            qk_topk,
         )
 
     def qk_trace(
