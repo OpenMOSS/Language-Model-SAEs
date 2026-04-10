@@ -46,6 +46,7 @@ from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
 from lm_saes.utils.distributed import DimMap
 from lm_saes.utils.misc import pad_and_truncate_tokens
+from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
     from lm_saes.models.sparse_dictionary import SparseDictionary
@@ -389,25 +390,18 @@ class TransformerLensLanguageModel(LanguageModel):
 
     def forward(self, *args, **kwargs):
         assert self.model is not None, "model must be initialized"
-        # Collect all tensor arguments
-        tensors = [arg for arg in args if isinstance(arg, torch.Tensor)] + [
-            v for v in kwargs.values() if isinstance(v, torch.Tensor)
-        ]
-        # Check if all tensors are DTensors
-        is_distributed = len(tensors) > 0 and all(isinstance(t, DTensor) for t in tensors)
         if self.device_mesh is not None:
-            assert is_distributed, "All tensor inputs must be DTensor when device_mesh is not None"
             return local_map(
                 self.model.forward,
                 out_placements=DimMap({"data": 0}).placements(self.device_mesh),
             )(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)  # type: ignore
         else:
-            assert not is_distributed, "Input should not contain DTensor when device_mesh is None"
             return self.model.forward(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)
 
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
+    @timer.time("to_tensor")
     def _to_tensor(self, input: torch.Tensor) -> torch.Tensor:
         if isinstance(input, DTensor):
             assert input.placements == tuple(DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)))
@@ -415,6 +409,7 @@ class TransformerLensLanguageModel(LanguageModel):
         else:
             return input
 
+    @timer.time("to_dtensor")
     def _to_dtensor(self, input: torch.Tensor) -> torch.Tensor:
         return (
             DTensor.from_local(
@@ -527,6 +522,9 @@ class TransformerLensLanguageModel(LanguageModel):
         desired_logit_prob: float = 0.95,
         batch_size: int = 512,
         max_features: int | None = None,
+        enable_qk_tracing: bool = False,
+        qk_top_fraction: float = 0.6,
+        qk_topk: int = 10,
     ):
         return attribute(
             self,
@@ -536,6 +534,9 @@ class TransformerLensLanguageModel(LanguageModel):
             desired_logit_prob,
             batch_size,
             max_features,
+            enable_qk_tracing,
+            qk_top_fraction,
+            qk_topk,
         )
 
     def qk_trace(

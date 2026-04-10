@@ -200,3 +200,7 @@ pyrightconfig.json
 
 .codex
 .agents
+
+# Claude Code
+CLAUDE.md
+.claude/

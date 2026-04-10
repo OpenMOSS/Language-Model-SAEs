@@ -725,11 +725,13 @@ class SparseDictionary(HookedRootModule, ABC):
                         mesh_dim_name="model",
                     )
                 else:
-                    return topk(
+                    x = x * x.gt(0).to(x.dtype)
+                    x = topk(
                         x,
                         k=self.current_k,
                         dim=-1,
                     )
+                    return x
 
             return topk_activation
 
@@ -759,6 +761,7 @@ class SparseDictionary(HookedRootModule, ABC):
                         x,
                         k=self.current_k * x.size(0),
                         dim=(-2, -1),
+                        abs=True,
                     )
                 )
                 if original_shape is not None:

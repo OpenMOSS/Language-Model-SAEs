@@ -6,6 +6,7 @@ import torch.nn as nn
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
 from lm_saes.backend.tl_addons import mount_hooked_modules
+from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
     from lm_saes.backend.language_model import TransformerLensLanguageModel
@@ -39,11 +40,16 @@ def apply_saes(model: "TransformerLensLanguageModel", saes: list["SparseDictiona
         x = None
         hook_error = HookPoint()
 
+        @timer.time(f"hook_in_{sae.cfg.sae_type}")
         def hook_in(tensor: torch.Tensor, hook: HookPoint):
             nonlocal x
-            x = sae.encode(tensor, hook_attn_scores=True)
+            if (
+                x is None
+            ):  # Only encode once to prevent re-encoding when a hook is called multiple times, like `blocks.0.ln1.hook_normalized` is called respectively for Q, K and V.
+                x = sae.encode(tensor, hook_attn_scores=True)
             return tensor
 
+        @timer.time(f"hook_out_{sae.cfg.sae_type}")
         def hook_out(tensor: torch.Tensor, hook: HookPoint):
             nonlocal x
             assert x is not None, "hook_in must be called before hook_out."
@@ -135,7 +141,7 @@ def replace_biases_with_leaves(
         saved_state.append((module, attr_name, param.data.clone(), False))
         leaf = _make_bias_leaf(param.data, batch_size, seq_len)
         bias_leaves[cache_key] = leaf
-        param.zero_()
+        param.data.zero_()
 
         def _hook(tensor: torch.Tensor, hook: HookPoint, _leaf: torch.Tensor = leaf) -> torch.Tensor:
             return tensor + _leaf

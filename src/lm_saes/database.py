@@ -1,5 +1,5 @@
+import io
 import os
-import pickle
 from datetime import datetime
 from importlib import import_module
 from typing import Annotated, Any, Literal, Optional, Union
@@ -10,6 +10,7 @@ import pymongo
 import pymongo.database
 import pymongo.errors
 import pymongo.results
+import torch
 from bson import ObjectId
 from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
@@ -1018,10 +1019,12 @@ class MongoClient:
         return result.modified_count > 0
 
     def store_attribution(self, circuit_id: str, attribution: AttributionResult) -> bool:
-        """Store attribution data to GridFS and update circuit record."""
+        """Store attribution data to GridFS using torch.save with state_dict."""
         assert self.fs is not None
 
-        attribution_bytes = pickle.dumps(attribution)
+        buf = io.BytesIO()
+        torch.save(attribution.state_dict(), buf)
+        attribution_bytes = buf.getvalue()
         attribution_id = self.fs.put(attribution_bytes, filename=f"circuit_{circuit_id}_attribution")
 
         result = self.circuit_collection.update_one(
@@ -1031,7 +1034,7 @@ class MongoClient:
         return result.modified_count > 0
 
     @timer.time("load_attribution")
-    def load_attribution(self, circuit_id: str) -> Optional[AttributionResult]:
+    def load_attribution(self, circuit_id: str, device: torch.device | str = "cpu") -> Optional[AttributionResult]:
         """Load attribution data from GridFS."""
         assert self.fs is not None
 
@@ -1039,8 +1042,10 @@ class MongoClient:
         if circuit is None or circuit.get("attribution_id") is None:
             return None
         attribution_bytes = self.fs.get(circuit["attribution_id"]).read()
-        attribution = pickle.loads(attribution_bytes)
-        return attribution
+
+        buf = io.BytesIO(attribution_bytes)
+        state = torch.load(buf, map_location=device, weights_only=True)
+        return AttributionResult.from_state_dict(state, device=device)
 
     def get_circuit_status(self, circuit_id: str) -> Optional[dict[str, Any]]:
         """Get just the status information for a circuit."""

@@ -1,4 +1,5 @@
-from typing import Any, Callable, Literal, Tuple, Union, overload
+from collections import defaultdict
+from typing import Any, Callable, Literal, Tuple, Union, cast, overload
 
 import torch
 import torch.utils._pytree as pytree
@@ -6,13 +7,16 @@ from jaxtyping import Float
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+from torch.distributed.tensor._utils import compute_local_shape_and_global_offset
 from torch.distributed.tensor.experimental import local_map
 from torch.distributed.tensor.placement_types import Replicate, Shard
 from torch.types import Number
 
 from lm_saes.utils.distributed.utils import all_gather_dict
+from lm_saes.utils.timer import timer
 
 
+@timer.time("full_tensor")
 def full_tensor(x: Tensor) -> Tensor:
     """Convert DTensor to regular Tensor if needed."""
     if isinstance(x, DTensor):
@@ -20,6 +24,7 @@ def full_tensor(x: Tensor) -> Tensor:
     return x
 
 
+@timer.time("to_local")
 def to_local(x: Tensor) -> Tensor:
     """Convert DTensor to local Tensor if needed."""
     if isinstance(x, DTensor):
@@ -127,12 +132,13 @@ def distributed_topk(
 ) -> Tuple[Float[DTensor, "batch n_layers d_sae"], Float[Tensor, ""]]: ...
 
 
+@timer.time("distributed_topk")
 def distributed_topk(
     x: Float[DTensor, "batch n_layers d_sae"],
     k: int,
     device_mesh: DeviceMesh,
     dim: Union[int, Tuple[int, ...]] = -1,
-    tolerance: int = 1,
+    tolerance: int = 0,
     max_iterations: int = 50,
     mesh_dim_name: str = "model",
     *,
@@ -293,3 +299,330 @@ def searchsorted(
         )
     else:
         return torch.searchsorted(sorted_sequence, values, right=right, side=side)
+
+
+@timer.time("batch_index")
+def batch_index(
+    x: Float[Tensor, "..."],
+    indices: Float[Tensor, "..."],
+    n_batch_dims: int = 0,
+    preserve_order: bool = False,
+) -> Float[Tensor, "..."]:
+    """
+    Perform batch index operation on a Tensor or DTensor.
+
+    Ordering of the indices is preserved when `preserve_order` is True. Otherwise, the output is first ordered by the device rank where the indices are located.
+    """
+
+    if not isinstance(x, DTensor):
+        return x[*[slice(None) for _ in range(n_batch_dims)], *indices.unbind(dim=1)]
+
+    assert isinstance(indices, DTensor) and all(isinstance(placement, Replicate) for placement in indices.placements), (
+        "Indices must be replicated"
+    )
+
+    with timer.time("prepare_local_indices"):
+        indexing_dims = torch.arange(n_batch_dims, indices.shape[1] + n_batch_dims, device=x.device, dtype=torch.long)
+
+        # Compute local shape and global offset of the input tensor at current rank,
+        # then extract the required dimensions (n_batch_dims to n_batch_dims + indexing_dims - 1)
+        sizes, offsets = compute_local_shape_and_global_offset(
+            x.shape,
+            x.device_mesh,
+            x.placements,
+        )
+        sizes = torch.tensor(sizes, device=x.device, dtype=torch.long)
+        offsets = torch.tensor(offsets, device=x.device, dtype=torch.long)
+        sizes, offsets = sizes[indexing_dims], offsets[indexing_dims]
+
+        # Extract local indices that are within the range of the local part of the input tensor
+        local_indices = indices.to_local()
+        local_index_mask = torch.logical_and(
+            torch.all(torch.ge(local_indices, offsets), dim=1),
+            torch.all(torch.lt(local_indices, offsets + sizes), dim=1),
+        )
+        local_indices = local_indices[local_index_mask] - offsets
+
+    with timer.time("local_indexing"):
+        # Perform the indexing locally
+        local_output = x.to_local()[*[slice(None) for _ in range(n_batch_dims)], *local_indices.unbind(dim=1)]
+
+    with timer.time("gather_index_lengths"):
+        # Collect the length of each local index, to determine how much we need to pad the output tensor
+        index_lengths = DTensor.from_local(
+            torch.tensor([local_indices.shape[0]], device=x.device, dtype=torch.long),
+            device_mesh=x.device_mesh,
+            placements=tuple(
+                Shard(0) if isinstance(p, Shard) and p.dim in indexing_dims else Replicate() for p in x.placements
+            ),
+        ).full_tensor()
+
+    with timer.time("pad_local_output"):
+        # Pad the output tensor to the maximum length of the local indices
+        max_length = int(index_lengths.max().item())
+        pad_shape = (
+            tuple(local_output.shape[:n_batch_dims])
+            + (max_length - local_output.shape[n_batch_dims],)
+            + tuple(local_output.shape[n_batch_dims + 1 :])
+        )
+        local_output_padded = torch.cat(
+            [local_output, torch.zeros(pad_shape, device=x.device, dtype=local_output.dtype)], dim=n_batch_dims
+        )
+
+    def shard_dim_map(dim: int, mode: Literal["before", "after"] = "before") -> Shard | Replicate:
+        if dim < n_batch_dims:
+            return Shard(dim)
+        elif dim < n_batch_dims + indexing_dims.shape[0]:
+            return Shard(n_batch_dims) if mode == "before" else Replicate()
+        else:
+            return Shard(dim - indexing_dims.shape[0] + 1)
+
+    with timer.time("redistribute_indexed_output"):
+        # Gather the padded output tensor across all ranks, and redistribute it to make the indexed dimension replicated
+        output_padded = DTensor.from_local(
+            local_output_padded,
+            device_mesh=x.device_mesh,
+            placements=tuple(
+                shard_dim_map(p.dim, mode="before") if isinstance(p, Shard) else Replicate() for p in x.placements
+            ),
+        ).redistribute(
+            placements=tuple(
+                shard_dim_map(p.dim, mode="after") if isinstance(p, Shard) else Replicate() for p in x.placements
+            ),
+        )
+
+    with timer.time("unpad_output"):
+        output_padded_local = output_padded.to_local()
+        output_local_chunks = []
+        for i, length in enumerate(index_lengths):
+            output_local_chunks.append(
+                output_padded_local[
+                    *[slice(None) for _ in range(n_batch_dims)], i * max_length : i * max_length + length
+                ]
+            )
+        output_local = torch.cat(output_local_chunks, dim=n_batch_dims)
+
+    # The above procedure does not preserve the order of the indices.
+    # Instead, it is first ordered by the device rank where the indices are located,
+    # since the gathering is done in the order of the device ranks.
+    #
+    # We need to collect where the local indices come from (where they are in the global indices)
+    # and compute a reverse index to restore the original order.
+    #
+    # This requires an extra communication, so we make it optional.
+    if preserve_order:
+        with timer.time("restore_order"):
+            local_index_mask_indices = local_index_mask.nonzero(as_tuple=False).squeeze(-1)
+            local_index_mask_indices_padded = torch.cat(
+                [
+                    local_index_mask_indices,
+                    torch.zeros(max_length - local_index_mask_indices.shape[0], device=x.device, dtype=torch.long),
+                ],
+                dim=0,
+            )
+            index_mask_indices_padded = DTensor.from_local(
+                local_index_mask_indices_padded,
+                device_mesh=x.device_mesh,
+                placements=tuple(
+                    Shard(0) if isinstance(p, Shard) and p.dim in indexing_dims else Replicate() for p in x.placements
+                ),
+            ).full_tensor()
+
+            index_mask_indices_chunks = []
+            for i, length in enumerate(index_lengths):
+                index_mask_indices_chunks.append(index_mask_indices_padded[i * max_length : i * max_length + length])
+            index_mask_indices = torch.cat(index_mask_indices_chunks, dim=0)
+            rev_index_mask_indices = torch.argsort(index_mask_indices)
+            output_local = output_local[*[slice(None) for _ in range(n_batch_dims)], rev_index_mask_indices]
+
+    return DTensor.from_local(output_local, device_mesh=output_padded.device_mesh, placements=output_padded.placements)  # type: ignore
+
+
+@timer.time("multi_batch_index")
+def multi_batch_index(
+    xs: list[Float[Tensor, "..."]],
+    indices_list: list[Float[Tensor, "..."]],
+    n_batch_dims: int = 0,
+    preserve_order: bool = False,
+) -> list[Float[Tensor, "..."]]:
+    """
+    Perform batch index operation on multiple Tensors or DTensors efficiently.
+    Groups tensors by shape and placement to minimize communication overhead.
+    """
+    if len(xs) == 0:
+        return []
+
+    if not isinstance(xs[0], DTensor):
+        return [
+            x[*[slice(None) for _ in range(n_batch_dims)], *indices.unbind(dim=1)]
+            for x, indices in zip(xs, indices_list)
+        ]
+
+    results: list[Float[Tensor, "..."] | None] = [None] * len(xs)
+
+    groups = defaultdict(list)
+    for i, (x, indices) in enumerate(zip(xs, indices_list)):
+        assert isinstance(indices, DTensor) and all(
+            isinstance(placement, Replicate) for placement in indices.placements
+        ), "Indices must be replicated"
+        assert isinstance(x, DTensor)
+        key = (x.shape, x.dtype, x.device_mesh, x.placements, indices.shape[1])
+        groups[key].append((i, x, indices))
+
+    for key, group in groups.items():
+        x_shape, x_dtype, device_mesh, placements, n_indexing_dims = key
+
+        indexing_dims = torch.arange(
+            n_batch_dims, n_indexing_dims + n_batch_dims, device=xs[0].device, dtype=torch.long
+        )
+
+        with timer.time("prepare_local_indices"):
+            sizes_tuple, offsets_tuple = compute_local_shape_and_global_offset(
+                x_shape,
+                device_mesh,
+                placements,
+            )
+            sizes = torch.tensor(sizes_tuple, device=xs[0].device, dtype=torch.long)[indexing_dims]
+            offsets = torch.tensor(offsets_tuple, device=xs[0].device, dtype=torch.long)[indexing_dims]
+
+            local_outputs = []
+            local_index_masks = []
+            index_lengths = []
+
+            for idx, x, indices in group:
+                local_indices = indices.to_local()
+                local_index_mask = torch.logical_and(
+                    torch.all(torch.ge(local_indices, offsets), dim=1),
+                    torch.all(torch.lt(local_indices, offsets + sizes), dim=1),
+                )
+                local_indices = local_indices[local_index_mask] - offsets
+
+                # Perform the indexing locally
+                local_output = x.to_local()[*[slice(None) for _ in range(n_batch_dims)], *local_indices.unbind(dim=1)]
+
+                local_outputs.append(local_output)
+                if preserve_order:
+                    local_index_masks.append(local_index_mask)
+                index_lengths.append(local_indices.shape[0])
+
+        stacked_index_mask_indices_global = None
+
+        with timer.time("gather_index_lengths"):
+            index_lengths_tensor = torch.tensor(index_lengths, device=xs[0].device, dtype=torch.long).unsqueeze(1)
+            index_lengths_global = DTensor.from_local(
+                index_lengths_tensor,
+                device_mesh=device_mesh,
+                placements=tuple(
+                    Shard(1) if isinstance(p, Shard) and p.dim in indexing_dims else Replicate() for p in placements
+                ),
+            ).full_tensor()
+
+        with timer.time("pad_local_output"):
+            global_max_length = int(index_lengths_global.max().item())
+
+            padded_local_outputs = []
+            for local_output in local_outputs:
+                pad_shape = (
+                    tuple(local_output.shape[:n_batch_dims])
+                    + (global_max_length - local_output.shape[n_batch_dims],)
+                    + tuple(local_output.shape[n_batch_dims + 1 :])
+                )
+                padded_local_output = torch.cat(
+                    [local_output, torch.zeros(pad_shape, device=xs[0].device, dtype=local_output.dtype)],
+                    dim=n_batch_dims,
+                )
+                padded_local_outputs.append(padded_local_output)
+
+            stacked_local_output_padded = torch.stack(padded_local_outputs, dim=0)
+
+        def shard_dim_map_batched(dim: int, mode: Literal["before", "after"] = "before") -> Shard | Replicate:
+            if dim < n_batch_dims:
+                return Shard(dim + 1)
+            elif dim < n_batch_dims + n_indexing_dims:
+                return Shard(n_batch_dims + 1) if mode == "before" else Replicate()
+            else:
+                return Shard(dim - n_indexing_dims + 2)
+
+        with timer.time("redistribute_indexed_output"):
+            stacked_output_padded = DTensor.from_local(
+                stacked_local_output_padded,
+                device_mesh=device_mesh,
+                placements=tuple(
+                    shard_dim_map_batched(p.dim, mode="before") if isinstance(p, Shard) else Replicate()
+                    for p in placements
+                ),
+            ).redistribute(
+                placements=tuple(
+                    shard_dim_map_batched(p.dim, mode="after") if isinstance(p, Shard) else Replicate()
+                    for p in placements
+                ),
+            )
+
+        if preserve_order:
+            with timer.time("restore_order_prep"):
+                all_local_index_mask_indices_padded = []
+                for item_mask in local_index_masks:
+                    local_index_mask_indices = item_mask.nonzero(as_tuple=False).squeeze(-1)
+                    local_index_mask_indices_padded = torch.cat(
+                        [
+                            local_index_mask_indices,
+                            torch.zeros(
+                                global_max_length - local_index_mask_indices.shape[0],
+                                device=xs[0].device,
+                                dtype=torch.long,
+                            ),
+                        ],
+                        dim=0,
+                    )
+                    all_local_index_mask_indices_padded.append(local_index_mask_indices_padded)
+
+                stacked_index_mask_indices_padded = torch.stack(all_local_index_mask_indices_padded, dim=0)
+
+                stacked_index_mask_indices_global = DTensor.from_local(
+                    stacked_index_mask_indices_padded,
+                    device_mesh=device_mesh,
+                    placements=tuple(
+                        Shard(1) if isinstance(p, Shard) and p.dim in indexing_dims else Replicate() for p in placements
+                    ),
+                ).full_tensor()
+
+        with timer.time("unpad_output"):
+            stacked_output_local = stacked_output_padded.to_local()
+
+            for i, (idx, x, indices) in enumerate(group):
+                item_output_local = stacked_output_local[i]
+                item_index_lengths = index_lengths_global[i]
+
+                output_local_chunks = []
+                for j, length in enumerate(item_index_lengths):
+                    output_local_chunks.append(
+                        item_output_local[
+                            *[slice(None) for _ in range(n_batch_dims)],
+                            j * global_max_length : j * global_max_length + length,
+                        ]
+                    )
+                output_local = torch.cat(output_local_chunks, dim=n_batch_dims)
+
+                if preserve_order:
+                    assert stacked_index_mask_indices_global is not None
+                    item_index_mask_indices_global = stacked_index_mask_indices_global[i]
+                    index_mask_indices_chunks = []
+                    for j, length in enumerate(item_index_lengths):
+                        index_mask_indices_chunks.append(
+                            item_index_mask_indices_global[j * global_max_length : j * global_max_length + length]
+                        )
+                    index_mask_indices = torch.cat(index_mask_indices_chunks, dim=0)
+                    rev_index_mask_indices = torch.argsort(index_mask_indices)
+                    output_local = output_local[*[slice(None) for _ in range(n_batch_dims)], rev_index_mask_indices]
+
+                final_placements = tuple(
+                    Shard(p.dim - 1) if isinstance(p, Shard) else Replicate()
+                    for p in stacked_output_padded.placements  # type: ignore
+                )
+                results[idx] = DTensor.from_local(
+                    output_local,
+                    device_mesh=stacked_output_padded.device_mesh,  # type: ignore
+                    placements=final_placements,
+                )
+
+    return cast(list[Float[Tensor, "..."]], results)

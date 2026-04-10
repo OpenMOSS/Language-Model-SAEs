@@ -726,13 +726,13 @@ class LowRankSparseAttention(
             k = k.permute(2, 0, 3, 1)  # (n_qk_heads, batch, d_qk_head, seq_len)
             scores = torch.einsum("nbqd,nbdk->nbqk", q, k) / self.attn_scale
             scores = cast(
-                torch.Tensor, self.hook_attn_score(self._apply_causal_mask(scores))
+                torch.Tensor, self.hook_attn_score(self._apply_causal_mask(scores).permute(1, 0, 2, 3))
             )  # (n_qk_heads, batch, q_pos, k_pos)
             # Hook called on (batch, n_qk_heads, q_pos, k_pos); permute back for internal use
             pattern = cast(
-                torch.Tensor, self.hook_attn_pattern(F.softmax(scores, dim=-1).permute(1, 0, 2, 3)).permute(1, 0, 2, 3)
+                torch.Tensor,
+                self.hook_attn_pattern(F.softmax(scores, dim=-1)).permute(1, 0, 2, 3),
             )
-
             # Head outputs
             hidden_pre = self._compute_head_outputs(pattern, v)
 

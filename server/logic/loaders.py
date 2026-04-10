@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from datasets import Dataset
+from torch.distributed.device_mesh import DeviceMesh
 
 from lm_saes import SparseDictionaryConfig
 from lm_saes.backend import LanguageModel
@@ -22,14 +23,14 @@ from server.utils.common import synchronized
 @synchronized
 @lru_cache(maxsize=LRU_CACHE_SIZE_MODELS)
 @timer.time("get_model")
-def get_model(*, name: str) -> LanguageModel:
+def get_model(*, name: str, device_mesh: DeviceMesh | None = None) -> LanguageModel:
     """Load and cache a language model."""
     cfg = client.get_model_cfg(name)
     if cfg is None:
         raise ValueError(f"Model {name} not found")
     cfg.tokenizer_only = tokenizer_only
     cfg.device = device
-    return load_model(cfg)
+    return load_model(cfg, device_mesh=device_mesh)
 
 
 @synchronized
@@ -45,11 +46,11 @@ def get_dataset(*, name: str, shard_idx: int = 0, n_shards: int = 1) -> Dataset:
 @synchronized
 @lru_cache(maxsize=LRU_CACHE_SIZE_SAES)
 @timer.time("get_sae")
-def get_sae(*, name: str) -> SparseDictionary:
+def get_sae(*, name: str, device_mesh: DeviceMesh | None = None) -> SparseDictionary:
     """Load and cache a sparse autoencoder."""
     path = client.get_sae_path(name, sae_series)
     assert path is not None, f"SAE {name} not found"
-    sae = SparseDictionary.from_pretrained(path, device=device)
+    sae = SparseDictionary.from_pretrained(path, device=device, device_mesh=device_mesh)
     sae.eval()
     return sae
 

@@ -33,7 +33,6 @@ from .models.protocols import (
 )
 from .models.sae import SAEConfig, SparseAutoEncoder
 from .models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
-from .models.sparse_dictionary import SparseDictionaryConfig as BaseSAEConfig  # backward compat
 from .resource_loaders import load_dataset, load_model
 from .runners import (
     AnalyzeCrosscoderSettings,
@@ -77,7 +76,6 @@ __all__ = [
     "ActivationWriter",
     "SparseDictionary",
     "SparseDictionaryConfig",
-    "BaseSAEConfig",  # backward compat alias
     "NormComputing",
     "NormConstrainable",
     "DatasetNormStandardizable",

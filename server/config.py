@@ -8,7 +8,7 @@ from lm_saes.database import MongoClient
 device = "cuda" if torch.cuda.is_available() else "cpu"
 client = MongoClient(MongoDBConfig())
 sae_series = os.environ.get("SAE_SERIES", "default")
-tokenizer_only = os.environ.get("TOKENIZER_ONLY", "false").lower() == "true"
+tokenizer_only = os.environ.get("IS_WORKER") is None and os.environ.get("NUM_WORKERS") != "0"
 
 # LRU cache sizes (configurable via environment variables)
 LRU_CACHE_SIZE_SAMPLES = int(os.environ.get("LRU_CACHE_SIZE_SAMPLES", "128"))

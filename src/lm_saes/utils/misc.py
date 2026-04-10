@@ -36,6 +36,7 @@ def print_once(
     *values: object,
     sep: str | None = " ",
     end: str | None = "\n",
+    log_fn=logger.info,
 ) -> None:
     """Print only from the master process in distributed training.
 
@@ -43,7 +44,7 @@ def print_once(
     """
     if is_master():
         message = sep.join(str(v) for v in values) if sep else " ".join(str(v) for v in values)
-        logger.info(message)
+        log_fn(message)
 
 
 def check_file_path_unused(file_path):

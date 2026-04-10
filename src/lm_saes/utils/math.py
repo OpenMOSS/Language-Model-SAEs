@@ -48,6 +48,7 @@ def topk(
     dim: Union[int, Tuple[int, ...]] = -1,
     *,
     return_threshold: Literal[False] = False,
+    abs: bool = False,
 ) -> Union[
     Float[torch.Tensor, "batch d_sae"],
     Float[torch.Tensor, "batch n_layers d_sae"],
@@ -66,6 +67,7 @@ def topk(
     dim: Union[int, Tuple[int, ...]] = -1,
     *,
     return_threshold: Literal[True],
+    abs: bool = False,
 ) -> tuple[
     Union[
         Float[torch.Tensor, "batch d_sae"],
