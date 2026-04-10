@@ -130,8 +130,14 @@ class NodeInfo:
 
 
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
-    inv_indices = torch.empty(
+    """Build the inverse-index lookup table for a node's ``indices``.
+
+    Cells corresponding to in-bounds but unregistered positions are filled with ``-1``
+    so that callers can distinguish "row exists" from "row missing" via the sentinel.
+    """
+    inv_indices = torch.full(
         [int(indices[:, i].max() + 1) for i in range(indices.shape[1])],
+        -1,
         device=indices.device,
         dtype=torch.long,
     )
@@ -186,7 +192,6 @@ class Dimension:
             encoded_keys = self.mapper.encode(list(self.node_mappings.keys()))
             for key, encoded_key in zip(self.node_mappings.keys(), encoded_keys):
                 node = self.node_mappings[key]
-                assert not isinstance(node.offsets, DTensor)
                 offset_mapping["keys"][node.offsets] = encoded_key
                 offset_mapping["indices"][node.offsets] = torch.arange(
                     node.indices.shape[0], device=self.device, dtype=torch.long
@@ -268,13 +273,7 @@ class Dimension:
             for i in range(len(unique_keys))
         ]
 
-    def __add__(self, other: "Dimension") -> Self:
-        if not isinstance(other, Dimension):
-            raise TypeError(f"Dimension can only be added with Dimension, got {type(other)}")
-
-        if other.device != self.device:
-            other = other.to(self.device)
-
+    def __add__(self, other: "Dimension") -> "Dimension":
         self_length = len(self)
         all_keys = list(dict.fromkeys([*self.node_mappings.keys(), *other.node_mappings.keys()]))
         node_mappings = {
@@ -305,6 +304,12 @@ class Dimension:
         assert len(ret) == len(self) + len(other), "Dimension length mismatch"
         return ret
 
+    def __sub__(self, other: "Dimension") -> "Dimension":
+        """Return a new Dimension with every ``(key, index)`` pair present in ``other`` removed from ``self``."""
+        lookup = other.nodes_to_offsets(self)
+        kept = (lookup == -1).nonzero().squeeze(-1)
+        return self.offsets_to_nodes(kept)
+
     def __len__(self) -> int:
         return sum([len(node) for node in self.node_mappings.values()])
 
@@ -313,19 +318,31 @@ class Dimension:
 
     @timer.time("nodes_to_offsets")
     def nodes_to_offsets(self, dimension: "Dimension") -> torch.Tensor:
+        """Map every element of ``dimension`` to its offset in ``self``.
+
+        Returns a tensor of shape ``(len(dimension),)``. Elements whose ``(key, index)``
+        pair is missing from ``self`` map to ``-1``.
+        """
         cache_key = hash(dimension)
         cached_offsets = self._nodes_to_offsets_cache.get(cache_key)
         if cached_offsets is not None:
             return cached_offsets
 
-        offsets = torch.empty(len(dimension), device=self.device, dtype=torch.long)
+        offsets = torch.full((len(dimension),), -1, device=self.device, dtype=torch.long)
 
-        # NotImplementedError: Operator aten.index_put_.default does not have a sharding strategy registered.
-        # Set it locally as a workaround.
         for node in dimension.node_mappings.values():
-            offsets[node.offsets] = self.node_mappings[node.key].offsets[
-                self.node_mappings[node.key].inv_indices[node.indices.unbind(dim=1)]
+            if node.key not in self.node_mappings:
+                continue
+            # Missing indices can be out-of-bounds or in-bounds but unregistered (-1).
+            in_bounds = (
+                (node.indices >= 0)
+                & (node.indices < torch.as_tensor(self.node_mappings[node.key].inv_indices.shape, device=self.device))
+            ).all(dim=1)
+            found = self.node_mappings[node.key].inv_indices[
+                torch.where(in_bounds[:, None], node.indices, 0).unbind(dim=1)
             ]
+            mask = in_bounds & (found >= 0)
+            offsets[node.offsets[mask]] = self.node_mappings[node.key].offsets[found[mask]]
 
         if self.device_mesh is not None:
             offsets = DimMap({}).from_local(offsets, self.device_mesh)
@@ -335,6 +352,10 @@ class Dimension:
 
     @timer.time("offsets_to_nodes")
     def offsets_to_nodes(self, offsets: torch.Tensor) -> "Dimension":
+        """The reverse of :meth:`nodes_to_offsets`. Map every offset in ``offsets`` to its ``(key, index)`` pair in ``self``.
+
+        Returns a new Dimension with one Node per unique ``(key, index)`` pair.
+        """
         if self.device_mesh is not None:
             assert isinstance(offsets, DTensor) and all(
                 isinstance(placement, Replicate) for placement in offsets.placements

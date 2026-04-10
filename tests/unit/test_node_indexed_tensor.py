@@ -179,6 +179,137 @@ def test_nodes_to_offsets_merged_node_dimension_matches_list():
 
 
 # ---------------------------------------------------------------------------
+# Dimension.nodes_to_offsets — missing (key, index) pairs return -1
+# ---------------------------------------------------------------------------
+
+
+def test_nodes_to_offsets_unknown_key_returns_sentinel():
+    t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 3)],))
+    result = t.dimensions[0].nodes_to_offsets(_dim(_ni("z", 0)))
+    assert torch.equal(result, torch.tensor([-1]))
+
+
+def test_nodes_to_offsets_out_of_bounds_index_returns_sentinel():
+    # "a" has indices [0, 3] → inv_indices.shape == (4,). Index 7 is OOB.
+    t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 3)],))
+    result = t.dimensions[0].nodes_to_offsets(_dim(_ni("a", 7)))
+    assert torch.equal(result, torch.tensor([-1]))
+
+
+def test_nodes_to_offsets_in_bounds_unregistered_returns_sentinel():
+    # "a" has indices [0, 3] → inv_indices.shape == (4,). Index 1 is in-bounds but unregistered.
+    t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 3)],))
+    result = t.dimensions[0].nodes_to_offsets(_dim(_ni("a", 1)))
+    assert torch.equal(result, torch.tensor([-1]))
+
+
+def test_nodes_to_offsets_mixed_valid_and_missing():
+    # "a"→0,3 (offsets 0,1) ; "b"→1,2 (offsets 2,3). inv_indices.shape == (4,) for "a".
+    t = NodeIndexedTensor.from_dimensions(
+        dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
+    )
+    selection = _dim(_ni("a", 0), _ni("a", 1), _ni("a", 7), _ni("b", 2), _ni("z", 0))
+    # a→0 hits offset 0 ; a→1 in-bounds-unregistered → -1 ; a→7 OOB → -1 ;
+    # b→2 hits offset 3 ; z→0 unknown key → -1.
+    assert torch.equal(t.dimensions[0].nodes_to_offsets(selection), torch.tensor([0, -1, -1, 3, -1]))
+
+
+def test_nodes_to_offsets_2d_out_of_bounds_returns_sentinel():
+    # _ni2("a", (0, 0), (1, 2)) → inv_indices.shape == (2, 3). (3, 0) is OOB on axis 0.
+    t = NodeIndexedTensor.from_dimensions(dimensions=([_ni2("a", (0, 0), (1, 2))],))
+    result = t.dimensions[0].nodes_to_offsets(_dim(_ni2("a", (3, 0))))
+    assert torch.equal(result, torch.tensor([-1]))
+
+
+def test_nodes_to_offsets_2d_in_bounds_unregistered_returns_sentinel():
+    # inv_indices.shape == (2, 3) but only (0, 0) and (1, 2) are registered.
+    t = NodeIndexedTensor.from_dimensions(dimensions=([_ni2("a", (0, 0), (1, 2))],))
+    result = t.dimensions[0].nodes_to_offsets(_dim(_ni2("a", (0, 1))))
+    assert torch.equal(result, torch.tensor([-1]))
+
+
+# ---------------------------------------------------------------------------
+# Dimension.__sub__ — remove (key, index) pairs
+# ---------------------------------------------------------------------------
+
+
+def test_sub_removes_subset_of_single_node():
+    full = _dim(_ni("a", 0, 3, 7))
+    to_remove = _dim(_ni("a", 3))
+    result = (full - to_remove).node_infos
+    assert len(result) == 1
+    assert result[0].key == "a"
+    assert torch.equal(result[0].indices, torch.tensor([[0], [7]]))
+
+
+def test_sub_removes_entire_node():
+    full = _dim(_ni("a", 0, 3), _ni("b", 1, 2))
+    to_remove = _dim(_ni("b", 1, 2))
+    result = (full - to_remove).node_infos
+    assert len(result) == 1
+    assert result[0].key == "a"
+    assert torch.equal(result[0].indices, torch.tensor([[0], [3]]))
+
+
+def test_sub_ignores_pairs_absent_from_self():
+    full = _dim(_ni("a", 0, 3))
+    # Unknown key, OOB index, and in-bounds-unregistered all silently ignored.
+    to_remove = _dim(_ni("a", 1), _ni("a", 7), _ni("z", 0))
+    result = (full - to_remove).node_infos
+    assert len(result) == 1
+    assert result[0].key == "a"
+    assert torch.equal(result[0].indices, torch.tensor([[0], [3]]))
+
+
+def test_sub_removes_across_multiple_nodes():
+    full = _dim(_ni("a", 0, 3), _ni("b", 1, 2))
+    to_remove = _dim(_ni("a", 3), _ni("b", 1))
+    result = (full - to_remove).node_infos
+    assert len(result) == 2
+    assert result[0].key == "a"
+    assert torch.equal(result[0].indices, torch.tensor([[0]]))
+    assert result[1].key == "b"
+    assert torch.equal(result[1].indices, torch.tensor([[2]]))
+
+
+def test_sub_removing_everything_yields_empty_dimension():
+    full = _dim(_ni("a", 0, 3))
+    result = full - full
+    assert len(result) == 0
+    assert result.node_infos == []
+
+
+def test_sub_yields_contiguous_offsets():
+    """Result of __sub__ must have offsets re-numbered from 0 so it can index a tensor."""
+    full = _dim(_ni("a", 0, 3, 7), _ni("b", 1, 2))
+    to_remove = _dim(_ni("a", 3))
+    result = full - to_remove
+    # Remaining nodes: a→0 (offset 0), a→7 (1), b→1 (2), b→2 (3)
+    assert len(result) == 4
+    offsets = result.nodes_to_offsets(_dim(_ni("a", 0, 7), _ni("b", 1, 2)))
+    assert torch.equal(offsets, torch.tensor([0, 1, 2, 3]))
+
+
+def test_sub_with_2d_indices():
+    full = _dim(_ni2("a", (0, 0), (0, 1), (1, 2)))
+    to_remove = _dim(_ni2("a", (0, 1)))
+    result = (full - to_remove).node_infos
+    assert len(result) == 1
+    assert result[0].key == "a"
+    assert torch.equal(result[0].indices, torch.tensor([[0, 0], [1, 2]]))
+
+
+def test_sub_is_inverse_of_add_for_disjoint_pieces():
+    a = _dim(_ni("k", 0, 3))
+    b = _dim(_ni("k", 7), _ni("m", 1))
+    combined = a + b
+    leftover = (combined - b).node_infos
+    assert len(leftover) == 1
+    assert leftover[0].key == "k"
+    assert torch.equal(leftover[0].indices, torch.tensor([[0], [3]]))
+
+
+# ---------------------------------------------------------------------------
 # Dimension.offsets_to_nodes
 # ---------------------------------------------------------------------------
 
