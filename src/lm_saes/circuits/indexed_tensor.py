@@ -11,6 +11,8 @@ from typing import (
     Self,
     Sequence,
     TypeVar,
+    TypeVarTuple,
+    Unpack,
     cast,
     overload,
 )
@@ -830,12 +832,13 @@ class SupportsGetItem(Protocol[T_co]):
 
 
 V = TypeVar("V", bound=SupportsGetItem[Any])
+Dims = TypeVarTuple("Dims")
 
 
 @dataclass
-class Dimensioned(Generic[V]):
+class Dimensioned(Generic[V, Unpack[Dims]]):
     value: V
-    dimensions: tuple[NodeDimension, ...]
+    dimensions: tuple[Unpack[Dims]]
 
     def __len__(self) -> int:
         return len(self.dimensions[0])
