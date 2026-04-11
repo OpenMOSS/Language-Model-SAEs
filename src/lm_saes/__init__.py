@@ -16,7 +16,19 @@ from .analysis import (
     FeatureAnalyzerConfig,
 )
 from .backend.language_model import HuggingFaceLanguageModel, LanguageModelConfig, TransformerLensLanguageModel
-from .circuit import ReplacementModel, attribute
+from .circuits import (
+    AttributionResult,
+    Dimensioned,
+    DimensionedMatrix,
+    DimensionedTensor,
+    DimensionedVector,
+    NodeDimension,
+    NodeInfo,
+    attribute,
+    compute_hessian_matrix,
+    prune_attribution,
+    qk_trace,
+)
 from .config import DatasetConfig
 from .database import MongoClient, MongoDBConfig
 from .evaluator import EvalConfig, Evaluator
@@ -136,8 +148,6 @@ __all__ = [
     "auto_interp",
     "sweep_sae",
     "train_crosscoder",
-    "ReplacementModel",
-    "attribute",
     "LowRankSparseAttention",
     "TrainLorsaSettings",
     "train_lorsa",
@@ -151,4 +161,15 @@ __all__ = [
     "TrainMOLTSettings",
     "DirectLogitAttributorConfig",
     "PretrainedSAE",
+    "AttributionResult",
+    "Dimensioned",
+    "DimensionedMatrix",
+    "DimensionedTensor",
+    "DimensionedVector",
+    "NodeDimension",
+    "NodeInfo",
+    "attribute",
+    "prune_attribution",
+    "qk_trace",
+    "compute_hessian_matrix",
 ]

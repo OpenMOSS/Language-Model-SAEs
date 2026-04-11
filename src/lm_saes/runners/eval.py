@@ -10,11 +10,8 @@ from torch.distributed.device_mesh import init_device_mesh
 
 from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
 from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.circuit.replacement_model import ReplacementModel
-from lm_saes.evaluator import EvalConfig, Evaluator, GraphEval, GraphEvalConfig
-from lm_saes.models.clt import CrossLayerTranscoder
+from lm_saes.evaluator import EvalConfig, Evaluator
 from lm_saes.models.crosscoder import Crosscoder
-from lm_saes.models.lorsa import LowRankSparseAttention
 from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.trainer import WandbConfig
 from lm_saes.utils.distributed import mesh_rank
@@ -23,30 +20,6 @@ from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from .utils import PretrainedSAE
 
 logger = get_distributed_logger("runners.eval")
-
-
-class EvalGraphSettings(BaseSettings):
-    model_cfg: LanguageModelConfig
-    """Configuration for the language model."""
-
-    transcoders_path: str
-    """The save path of CLT."""
-
-    lorsas_path: list
-    """The save path of lorsa."""
-
-    dataset_path: str
-    """The path of evaluation json file."""
-
-    eval: GraphEvalConfig
-    """Configuration for the GraphEval"""
-
-    device: str = "cuda"
-    """Device type to use for distributed training ('cuda' or 'cpu')"""
-
-    show: bool = False
-
-    use_lorsa: bool = True
 
 
 class EvaluateSAESettings(BaseSettings):
@@ -140,43 +113,6 @@ def evaluate_sae(settings: EvaluateSAESettings) -> None:
     evaluator = Evaluator(settings.eval)
     evaluator.evaluate(sae, activations, wandb_logger)
     logger.info("Evaluation completed")
-
-
-def eval_graph(settings: EvalGraphSettings) -> None:
-    # Set up logging
-    setup_logging(level="INFO")
-
-    logger.info("Loading transcoder and lorsa")
-    transcoders = CrossLayerTranscoder.from_pretrained(
-        settings.transcoders_path,
-        device=settings.device,
-    )
-
-    if settings.use_lorsa:
-        lorsas = [
-            LowRankSparseAttention.from_pretrained(lorsa_cfg, device=settings.device)
-            for lorsa_cfg in settings.lorsas_path
-        ]
-        # for lorsa in lorsas:
-        #     lorsa.cfg.skip_bos = False
-    else:
-        lorsas = None
-
-    logger.info("Loading replacement model")
-    replacement_model = ReplacementModel.from_pretrained(
-        settings.model_cfg,
-        transcoders,  # type: ignore[reportArgumentType]
-        lorsas,  # type: ignore[reportArgumentType]
-        use_lorsa=settings.use_lorsa,
-    )
-
-    grapheval = GraphEval(settings.eval)
-
-    grapheval.eval(
-        replacement_model,
-        settings.dataset_path,
-        use_lorsa=settings.use_lorsa,
-    )
 
 
 class EvaluateCrosscoderSettings(BaseSettings):

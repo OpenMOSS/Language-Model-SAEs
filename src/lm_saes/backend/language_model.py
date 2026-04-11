@@ -33,14 +33,6 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from lm_saes.backend.attribution import (
-    attribute,
-    qk_trace,
-)
-from lm_saes.backend.hooks import apply_saes, detach_at
-from lm_saes.backend.indexed_tensor import (
-    NodeInfo,
-)
 from lm_saes.backend.tl_addons import run_with_cache_until, run_with_ref_cache
 from lm_saes.config import BaseModelConfig
 from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
@@ -49,6 +41,7 @@ from lm_saes.utils.misc import pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
+    from lm_saes.circuits.indexed_tensor import NodeInfo
     from lm_saes.models.sparse_dictionary import SparseDictionary
 
 
@@ -495,14 +488,18 @@ class TransformerLensLanguageModel(LanguageModel):
 
     @contextmanager
     def apply_saes(self, saes: list[SparseDictionary]):
+        from lm_saes.circuits.hooks import apply_saes as _apply_saes
+
         assert self.model is not None, "model must be initialized"
-        with apply_saes(self, saes):
+        with _apply_saes(self, saes):
             yield self
 
     @contextmanager
     def detach_at(self, hook_points: list[str]):
+        from lm_saes.circuits.hooks import detach_at as _detach_at
+
         assert self.model is not None, "model must be initialized"
-        with detach_at(self, hook_points):
+        with _detach_at(self, hook_points):
             yield self
 
     def run_with_ref_cache(self, *args, **kwargs) -> Any:
@@ -526,6 +523,8 @@ class TransformerLensLanguageModel(LanguageModel):
         qk_top_fraction: float = 0.6,
         qk_topk: int = 10,
     ):
+        from lm_saes.circuits.attribution import attribute
+
         return attribute(
             self,
             inputs,
@@ -547,6 +546,8 @@ class TransformerLensLanguageModel(LanguageModel):
         topk: int = 10,
         batch_size: int = 1,
     ):
+        from lm_saes.circuits.attribution import qk_trace
+
         return qk_trace(
             self,
             inputs,
