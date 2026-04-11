@@ -21,12 +21,19 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate
 from torch.types import Number
 
+from lm_saes.core.serialize import (
+    override,
+    register_overrides,
+    structure,
+    unstructure,
+)
 from lm_saes.utils.discrete import DiscreteMapper
 from lm_saes.utils.distributed import DimMap, full_tensor
 from lm_saes.utils.misc import tensor_id
 from lm_saes.utils.timer import timer
 
 
+@register_overrides(_inv_indices=override(omit=True))
 @dataclass(frozen=True)
 class Node:
     key: Any
@@ -73,17 +80,6 @@ class Node:
         else:
             return self
 
-    def state_dict(self) -> dict:
-        return {
-            "key": self.key,
-            "indices": self.indices,
-            "offsets": self.offsets,
-        }
-
-    @classmethod
-    def from_state_dict(cls, state: dict) -> "Node":
-        return cls(key=state["key"], indices=state["indices"], offsets=state["offsets"])
-
 
 @dataclass
 class NodeInfo:
@@ -123,13 +119,6 @@ class NodeInfo:
 
     def full_tensor(self) -> Self:
         return replace(self, indices=full_tensor(self.indices))
-
-    def state_dict(self) -> dict:
-        return {"key": self.key, "indices": self.indices}
-
-    @classmethod
-    def from_state_dict(cls, state: dict) -> "NodeInfo":
-        return cls(key=state["key"], indices=state["indices"])
 
 
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
@@ -470,17 +459,12 @@ class Dimension:
     def full_tensor(self) -> Self:
         return replace(self, device_mesh=None)
 
-    def state_dict(self) -> dict:
-        """Serialize to a minimal dict — only keys, indices, and offsets per node."""
-        return {
-            "nodes": [node.state_dict() for node in self.node_mappings.values()],
-        }
+    def __unstructure__(self) -> dict[str, Any]:
+        return unstructure(self.node_mappings)
 
     @classmethod
-    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "Dimension":
-        """Reconstruct from state_dict.  mapper, caches, and device_mesh are rebuilt."""
-        node_mappings = {node_state["key"]: Node.from_state_dict(node_state) for node_state in state["nodes"]}
-        return cls._from_node_mappings(node_mappings=node_mappings, device=device)
+    def __structure__(cls, data: dict[str, Any]) -> Self:
+        return cls._from_node_mappings(node_mappings=structure(data, dict[Any, Node]), device=data.get("device", "cpu"))
 
 
 class NodeIndexedTensor:
@@ -686,17 +670,13 @@ class NodeIndexedTensor:
             tuple(dim.full_tensor() for dim in self.dimensions),
         )
 
-    def state_dict(self) -> dict:
-        return {
-            "data": self.data,
-            "dimensions": [dim.state_dict() for dim in self.dimensions],
-        }
+    def __unstructure__(self) -> dict[str, Any]:
+        return {"data": self.data, "dimensions": [unstructure(d) for d in self.dimensions]}
 
     @classmethod
-    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> Self:
-        dimensions = tuple(Dimension.from_state_dict(dim_state, device=device) for dim_state in state["dimensions"])
-        data = state["data"].to(device)
-        return cls.from_data(data=data, dimensions=dimensions)
+    def __structure__(cls, data: dict[str, Any]) -> Self:
+        dims = tuple(structure(d, Dimension) for d in data["dimensions"])
+        return cls.from_data(data=data["data"], dimensions=dims)
 
 
 class NodeIndexedVector(NodeIndexedTensor):
@@ -874,36 +854,3 @@ class Dimensioned(Generic[V]):
             value=new_value,
             dimensions=tuple(d.to(device) for d in self.dimensions),
         )
-
-    def state_dict(self) -> dict:
-        return {
-            "value": _encode_value(self.value),
-            "dimensions": [d.state_dict() for d in self.dimensions],
-        }
-
-    @classmethod
-    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "Dimensioned":
-        value = _decode_value(state["value"], device=device)
-        dimensions = tuple(Dimension.from_state_dict(d, device=device) for d in state["dimensions"])
-        return cls(value=value, dimensions=dimensions)
-
-
-def _encode_value(v: Any) -> dict:
-    if isinstance(v, torch.Tensor):
-        return {"kind": "tensor", "data": v}
-    if isinstance(v, Dimensioned):
-        return {"kind": "dimensioned", "data": v.state_dict()}
-    if isinstance(v, list):
-        return {"kind": "list", "data": [_encode_value(x) for x in v]}
-    raise TypeError(f"Dimensioned does not know how to serialize value of type {type(v).__name__}")
-
-
-def _decode_value(state: dict, device: torch.device | str) -> Any:
-    kind = state["kind"]
-    if kind == "tensor":
-        return cast(torch.Tensor, state["data"]).to(device)
-    if kind == "dimensioned":
-        return Dimensioned.from_state_dict(state["data"], device=device)
-    if kind == "list":
-        return [_decode_value(x, device=device) for x in state["data"]]
-    raise ValueError(f"Unknown Dimensioned value kind: {kind!r}")

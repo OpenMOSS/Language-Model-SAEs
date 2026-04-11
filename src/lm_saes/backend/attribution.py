@@ -109,43 +109,6 @@ class AttributionResult:
             qk_trace_results=self.qk_trace_results,
         )
 
-    _STATE_DICT_VERSION = 1
-
-    def state_dict(self) -> dict:
-        return {
-            "_version": self._STATE_DICT_VERSION,
-            "activations": self.activations.state_dict(),
-            "attribution": self.attribution.state_dict(),
-            "logits": self.logits,
-            "probs": self.probs,
-            "prompt_token_ids": self.prompt_token_ids,
-            "prompt_tokens": self.prompt_tokens,
-            "logit_token_ids": self.logit_token_ids,
-            "logit_tokens": self.logit_tokens,
-            "qk_trace_results": self.qk_trace_results.state_dict() if self.qk_trace_results is not None else None,
-        }
-
-    @classmethod
-    def from_state_dict(cls, state: dict, device: torch.device | str = "cpu") -> "AttributionResult":
-        # version = state.get("_version", 1)  # reserved for future migrations
-        qk_trace_results: Dimensioned[list[Dimensioned[torch.Tensor]]] | None = (
-            Dimensioned.from_state_dict(state["qk_trace_results"], device=device)
-            if state["qk_trace_results"] is not None
-            else None
-        )
-        result = cls(
-            activations=NodeIndexedVector.from_state_dict(state["activations"], device=device),
-            attribution=NodeIndexedMatrix.from_state_dict(state["attribution"], device=device),
-            logits=state["logits"].to(device),
-            probs=state["probs"].to(device),
-            prompt_token_ids=state["prompt_token_ids"],
-            prompt_tokens=state["prompt_tokens"],
-            logit_token_ids=state["logit_token_ids"],
-            logit_tokens=state["logit_tokens"],
-            qk_trace_results=qk_trace_results,
-        )
-        return result
-
 
 def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
     return NodeIndexedMatrix.from_data(
