@@ -9,7 +9,7 @@ import torch
 from fastapi import APIRouter, Response
 from pydantic import BaseModel
 
-from lm_saes.database import FeatureRecord
+from lm_saes import FeatureRecord
 from server.config import client, sae_series
 from server.logic.loaders import get_model, get_sae
 from server.logic.samples import cached_extract_samples, list_feature_data

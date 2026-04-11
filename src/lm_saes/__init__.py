@@ -15,7 +15,12 @@ from .analysis import (
     FeatureAnalyzer,
     FeatureAnalyzerConfig,
 )
-from .backend.language_model import HuggingFaceLanguageModel, LanguageModelConfig, TransformerLensLanguageModel
+from .backend.language_model import (
+    HuggingFaceLanguageModel,
+    LanguageModel,
+    LanguageModelConfig,
+    TransformerLensLanguageModel,
+)
 from .circuits import (
     AttributionResult,
     Dimensioned,
@@ -30,7 +35,15 @@ from .circuits import (
     qk_trace,
 )
 from .config import DatasetConfig
-from .database import MongoClient, MongoDBConfig
+from .database import (
+    CircuitConfig,
+    CircuitInput,
+    CircuitStatus,
+    FeatureAnalysisSampling,
+    FeatureRecord,
+    MongoClient,
+    MongoDBConfig,
+)
 from .evaluator import EvalConfig, Evaluator
 from .initializer import Initializer, InitializerConfig
 from .models.clt import CLTConfig, CrossLayerTranscoder
@@ -45,7 +58,7 @@ from .models.protocols import (
 )
 from .models.sae import SAEConfig, SparseAutoEncoder
 from .models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
-from .resource_loaders import load_dataset, load_model
+from .resource_loaders import load_dataset, load_dataset_shard, load_model
 from .runners import (
     AnalyzeCrosscoderSettings,
     AnalyzeSAESettings,
@@ -98,6 +111,7 @@ __all__ = [
     "Crosscoder",
     "SparseAutoEncoder",
     "JumpReLU",
+    "LanguageModel",
     "LanguageModelConfig",
     "HuggingFaceLanguageModel",
     "DatasetConfig",
@@ -108,6 +122,7 @@ __all__ = [
     "BufferShuffleConfig",
     "ActivationFactoryTarget",
     "load_dataset",
+    "load_dataset_shard",
     "load_model",
     "FeatureAnalyzer",
     "EvaluateCrosscoderSettings",
@@ -139,6 +154,11 @@ __all__ = [
     "FeatureAnalyzerConfig",
     "MongoDBConfig",
     "MongoClient",
+    "CircuitConfig",
+    "CircuitInput",
+    "CircuitStatus",
+    "FeatureAnalysisSampling",
+    "FeatureRecord",
     "AnalyzeCrosscoderSettings",
     "analyze_crosscoder",
     "AutoInterpSettings",

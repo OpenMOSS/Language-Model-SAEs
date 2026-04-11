@@ -3,7 +3,7 @@ from typing import Any, Generator
 
 import numpy as np
 
-from lm_saes.database import FeatureAnalysisSampling
+from lm_saes import FeatureAnalysisSampling
 from server.config import LRU_CACHE_SIZE_SAMPLES, client, sae_series
 from server.logic.loaders import get_dataset, get_model
 

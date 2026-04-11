@@ -11,13 +11,18 @@ from fastapi import APIRouter, BackgroundTasks, Response
 from pydantic import BaseModel
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes.backend.attribution import prune_attribution
-from lm_saes.backend.indexed_tensor import Dimension, Dimensioned
-from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.database import CircuitConfig, CircuitInput, CircuitStatus
-from lm_saes.models.lorsa import LorsaConfig
-from lm_saes.models.molt import MOLTConfig
-from lm_saes.models.sae import SAEConfig
+from lm_saes import (
+    CircuitConfig,
+    CircuitInput,
+    CircuitStatus,
+    Dimensioned,
+    LorsaConfig,
+    MOLTConfig,
+    NodeDimension,
+    SAEConfig,
+    TransformerLensLanguageModel,
+    prune_attribution,
+)
 from lm_saes.utils.distributed import is_primary_rank
 from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.timer import timer
@@ -199,12 +204,12 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
         (
             sum(
                 [results.dimensions[0] + results.dimensions[1] for results, _ in ar.qk_trace_results],
-                Dimension.empty(device=device),
+                NodeDimension.empty(device=device),
             ).unique()  # pyright: ignore[reportAttributeAccessIssue]
             - ov_nodes
         )
         if ar.qk_trace_results is not None
-        else Dimension.empty(device=device)
+        else NodeDimension.empty(device=device)
     )
     is_from_qk_tracings = torch.zeros(len(ov_nodes) + len(qk_nodes), device=device, dtype=torch.bool)
     is_from_qk_tracings[len(ov_nodes) :] = True
