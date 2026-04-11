@@ -464,7 +464,7 @@ class Dimension:
 
     @classmethod
     def __structure__(cls, data: dict[str, Any]) -> Self:
-        return cls._from_node_mappings(node_mappings=structure(data, dict[Any, Node]), device=data.get("device", "cpu"))
+        return cls._from_node_mappings(node_mappings=structure(data, dict[Any, Node]))
 
 
 class NodeIndexedTensor:
