@@ -2,8 +2,7 @@ import os
 
 import torch
 
-from lm_saes import MongoDBConfig
-from lm_saes.database import MongoClient
+from lm_saes import MongoClient, MongoDBConfig
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 client = MongoClient(MongoDBConfig())

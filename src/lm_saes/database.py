@@ -18,9 +18,13 @@ from tqdm import tqdm
 from lm_saes.backend.attribution import AttributionResult
 from lm_saes.backend.language_model import LanguageModelConfig
 from lm_saes.config import DatasetConfig
+from lm_saes.core.serialize import dump, load
 from lm_saes.models.sparse_dictionary import SAE_TYPE_TO_CONFIG_CLASS, SparseDictionaryConfig
 from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
+from lm_saes.utils.logging import get_distributed_logger
 from lm_saes.utils.timer import timer
+
+logger = get_distributed_logger(__name__)
 
 
 class MongoDBConfig(BaseModel):
@@ -1019,13 +1023,12 @@ class MongoClient:
         return result.modified_count > 0
 
     def store_attribution(self, circuit_id: str, attribution: AttributionResult) -> bool:
-        """Store attribution data to GridFS using torch.save with state_dict."""
+        """Store attribution data to GridFS via ``lm_saes.core.serialize``."""
         assert self.fs is not None
 
         buf = io.BytesIO()
-        torch.save(attribution.state_dict(), buf)
-        attribution_bytes = buf.getvalue()
-        attribution_id = self.fs.put(attribution_bytes, filename=f"circuit_{circuit_id}_attribution")
+        torch.save(dump(attribution), buf)
+        attribution_id = self.fs.put(buf.getvalue(), filename=f"circuit_{circuit_id}_attribution")
 
         result = self.circuit_collection.update_one(
             {"_id": ObjectId(circuit_id)},
@@ -1042,10 +1045,8 @@ class MongoClient:
         if circuit is None or circuit.get("attribution_id") is None:
             return None
         attribution_bytes = self.fs.get(circuit["attribution_id"]).read()
-
-        buf = io.BytesIO(attribution_bytes)
-        state = torch.load(buf, map_location=device, weights_only=True)
-        return AttributionResult.from_state_dict(state, device=device)
+        state = torch.load(io.BytesIO(attribution_bytes), map_location=device, weights_only=True)
+        return load(state, AttributionResult)
 
     def get_circuit_status(self, circuit_id: str) -> Optional[dict[str, Any]]:
         """Get just the status information for a circuit."""

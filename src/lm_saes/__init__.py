@@ -15,10 +15,35 @@ from .analysis import (
     FeatureAnalyzer,
     FeatureAnalyzerConfig,
 )
-from .backend.language_model import HuggingFaceLanguageModel, LanguageModelConfig, TransformerLensLanguageModel
-from .circuit import ReplacementModel, attribute
+from .backend.language_model import (
+    HuggingFaceLanguageModel,
+    LanguageModel,
+    LanguageModelConfig,
+    TransformerLensLanguageModel,
+)
+from .circuits import (
+    AttributionResult,
+    NodeAxis,
+    NodeIndexed,
+    NodeIndexedMatrix,
+    NodeIndexedTensor,
+    NodeIndexedVector,
+    NodeInfo,
+    attribute,
+    compute_hessian_matrix,
+    prune_attribution,
+    qk_trace,
+)
 from .config import DatasetConfig
-from .database import MongoClient, MongoDBConfig
+from .database import (
+    CircuitConfig,
+    CircuitInput,
+    CircuitStatus,
+    FeatureAnalysisSampling,
+    FeatureRecord,
+    MongoClient,
+    MongoDBConfig,
+)
 from .evaluator import EvalConfig, Evaluator
 from .initializer import Initializer, InitializerConfig
 from .models.clt import CLTConfig, CrossLayerTranscoder
@@ -33,7 +58,7 @@ from .models.protocols import (
 )
 from .models.sae import SAEConfig, SparseAutoEncoder
 from .models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
-from .resource_loaders import load_dataset, load_model
+from .resource_loaders import load_dataset, load_dataset_shard, load_model
 from .runners import (
     AnalyzeCrosscoderSettings,
     AnalyzeSAESettings,
@@ -86,6 +111,7 @@ __all__ = [
     "Crosscoder",
     "SparseAutoEncoder",
     "JumpReLU",
+    "LanguageModel",
     "LanguageModelConfig",
     "HuggingFaceLanguageModel",
     "DatasetConfig",
@@ -96,6 +122,7 @@ __all__ = [
     "BufferShuffleConfig",
     "ActivationFactoryTarget",
     "load_dataset",
+    "load_dataset_shard",
     "load_model",
     "FeatureAnalyzer",
     "EvaluateCrosscoderSettings",
@@ -127,6 +154,11 @@ __all__ = [
     "FeatureAnalyzerConfig",
     "MongoDBConfig",
     "MongoClient",
+    "CircuitConfig",
+    "CircuitInput",
+    "CircuitStatus",
+    "FeatureAnalysisSampling",
+    "FeatureRecord",
     "AnalyzeCrosscoderSettings",
     "analyze_crosscoder",
     "AutoInterpSettings",
@@ -136,8 +168,6 @@ __all__ = [
     "auto_interp",
     "sweep_sae",
     "train_crosscoder",
-    "ReplacementModel",
-    "attribute",
     "LowRankSparseAttention",
     "TrainLorsaSettings",
     "train_lorsa",
@@ -151,4 +181,15 @@ __all__ = [
     "TrainMOLTSettings",
     "DirectLogitAttributorConfig",
     "PretrainedSAE",
+    "AttributionResult",
+    "NodeIndexed",
+    "NodeIndexedMatrix",
+    "NodeIndexedTensor",
+    "NodeIndexedVector",
+    "NodeAxis",
+    "NodeInfo",
+    "attribute",
+    "prune_attribution",
+    "qk_trace",
+    "compute_hessian_matrix",
 ]

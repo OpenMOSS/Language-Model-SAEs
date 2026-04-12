@@ -3,10 +3,13 @@ from functools import lru_cache
 from datasets import Dataset
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes import SparseDictionaryConfig
-from lm_saes.backend import LanguageModel
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.resource_loaders import load_dataset_shard, load_model
+from lm_saes import (
+    LanguageModel,
+    SparseDictionary,
+    SparseDictionaryConfig,
+    load_dataset_shard,
+    load_model,
+)
 from lm_saes.utils.timer import timer
 from server.config import (
     LRU_CACHE_SIZE_DATASETS,
