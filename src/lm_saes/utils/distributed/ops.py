@@ -440,8 +440,7 @@ def batch_index(
 
 @timer.time("multi_batch_index")
 def multi_batch_index(
-    xs: list[Float[Tensor, "..."]],
-    indices_list: list[Float[Tensor, "..."]],
+    xs_and_indices: list[tuple[Float[Tensor, "..."], Float[Tensor, "..."]]],
     n_batch_dims: int = 0,
     preserve_order: bool = False,
 ) -> list[Float[Tensor, "..."]]:
@@ -449,19 +448,18 @@ def multi_batch_index(
     Perform batch index operation on multiple Tensors or DTensors efficiently.
     Groups tensors by shape and placement to minimize communication overhead.
     """
-    if len(xs) == 0:
+    if len(xs_and_indices) == 0:
         return []
 
-    if not isinstance(xs[0], DTensor):
-        return [
-            x[*[slice(None) for _ in range(n_batch_dims)], *indices.unbind(dim=1)]
-            for x, indices in zip(xs, indices_list)
-        ]
+    xs = [x for x, _ in xs_and_indices]
 
-    results: list[Float[Tensor, "..."] | None] = [None] * len(xs)
+    if not isinstance(xs[0], DTensor):
+        return [x[*[slice(None) for _ in range(n_batch_dims)], *indices.unbind(dim=1)] for x, indices in xs_and_indices]
+
+    results: list[Float[Tensor, "..."] | None] = [None] * len(xs_and_indices)
 
     groups = defaultdict(list)
-    for i, (x, indices) in enumerate(zip(xs, indices_list)):
+    for i, (x, indices) in enumerate(xs_and_indices):
         assert isinstance(indices, DTensor) and all(
             isinstance(placement, Replicate) for placement in indices.placements
         ), "Indices must be replicated"

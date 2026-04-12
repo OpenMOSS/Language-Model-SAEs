@@ -303,7 +303,7 @@ def test_multi_batch_index_no_batch():
     indices1 = distribute_tensor(torch.tensor([[0, 0], [1, 2], [2, 3]], device="cuda"), device_mesh, [Replicate()])
     indices2 = distribute_tensor(torch.tensor([[0, 1], [1, 1], [2, 2]], device="cuda"), device_mesh, [Replicate()])
 
-    results = multi_batch_index([x1, x2], [indices1, indices2], preserve_order=True)
+    results = multi_batch_index([(x1, indices1), (x2, indices2)], preserve_order=True)
 
     loss = results[0].sum() + results[1].sum()
     loss.backward()
@@ -373,7 +373,7 @@ def test_multi_batch_index_with_batch():
     indices1 = distribute_tensor(torch.tensor([[0], [1], [2]], device="cuda"), device_mesh, [Replicate()])
     indices2 = distribute_tensor(torch.tensor([[1], [0], [3]], device="cuda"), device_mesh, [Replicate()])
 
-    results = multi_batch_index([x1, x2], [indices1, indices2], n_batch_dims=1, preserve_order=True)
+    results = multi_batch_index([(x1, indices1), (x2, indices2)], n_batch_dims=1, preserve_order=True)
 
     loss = results[0].sum() + results[1].sum()
     loss.backward()
@@ -449,7 +449,7 @@ def test_multi_batch_index_dim3():
     indices1 = distribute_tensor(torch.tensor([[0, 1], [1, 0], [1, 1]], device="cuda"), device_mesh, [Replicate()])
     indices2 = distribute_tensor(torch.tensor([[1, 0], [0, 1], [0, 0]], device="cuda"), device_mesh, [Replicate()])
 
-    results = multi_batch_index([x1, x2], [indices1, indices2], n_batch_dims=1, preserve_order=True)
+    results = multi_batch_index([(x1, indices1), (x2, indices2)], n_batch_dims=1, preserve_order=True)
 
     loss = results[0].sum() + results[1].sum()
     loss.backward()
@@ -529,7 +529,7 @@ def test_multi_batch_index_dim3_no_reserve_order():
     indices1 = distribute_tensor(torch.tensor([[0, 1], [1, 0], [1, 1]], device="cuda"), device_mesh, [Replicate()])
     indices2 = distribute_tensor(torch.tensor([[1, 0], [0, 1], [0, 0]], device="cuda"), device_mesh, [Replicate()])
 
-    results = multi_batch_index([x1, x2], [indices1, indices2], n_batch_dims=1, preserve_order=False)
+    results = multi_batch_index([(x1, indices1), (x2, indices2)], n_batch_dims=1, preserve_order=False)
 
     loss = results[0].sum() + results[1].sum()
     loss.backward()

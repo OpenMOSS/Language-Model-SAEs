@@ -768,3 +768,23 @@ class NodeIndexed(Generic[V], PyTree):
         dim_nodes = [list(d) for d in self.dimensions]
         for i in range(len(self)):
             yield (self.value[i], *(dn[i] for dn in dim_nodes))
+
+    def __getitem__(self, index: tuple[NodeDimension, int] | NodeDimension) -> Self:
+        """Index the container using the specified dimension in NodeIndexed.
+
+        Args:
+            index: A tuple (indexer, which_dimension_to_use)
+                or only indexer (which_dimension_to_use will be 0)
+
+        Returns:
+            A new :class:`NodeIndexed` containing the selected sub-value with updated dimensions.
+        """
+        indexer, which_dimension_to_use = index if isinstance(index, tuple) else (index, 0)
+        offsets = self.dimensions[which_dimension_to_use].nodes_to_offsets(indexer)
+        return self.__class__(
+            self.value[offsets],
+            tuple(
+                dimension.offsets_to_nodes(offsets) if i != which_dimension_to_use else indexer
+                for i, dimension in enumerate(self.dimensions)
+            ),
+        )
