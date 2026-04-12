@@ -762,7 +762,7 @@ class NodeIndexed(Generic[V], PyTree):
     def __len__(self) -> int:
         return len(self.dimensions[0])
 
-    def __iter__(self) -> Iterator[tuple[V, *tuple[NodeInfo, ...]]]:
+    def __iter__(self) -> Iterator[tuple[Any, *tuple[NodeInfo, ...]]]:
         dim_nodes = [list(d) for d in self.dimensions]
         for i in range(len(self)):
             yield (self.value[i], *(dn[i] for dn in dim_nodes))

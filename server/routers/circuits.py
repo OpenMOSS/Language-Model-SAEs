@@ -205,7 +205,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
             sum(
                 [results.dimensions[0] + results.dimensions[1] for results, _ in ar.qk_trace_results],
                 NodeAxis.empty(device=device),
-            ).unique()  # pyright: ignore[reportAttributeAccessIssue]
+            ).unique()
             - ov_nodes
         )
         if ar.qk_trace_results is not None
