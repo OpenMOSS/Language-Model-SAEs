@@ -21,6 +21,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate
 from torch.types import Number
 
+from lm_saes.core.pytree import PyTree
 from lm_saes.core.serialize import (
     override,
     register_overrides,
@@ -35,7 +36,7 @@ from lm_saes.utils.timer import timer
 
 @register_overrides(_inv_indices=override(omit=True))
 @dataclass(frozen=True)
-class Node:
+class Node(PyTree):
     key: Any
     """Key of the node. Should be a hashable object."""
 
@@ -60,29 +61,9 @@ class Node:
     def __len__(self) -> int:
         return self.indices.shape[0]
 
-    def to(self, device: torch.device | str | None = None, *, device_mesh: DeviceMesh | None = None) -> Self:
-        if device is not None:
-            return replace(
-                self,
-                indices=self.indices.to(device),
-                offsets=self.offsets.to(device),
-                _inv_indices=self._inv_indices.to(device) if self._inv_indices is not None else None,
-            )
-        elif device_mesh is not None:
-            return replace(
-                self,
-                indices=DimMap({}).distribute(self.indices, device_mesh),
-                offsets=DimMap({}).distribute(self.offsets, device_mesh),
-                _inv_indices=DimMap({}).distribute(self._inv_indices, device_mesh)
-                if self._inv_indices is not None
-                else None,
-            )
-        else:
-            return self
-
 
 @dataclass
-class NodeInfo:
+class NodeInfo(PyTree):
     """Node identifier with key and indices into the node's data."""
 
     key: Any
@@ -114,12 +95,6 @@ class NodeInfo:
         for i in range(len(self)):
             yield self[slice(i, i + 1)]
 
-    def to(self, device: torch.device | str) -> Self:
-        return replace(self, indices=self.indices.to(device))
-
-    def full_tensor(self) -> Self:
-        return replace(self, indices=full_tensor(self.indices))
-
 
 def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
     """Build the inverse-index lookup table for a node's ``indices``.
@@ -138,11 +113,13 @@ def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
 
 
 @dataclass
-class NodeDimension:
-    device: torch.device | str
-    mapper: DiscreteMapper
+class NodeDimension(PyTree):
     node_mappings: dict[Any, Node]
+    mapper: DiscreteMapper
+
+    device: torch.device | str
     device_mesh: DeviceMesh | None = field(default=None, repr=False)
+
     _offset_mapping: dict[str, torch.Tensor] | None = field(default=None, repr=False)
     _nodes_to_offsets_cache: dict[int, torch.Tensor] = field(default_factory=dict)
 
@@ -445,16 +422,7 @@ class NodeDimension:
         )
 
     def to(self, device: torch.device | str) -> Self:
-        node_mappings = {
-            key: Node(
-                key=key,
-                indices=node.indices.to(device),
-                offsets=node.offsets.to(device),
-                _inv_indices=node._inv_indices.to(device) if node._inv_indices is not None else None,
-            )
-            for key, node in self.node_mappings.items()
-        }
-        return self.__class__._from_node_mappings(node_mappings=node_mappings, device=device)
+        return replace(super().to(device), device_mesh=None)
 
     def full_tensor(self) -> Self:
         return replace(self, device_mesh=None)
@@ -467,16 +435,11 @@ class NodeDimension:
         return cls._from_node_mappings(node_mappings=structure(data, dict[Any, Node]))
 
 
-class DimensionedTensor:
-    def __init__(
-        self,
-        n_dims: int,
-        device: torch.device | str = "cpu",
-        dtype: torch.dtype = torch.float32,
-    ):
-        self.n_dims = n_dims
-        self.data = torch.zeros([0] * self.n_dims, dtype=dtype, device=device)
-        self.dimensions = tuple(NodeDimension.empty(device=device) for _ in range(self.n_dims))
+@dataclass
+class DimensionedTensor(PyTree):
+    n_dims: int
+    data: torch.Tensor
+    dimensions: tuple[NodeDimension, ...]
 
     @classmethod
     def from_data(cls, data: torch.Tensor, dimensions: tuple[Sequence[NodeInfo] | NodeDimension, ...]) -> Self:
@@ -663,36 +626,8 @@ class DimensionedTensor:
         values = self.data[indices]
         return values, tuple(self.dimensions[i].offsets_to_nodes(indices[i]) for i in range(self.n_dims))
 
-    def to(self, device: torch.device | str) -> Self:
-        return self.__class__.from_data(self.data.to(device), tuple(dim.to(device) for dim in self.dimensions))
-
-    def full_tensor(self) -> Self:
-        return self.__class__.from_data(
-            full_tensor(self.data),
-            tuple(dim.full_tensor() for dim in self.dimensions),
-        )
-
-    def __unstructure__(self) -> dict[str, Any]:
-        return {"data": self.data, "dimensions": [unstructure(d) for d in self.dimensions]}
-
-    @classmethod
-    def __structure__(cls, data: dict[str, Any]) -> Self:
-        dims = tuple(structure(d, NodeDimension) for d in data["dimensions"])
-        return cls.from_data(data=data["data"], dimensions=dims)
-
 
 class DimensionedVector(DimensionedTensor):
-    def __init__(
-        self,
-        device: torch.device | str = "cpu",
-        dtype: torch.dtype = torch.float32,
-    ):
-        super().__init__(
-            n_dims=1,
-            device=device,
-            dtype=dtype,
-        )
-
     def add_nodes(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
         self.extend(node_infos, 0, data)
 
@@ -751,17 +686,6 @@ class DimensionedVector(DimensionedTensor):
 
 
 class DimensionedMatrix(DimensionedTensor):
-    def __init__(
-        self,
-        device: torch.device | str = "cpu",
-        dtype: torch.dtype = torch.float32,
-    ):
-        super().__init__(
-            n_dims=2,
-            device=device,
-            dtype=dtype,
-        )
-
     def add_targets(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
         self.extend(node_infos, 0, data)
 
@@ -833,7 +757,7 @@ V = TypeVar("V", bound=SupportsGetItem[Any])
 
 
 @dataclass
-class Dimensioned(Generic[V]):
+class Dimensioned(Generic[V], PyTree):
     value: V
     dimensions: tuple[NodeDimension, ...]
 
@@ -844,15 +768,3 @@ class Dimensioned(Generic[V]):
         dim_nodes = [list(d) for d in self.dimensions]
         for i in range(len(self)):
             yield (self.value[i], *(dn[i] for dn in dim_nodes))
-
-    def to(self, device: torch.device | str) -> Self:
-        new_value: Any
-        if isinstance(self.value, torch.Tensor):
-            new_value = cast(torch.Tensor, self.value).to(device)
-        else:
-            new_value = [v.to(device) for v in cast(Sequence["Dimensioned"], self.value)]
-        return replace(
-            self,
-            value=new_value,
-            dimensions=tuple(d.to(device) for d in self.dimensions),
-        )

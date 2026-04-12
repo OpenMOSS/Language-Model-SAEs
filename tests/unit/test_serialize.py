@@ -58,6 +58,7 @@ def test_dump_attribution_result() -> None:
         "_version": "1",
         "data": {
             "activations": {
+                "n_dims": 1,
                 "data": activations_data,
                 "dimensions": [
                     {
@@ -70,6 +71,7 @@ def test_dump_attribution_result() -> None:
                 ],
             },
             "attribution": {
+                "n_dims": 2,
                 "data": attribution_data,
                 "dimensions": [
                     {

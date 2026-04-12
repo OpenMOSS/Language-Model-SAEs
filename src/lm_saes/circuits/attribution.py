@@ -23,6 +23,7 @@ from lm_saes.circuits.indexed_tensor import (
     NodeDimension,
     NodeInfo,
 )
+from lm_saes.core.pytree import PyTree
 from lm_saes.models.lorsa import LowRankSparseAttention
 from lm_saes.models.molt import MixtureOfLinearTransform
 from lm_saes.models.sae import SparseAutoEncoder
@@ -69,7 +70,7 @@ class NodeInfoQueue(Generic[NodeInfoT]):
 
 
 @dataclass
-class AttributionResult:
+class AttributionResult(PyTree):
     activations: DimensionedVector
     attribution: DimensionedMatrix
     logits: torch.Tensor
@@ -79,32 +80,6 @@ class AttributionResult:
     logit_token_ids: list[int] = field(default_factory=list)
     logit_tokens: list[str] = field(default_factory=list)
     qk_trace_results: Dimensioned[list[Dimensioned[torch.Tensor]]] | None = None
-
-    def to(self, device: torch.device | str) -> AttributionResult:
-        return AttributionResult(
-            activations=self.activations.to(device),
-            attribution=self.attribution.to(device),
-            logits=self.logits.to(device),
-            probs=self.probs.to(device),
-            prompt_token_ids=self.prompt_token_ids,
-            prompt_tokens=self.prompt_tokens,
-            logit_token_ids=self.logit_token_ids,
-            logit_tokens=self.logit_tokens,
-            qk_trace_results=self.qk_trace_results.to(device) if self.qk_trace_results is not None else None,
-        )
-
-    def full_tensor(self) -> AttributionResult:
-        return AttributionResult(
-            activations=self.activations.full_tensor(),
-            attribution=self.attribution.full_tensor(),
-            logits=full_tensor(self.logits),
-            probs=full_tensor(self.probs),
-            prompt_token_ids=self.prompt_token_ids,
-            prompt_tokens=self.prompt_tokens,
-            logit_token_ids=self.logit_token_ids,
-            logit_tokens=self.logit_tokens,
-            qk_trace_results=self.qk_trace_results,
-        )
 
 
 def get_normalized_matrix(matrix: DimensionedMatrix) -> DimensionedMatrix:
