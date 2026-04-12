@@ -12,7 +12,7 @@ V = TypeVar("V")
 
 @dataclass
 class Dim(PyTree):
-    """Mirrors NodeDimension: a non-generic PyTree used as a typed tuple element."""
+    """Mirrors NodeAxis: a non-generic PyTree used as a typed tuple element."""
 
     data: torch.Tensor
     tag: str
@@ -20,7 +20,7 @@ class Dim(PyTree):
 
 @dataclass
 class Container(Generic[V], PyTree):
-    """Mirrors Dimensioned[V]: generic PyTree with a typed-tuple PyTree field."""
+    """Mirrors NodeIndexed[V]: generic PyTree with a typed-tuple PyTree field."""
 
     value: V
     dimensions: tuple[Dim, ...]
@@ -54,7 +54,7 @@ def test_generic_pytree_full_tensor():
 
 
 def test_generic_pytree_nested_list_full_tensor():
-    """full_tensor on Container[list[Container[Tensor]]] — mirrors Dimensioned[list[Dimensioned[Tensor]]]."""
+    """full_tensor on Container[list[Container[Tensor]]] — mirrors NodeIndexed[list[NodeIndexed[Tensor]]]."""
     inner_dim = Dim(data=torch.tensor([10.0]), tag="inner_d")
     inner = Container(value=torch.tensor([1.0, 2.0]), dimensions=(inner_dim,))
 
@@ -74,36 +74,36 @@ def test_attribution_result_full_tensor():
     """full_tensor on real AttributionResult with qk_trace_results (parameterized generic field)."""
     from lm_saes.circuits.attribution import AttributionResult
     from lm_saes.circuits.indexed_tensor import (
-        Dimensioned,
-        DimensionedMatrix,
-        DimensionedVector,
-        NodeDimension,
+        NodeAxis,
+        NodeIndexed,
+        NodeIndexedMatrix,
+        NodeIndexedVector,
         NodeInfo,
     )
 
-    targets = NodeDimension.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
-    sources = NodeDimension.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
+    targets = NodeAxis.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
+    sources = NodeAxis.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
 
     sample = AttributionResult(
-        activations=DimensionedVector.from_data(torch.randn(3), dimensions=(targets,)),
-        attribution=DimensionedMatrix.from_data(torch.randn(3, 4), dimensions=(targets, sources)),
+        activations=NodeIndexedVector.from_data(torch.randn(3), dimensions=(targets,)),
+        attribution=NodeIndexedMatrix.from_data(torch.randn(3, 4), dimensions=(targets, sources)),
         logits=torch.randn(5),
         probs=torch.softmax(torch.randn(5), dim=0),
         prompt_token_ids=[1, 2, 3],
         prompt_tokens=["a", "b", "c"],
         logit_token_ids=[4, 5],
         logit_tokens=["d", "e"],
-        qk_trace_results=Dimensioned(
+        qk_trace_results=NodeIndexed(
             value=[
-                Dimensioned(
+                NodeIndexed(
                     value=torch.randn(2, 3),
                     dimensions=(
-                        NodeDimension.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
-                        NodeDimension.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
+                        NodeAxis.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
+                        NodeAxis.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
                     ),
                 ),
             ],
-            dimensions=(NodeDimension.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
+            dimensions=(NodeAxis.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
         ),
     )
 
@@ -111,5 +111,5 @@ def test_attribution_result_full_tensor():
 
     assert isinstance(result, AttributionResult)
     assert torch.equal(result.activations.data, sample.activations.data)
-    assert isinstance(result.qk_trace_results, Dimensioned)
+    assert isinstance(result.qk_trace_results, NodeIndexed)
     assert torch.equal(result.qk_trace_results.value[0].value, sample.qk_trace_results.value[0].value)

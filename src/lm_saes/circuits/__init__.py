@@ -15,21 +15,21 @@ from lm_saes.circuits.hooks import (
     replace_biases_with_leaves,
 )
 from lm_saes.circuits.indexed_tensor import (
-    Dimensioned,
-    DimensionedMatrix,
-    DimensionedTensor,
-    DimensionedVector,
-    NodeDimension,
+    NodeAxis,
+    NodeIndexed,
+    NodeIndexedMatrix,
+    NodeIndexedTensor,
+    NodeIndexedVector,
     NodeInfo,
 )
 
 __all__ = [
     "AttributionResult",
-    "Dimensioned",
-    "DimensionedMatrix",
-    "DimensionedTensor",
-    "DimensionedVector",
-    "NodeDimension",
+    "NodeIndexed",
+    "NodeIndexedMatrix",
+    "NodeIndexedTensor",
+    "NodeIndexedVector",
+    "NodeAxis",
     "NodeInfo",
     "NodeInfoQueue",
     "NodeInfoRef",

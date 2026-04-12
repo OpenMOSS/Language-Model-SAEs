@@ -113,7 +113,7 @@ def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
 
 
 @dataclass
-class NodeDimension(PyTree):
+class NodeAxis(PyTree):
     node_mappings: dict[Any, Node]
     mapper: DiscreteMapper
 
@@ -176,7 +176,7 @@ class NodeDimension(PyTree):
         device_mesh: DeviceMesh | None = None,
     ) -> Self:
         if len(node_infos) == 0 and device is None:
-            raise ValueError("Cannot build NodeDimension from empty `node_infos` without an explicit device.")
+            raise ValueError("Cannot build NodeAxis from empty `node_infos` without an explicit device.")
         device = device if device is not None else node_infos[0].indices.device
         device_mesh = (
             device_mesh
@@ -242,7 +242,7 @@ class NodeDimension(PyTree):
             for i in range(len(unique_keys))
         ]
 
-    def __add__(self, other: "NodeDimension") -> "NodeDimension":
+    def __add__(self, other: "NodeAxis") -> "NodeAxis":
         self_length = len(self)
         all_keys = list(dict.fromkeys([*self.node_mappings.keys(), *other.node_mappings.keys()]))
         node_mappings = {
@@ -270,11 +270,11 @@ class NodeDimension(PyTree):
         ret = self.__class__._from_node_mappings(
             node_mappings=node_mappings, device=self.device, mapper=self.mapper, device_mesh=self.device_mesh
         )
-        assert len(ret) == len(self) + len(other), "NodeDimension length mismatch"
+        assert len(ret) == len(self) + len(other), "NodeAxis length mismatch"
         return ret
 
-    def __sub__(self, other: "NodeDimension") -> "NodeDimension":
-        """Return a new NodeDimension with every ``(key, index)`` pair present in ``other`` removed from ``self``."""
+    def __sub__(self, other: "NodeAxis") -> "NodeAxis":
+        """Return a new NodeAxis with every ``(key, index)`` pair present in ``other`` removed from ``self``."""
         lookup = other.nodes_to_offsets(self)
         kept = (lookup == -1).nonzero().squeeze(-1)
         return self.offsets_to_nodes(kept)
@@ -286,7 +286,7 @@ class NodeDimension(PyTree):
         return hash(tuple(self.node_mappings.values()))
 
     @timer.time("nodes_to_offsets")
-    def nodes_to_offsets(self, dimension: "NodeDimension") -> torch.Tensor:
+    def nodes_to_offsets(self, dimension: "NodeAxis") -> torch.Tensor:
         """Map every element of ``dimension`` to its offset in ``self``.
 
         Returns a tensor of shape ``(len(dimension),)``. Elements whose ``(key, index)``
@@ -320,15 +320,15 @@ class NodeDimension(PyTree):
         return offsets
 
     @timer.time("offsets_to_nodes")
-    def offsets_to_nodes(self, offsets: torch.Tensor) -> "NodeDimension":
+    def offsets_to_nodes(self, offsets: torch.Tensor) -> "NodeAxis":
         """The reverse of :meth:`nodes_to_offsets`. Map every offset in ``offsets`` to its ``(key, index)`` pair in ``self``.
 
-        Returns a new NodeDimension with one Node per unique ``(key, index)`` pair.
+        Returns a new NodeAxis with one Node per unique ``(key, index)`` pair.
         """
         if self.device_mesh is not None:
             assert isinstance(offsets, DTensor) and all(
                 isinstance(placement, Replicate) for placement in offsets.placements
-            ), "Offsets must be a replicated DTensor when NodeDimension is distributed"
+            ), "Offsets must be a replicated DTensor when NodeAxis is distributed"
             offsets = offsets.to_local()
 
         keys_encoded = self.offset_mapping["keys"][offsets]
@@ -436,20 +436,18 @@ class NodeDimension(PyTree):
 
 
 @dataclass
-class DimensionedTensor(PyTree):
+class NodeIndexedTensor(PyTree):
     n_dims: int
     data: torch.Tensor
-    dimensions: tuple[NodeDimension, ...]
+    dimensions: tuple[NodeAxis, ...]
 
     @classmethod
-    def from_data(cls, data: torch.Tensor, dimensions: tuple[Sequence[NodeInfo] | NodeDimension, ...]) -> Self:
+    def from_data(cls, data: torch.Tensor, dimensions: tuple[Sequence[NodeInfo] | NodeAxis, ...]) -> Self:
         self = cls.__new__(cls)
         self.n_dims = data.ndim
         self.data = data
         self.dimensions = tuple(
-            dimension
-            if isinstance(dimension, NodeDimension)
-            else NodeDimension.from_node_infos(dimension, device=data.device)
+            dimension if isinstance(dimension, NodeAxis) else NodeAxis.from_node_infos(dimension, device=data.device)
             for dimension in dimensions
         )
         assert all(len(dimension) == data.shape[dim] for dim, dimension in enumerate(self.dimensions)), (
@@ -460,13 +458,13 @@ class DimensionedTensor(PyTree):
     @classmethod
     def from_dimensions(
         cls,
-        dimensions: tuple[Sequence[NodeInfo] | NodeDimension, ...],
+        dimensions: tuple[Sequence[NodeInfo] | NodeAxis, ...],
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
         device_mesh: DeviceMesh | None = None,
     ) -> Self:
         shape = [
-            len(dimension) if isinstance(dimension, NodeDimension) else sum([len(ni) for ni in dimension])
+            len(dimension) if isinstance(dimension, NodeAxis) else sum([len(ni) for ni in dimension])
             for dimension in dimensions
         ]
         return cls.from_data(
@@ -477,7 +475,7 @@ class DimensionedTensor(PyTree):
         )
 
     @timer.time("extend")
-    def extend(self, dimension: NodeDimension, dim: int, data: torch.Tensor | None = None):
+    def extend(self, dimension: NodeAxis, dim: int, data: torch.Tensor | None = None):
         new_data_shape = tuple(self.data.shape[i] if i != dim else len(dimension) for i in range(self.n_dims))
 
         if data is None:
@@ -498,28 +496,28 @@ class DimensionedTensor(PyTree):
 
     @timer.time("__getitem__")
     @torch.no_grad()
-    def __getitem__(self, key: tuple[NodeDimension | None, ...] | NodeDimension | None) -> Self:
-        """Index the tensor with NodeDimension selections for each dimension.
+    def __getitem__(self, key: tuple[NodeAxis | None, ...] | NodeAxis | None) -> Self:
+        """Index the tensor with NodeAxis selections for each dimension.
 
-        Each dimension accepts a ``NodeDimension`` to select specific node
+        Each dimension accepts a ``NodeAxis`` to select specific node
         elements, or ``None`` to select all elements along that dimension.
 
-        For a 1-D tensor a single ``NodeDimension`` (or ``None``) can be
+        For a 1-D tensor a single ``NodeAxis`` (or ``None``) can be
         passed directly; for higher-rank tensors, pass a tuple with one entry
         per dimension.
 
         Args:
-            key: NodeDimension selectors. A tuple of ``(NodeDimension | None)``
+            key: NodeAxis selectors. A tuple of ``(NodeAxis | None)``
                 with length equal to :attr:`n_dims`, or a bare
-                ``NodeDimension | None`` for 1-D tensors.
+                ``NodeAxis | None`` for 1-D tensors.
 
         Returns:
-            A new :class:`DimensionedTensor` (or subclass) containing the
+            A new :class:`NodeIndexedTensor` (or subclass) containing the
             selected sub-tensor with updated node mappings.
         """
         if not isinstance(key, tuple):
             key = (key,)
-        key = cast(tuple[NodeDimension | None, ...], key)
+        key = cast(tuple[NodeAxis | None, ...], key)
         if len(key) != self.n_dims:
             raise ValueError(f"Expected {self.n_dims} dimension selectors, got {len(key)}")
 
@@ -542,17 +540,17 @@ class DimensionedTensor(PyTree):
     @torch.no_grad()
     def __setitem__(
         self,
-        key: tuple[NodeDimension | None, ...] | NodeDimension | None,
+        key: tuple[NodeAxis | None, ...] | NodeAxis | None,
         value: Self | Tensor,
     ):
-        """Assign to a NodeDimension-selected sub-tensor.
+        """Assign to a NodeAxis-selected sub-tensor.
 
         Args:
-            key: NodeDimension selectors. A tuple of ``(NodeDimension | None)``
+            key: NodeAxis selectors. A tuple of ``(NodeAxis | None)``
                 with length equal to :attr:`n_dims`, or a bare
-                ``NodeDimension | None`` for 1-D tensors.
+                ``NodeAxis | None`` for 1-D tensors.
             value: Tensor values to write to the selected region. When a
-                :class:`DimensionedTensor` is provided, its underlying
+                :class:`NodeIndexedTensor` is provided, its underlying
                 :attr:`data` tensor is assigned.
 
         Returns:
@@ -560,11 +558,11 @@ class DimensionedTensor(PyTree):
         """
         if not isinstance(key, tuple):
             key = (key,)
-        key = cast(tuple[NodeDimension | None, ...], key)
+        key = cast(tuple[NodeAxis | None, ...], key)
         if len(key) != self.n_dims:
             raise ValueError(f"Expected {self.n_dims} dimension selectors, got {len(key)}")
 
-        value = cast(Tensor, value.data if isinstance(value, DimensionedTensor) else value)
+        value = cast(Tensor, value.data if isinstance(value, NodeIndexedTensor) else value)
         indexers: list[torch.Tensor] = []
         for dim in range(self.n_dims):
             dimension = key[dim]
@@ -621,17 +619,17 @@ class DimensionedTensor(PyTree):
         return self.__class__.from_data(~self.data, self.dimensions)
 
     @timer.time("nonzero")
-    def nonzero(self) -> tuple[torch.Tensor, tuple[NodeDimension, ...]]:
+    def nonzero(self) -> tuple[torch.Tensor, tuple[NodeAxis, ...]]:
         indices = self.data.nonzero(as_tuple=True)
         values = self.data[indices]
         return values, tuple(self.dimensions[i].offsets_to_nodes(indices[i]) for i in range(self.n_dims))
 
 
-class DimensionedVector(DimensionedTensor):
-    def add_nodes(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
+class NodeIndexedVector(NodeIndexedTensor):
+    def add_nodes(self, node_infos: NodeAxis, data: torch.Tensor | None = None):
         self.extend(node_infos, 0, data)
 
-    def topk(self, k: int, ignore_dimension: NodeDimension | None = None):
+    def topk(self, k: int, ignore_dimension: NodeAxis | None = None):
         ignore_indices = (
             self.dimensions[0].nodes_to_offsets(ignore_dimension)
             if ignore_dimension is not None and len(ignore_dimension) > 0
@@ -660,11 +658,11 @@ class DimensionedVector(DimensionedTensor):
         return topk_values, self.dimensions[0].offsets_to_nodes(topk_indices)
 
     @overload
-    def matmul(self, other: DimensionedMatrix, _check_node_matching: bool = False) -> DimensionedVector: ...
+    def matmul(self, other: NodeIndexedMatrix, _check_node_matching: bool = False) -> NodeIndexedVector: ...
     @overload
-    def matmul(self, other: DimensionedVector, _check_node_matching: bool = False) -> Number: ...
+    def matmul(self, other: NodeIndexedVector, _check_node_matching: bool = False) -> Number: ...
 
-    def matmul(self, other: DimensionedMatrix | DimensionedVector, _check_node_matching: bool = False):
+    def matmul(self, other: NodeIndexedMatrix | NodeIndexedVector, _check_node_matching: bool = False):
         # if _check_node_matching:
         #     a, b = self.node_infos[0], other.node_infos[0]
         #     if len(a) != len(b) or any(not ai == bi for ai, bi in zip(a, b)):
@@ -672,32 +670,32 @@ class DimensionedVector(DimensionedTensor):
 
         data = self.data @ other.data
 
-        if isinstance(other, DimensionedMatrix):
-            return DimensionedVector.from_data(data, dimensions=(other.dimensions[1],))
-        elif isinstance(other, DimensionedVector):
+        if isinstance(other, NodeIndexedMatrix):
+            return NodeIndexedVector.from_data(data, dimensions=(other.dimensions[1],))
+        elif isinstance(other, NodeIndexedVector):
             return data.item()
         else:
             raise ValueError(
-                f"Invalid type as right operand in DimensionedVector.matmul: {type(other)}. Expected DimensionedMatrix or DimensionedVector."
+                f"Invalid type as right operand in NodeIndexedVector.matmul: {type(other)}. Expected NodeIndexedMatrix or NodeIndexedVector."
             )
 
-    def __matmul__(self, other: DimensionedMatrix):
+    def __matmul__(self, other: NodeIndexedMatrix):
         return self.matmul(other)
 
 
-class DimensionedMatrix(DimensionedTensor):
-    def add_targets(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
+class NodeIndexedMatrix(NodeIndexedTensor):
+    def add_targets(self, node_infos: NodeAxis, data: torch.Tensor | None = None):
         self.extend(node_infos, 0, data)
 
-    def add_sources(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
+    def add_sources(self, node_infos: NodeAxis, data: torch.Tensor | None = None):
         self.extend(node_infos, 1, data)
 
     @overload
-    def matmul(self, other: DimensionedVector, _check_node_matching: bool = False) -> DimensionedVector: ...
+    def matmul(self, other: NodeIndexedVector, _check_node_matching: bool = False) -> NodeIndexedVector: ...
     @overload
-    def matmul(self, other: DimensionedMatrix, _check_node_matching: bool = False) -> DimensionedMatrix: ...
+    def matmul(self, other: NodeIndexedMatrix, _check_node_matching: bool = False) -> NodeIndexedMatrix: ...
 
-    def matmul(self, other: DimensionedVector | DimensionedMatrix, _check_node_matching: bool = False):
+    def matmul(self, other: NodeIndexedVector | NodeIndexedMatrix, _check_node_matching: bool = False):
         # if _check_node_matching:
         #     a, b = self.dimensions[1], other.dimensions[0]
         #     if len(a) != len(b) or any(not ai == bi for ai, bi in zip(a, b)):
@@ -705,24 +703,24 @@ class DimensionedMatrix(DimensionedTensor):
 
         data = self.data @ other.data
 
-        if isinstance(other, DimensionedVector):
-            return DimensionedVector.from_data(data, dimensions=(self.dimensions[0],))
-        elif isinstance(other, DimensionedMatrix):
-            return DimensionedMatrix.from_data(data, dimensions=(self.dimensions[0], other.dimensions[1]))
+        if isinstance(other, NodeIndexedVector):
+            return NodeIndexedVector.from_data(data, dimensions=(self.dimensions[0],))
+        elif isinstance(other, NodeIndexedMatrix):
+            return NodeIndexedMatrix.from_data(data, dimensions=(self.dimensions[0], other.dimensions[1]))
         else:
-            raise ValueError(f"Invalid type as right operand in DimensionedMatrix.matmul: {type(other)}")
+            raise ValueError(f"Invalid type as right operand in NodeIndexedMatrix.matmul: {type(other)}")
 
-    def any(self, dim: int) -> DimensionedVector:
+    def any(self, dim: int) -> NodeIndexedVector:
         """Reduce along *dim* with logical OR, mirroring ``torch.Tensor.any(dim)``.
 
         ``dim=0`` reduces target (row) nodes and returns a vector over source (col)
         nodes; ``dim=1`` does the reverse.  To restrict to a subset of nodes, index
         the matrix first: ``matrix[None, subset].any(0)``.
         """
-        return DimensionedVector.from_data(self.data.any(dim), (self.dimensions[1 - dim],))
+        return NodeIndexedVector.from_data(self.data.any(dim), (self.dimensions[1 - dim],))
 
     @timer.time("masked_fill_dim_")
-    def masked_fill_dim_(self, dim: int, mask: DimensionedVector, value: Number) -> Self:
+    def masked_fill_dim_(self, dim: int, mask: NodeIndexedVector, value: Number) -> Self:
         offsets = self.dimensions[dim].nodes_to_offsets(mask.dimensions[0])
         filled = offsets[mask.data]
         if filled.numel() > 0:
@@ -733,16 +731,16 @@ class DimensionedMatrix(DimensionedTensor):
         return self
 
     @timer.time("masked_fill_")
-    def masked_fill_(self, mask: DimensionedMatrix, value: Number) -> Self:
+    def masked_fill_(self, mask: NodeIndexedMatrix, value: Number) -> Self:
         self.data.masked_fill_(mask.data, value)
         return self
 
     @overload
-    def __matmul__(self, other: DimensionedVector) -> DimensionedVector: ...
+    def __matmul__(self, other: NodeIndexedVector) -> NodeIndexedVector: ...
     @overload
-    def __matmul__(self, other: DimensionedMatrix) -> DimensionedMatrix: ...
+    def __matmul__(self, other: NodeIndexedMatrix) -> NodeIndexedMatrix: ...
 
-    def __matmul__(self, other: DimensionedVector | DimensionedMatrix):
+    def __matmul__(self, other: NodeIndexedVector | NodeIndexedMatrix):
         return self.matmul(other)
 
 
@@ -757,14 +755,14 @@ V = TypeVar("V", bound=SupportsGetItem[Any])
 
 
 @dataclass
-class Dimensioned(Generic[V], PyTree):
+class NodeIndexed(Generic[V], PyTree):
     value: V
-    dimensions: tuple[NodeDimension, ...]
+    dimensions: tuple[NodeAxis, ...]
 
     def __len__(self) -> int:
         return len(self.dimensions[0])
 
-    def __iter__(self) -> Iterator[tuple]:
+    def __iter__(self) -> Iterator[tuple[V, *tuple[NodeInfo, ...]]]:
         dim_nodes = [list(d) for d in self.dimensions]
         for i in range(len(self)):
             yield (self.value[i], *(dn[i] for dn in dim_nodes))

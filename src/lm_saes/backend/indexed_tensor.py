@@ -1,28 +1,24 @@
 """Backward-compat shim for :mod:`lm_saes.circuits.indexed_tensor`."""
 
 from lm_saes.circuits.indexed_tensor import (
-    Dimensioned,
-    DimensionedMatrix,
-    DimensionedTensor,
-    DimensionedVector,
     Node,
-    NodeDimension,
+    NodeAxis,
+    NodeIndexed,
+    NodeIndexedMatrix,
+    NodeIndexedTensor,
+    NodeIndexedVector,
     NodeInfo,
 )
 
-Dimension = NodeDimension
-NodeIndexedTensor = DimensionedTensor
-NodeIndexedVector = DimensionedVector
-NodeIndexedMatrix = DimensionedMatrix
+Dimension = NodeAxis
+Dimensioned = NodeIndexed
 
 __all__ = [
     "Dimension",
     "Dimensioned",
-    "DimensionedMatrix",
-    "DimensionedTensor",
-    "DimensionedVector",
     "Node",
-    "NodeDimension",
+    "NodeAxis",
+    "NodeIndexed",
     "NodeIndexedMatrix",
     "NodeIndexedTensor",
     "NodeIndexedVector",

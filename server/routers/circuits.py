@@ -15,10 +15,10 @@ from lm_saes import (
     CircuitConfig,
     CircuitInput,
     CircuitStatus,
-    Dimensioned,
     LorsaConfig,
     MOLTConfig,
-    NodeDimension,
+    NodeAxis,
+    NodeIndexed,
     SAEConfig,
     TransformerLensLanguageModel,
     prune_attribution,
@@ -204,12 +204,12 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
         (
             sum(
                 [results.dimensions[0] + results.dimensions[1] for results, _ in ar.qk_trace_results],
-                NodeDimension.empty(device=device),
+                NodeAxis.empty(device=device),
             ).unique()  # pyright: ignore[reportAttributeAccessIssue]
             - ov_nodes
         )
         if ar.qk_trace_results is not None
-        else NodeDimension.empty(device=device)
+        else NodeAxis.empty(device=device)
     )
     is_from_qk_tracings = torch.zeros(len(ov_nodes) + len(qk_nodes), device=device, dtype=torch.bool)
     is_from_qk_tracings[len(ov_nodes) :] = True
@@ -331,7 +331,7 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     if ar.qk_trace_results is not None:
         qk_targets_node_offsets = nodes.nodes_to_offsets(ar.qk_trace_results.dimensions[0]).tolist()
 
-        def make_qk_contributors(qk_trace_results: Dimensioned[torch.Tensor]) -> list[tuple[str, str, float]]:
+        def make_qk_contributors(qk_trace_results: NodeIndexed[torch.Tensor]) -> list[tuple[str, str, float]]:
             q_node_offsets = nodes.nodes_to_offsets(qk_trace_results.dimensions[0]).tolist()
             k_node_offsets = nodes.nodes_to_offsets(qk_trace_results.dimensions[1]).tolist()
             return [

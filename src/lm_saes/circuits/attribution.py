@@ -17,10 +17,10 @@ from tqdm import tqdm
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.circuits.hooks import replace_biases_with_leaves
 from lm_saes.circuits.indexed_tensor import (
-    Dimensioned,
-    DimensionedMatrix,
-    DimensionedVector,
-    NodeDimension,
+    NodeAxis,
+    NodeIndexed,
+    NodeIndexedMatrix,
+    NodeIndexedVector,
     NodeInfo,
 )
 from lm_saes.core.pytree import PyTree
@@ -71,19 +71,19 @@ class NodeInfoQueue(Generic[NodeInfoT]):
 
 @dataclass
 class AttributionResult(PyTree):
-    activations: DimensionedVector
-    attribution: DimensionedMatrix
+    activations: NodeIndexedVector
+    attribution: NodeIndexedMatrix
     logits: torch.Tensor
     probs: torch.Tensor
     prompt_token_ids: list[int] = field(default_factory=list)
     prompt_tokens: list[str] = field(default_factory=list)
     logit_token_ids: list[int] = field(default_factory=list)
     logit_tokens: list[str] = field(default_factory=list)
-    qk_trace_results: Dimensioned[list[Dimensioned[torch.Tensor]]] | None = None
+    qk_trace_results: NodeIndexed[list[NodeIndexed[torch.Tensor]]] | None = None
 
 
-def get_normalized_matrix(matrix: DimensionedMatrix) -> DimensionedMatrix:
-    return DimensionedMatrix.from_data(
+def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
+    return NodeIndexedMatrix.from_data(
         data=torch.abs(matrix.data) / torch.abs(matrix.data).sum(dim=1, keepdim=True).clamp(min=1e-8),
         dimensions=matrix.dimensions,
     )
@@ -91,18 +91,18 @@ def get_normalized_matrix(matrix: DimensionedMatrix) -> DimensionedMatrix:
 
 @timer.time("compute_intermediates_attribution")
 def compute_intermediates_attribution(
-    attribution: DimensionedMatrix,
-    targets: NodeDimension,
-    intermediates: NodeDimension,
+    attribution: NodeIndexedMatrix,
+    targets: NodeAxis,
+    intermediates: NodeAxis,
     max_iter: int,
-) -> DimensionedMatrix:
+) -> NodeIndexedMatrix:
     attribution = get_normalized_matrix(attribution)
     influence = attribution[targets, None]
     if len(intermediates) == 0:
         return influence
-    t2i: DimensionedMatrix = attribution[targets, intermediates]
-    i2all: DimensionedMatrix = attribution[intermediates, None]
-    i2i: DimensionedMatrix = attribution[intermediates, intermediates]
+    t2i: NodeIndexedMatrix = attribution[targets, intermediates]
+    i2all: NodeIndexedMatrix = attribution[intermediates, None]
+    i2i: NodeIndexedMatrix = attribution[intermediates, intermediates]
     for _ in range(max_iter):
         cur_influence = t2i @ i2all
         if not torch.any(cur_influence.data):
@@ -138,7 +138,7 @@ def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
         node_info.ref.grad = None
 
 
-def retrieval_from_intermediates(dimension: NodeDimension, intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]]):
+def retrieval_from_intermediates(dimension: NodeAxis, intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]]):
     return [
         NodeInfoRef(
             key=node.key,
@@ -161,17 +161,17 @@ def greedily_collect_attribution(
     max_intermediates: int,
     reduction_weight: torch.Tensor,
     max_iter: int = 100,
-) -> tuple[DimensionedMatrix, NodeDimension]:
+) -> tuple[NodeIndexedMatrix, NodeAxis]:
     """
     Greedily collect attribution from targets to sources through intermediates.
     """
 
     all_sources = list(sources) + [intermediate[1] for intermediate in intermediates]
 
-    targets_dimension = NodeDimension.from_node_infos(targets)
-    all_sources_dimension = NodeDimension.from_node_infos(all_sources)
-    source_intermediates_dimension = NodeDimension.from_node_infos([intermediate[1] for intermediate in intermediates])
-    attribution = DimensionedMatrix.from_dimensions(
+    targets_dimension = NodeAxis.from_node_infos(targets)
+    all_sources_dimension = NodeAxis.from_node_infos(all_sources)
+    source_intermediates_dimension = NodeAxis.from_node_infos([intermediate[1] for intermediate in intermediates])
+    attribution = NodeIndexedMatrix.from_dimensions(
         dimensions=(targets_dimension, all_sources_dimension),
         device=targets[0].ref.device,
         dtype=targets[0].ref.dtype,
@@ -191,7 +191,7 @@ def greedily_collect_attribution(
         with timer.time("backward"):
             root.sum().backward(retain_graph=True)
 
-        attribution[NodeDimension.from_node_infos(target_batch), None] = torch.cat(
+        attribution[NodeAxis.from_node_infos(target_batch), None] = torch.cat(
             [
                 einops.einsum(
                     value[: root.shape[0]],
@@ -203,11 +203,11 @@ def greedily_collect_attribution(
             dim=1,
         ).to(attribution.data.dtype)
 
-    collected_intermediates_dimension = NodeDimension.empty(
+    collected_intermediates_dimension = NodeAxis.empty(
         device=targets[0].ref.device,
         device_mesh=targets[0].ref.device_mesh if isinstance(targets[0].ref, DTensor) else None,
     )
-    reduction_weight_vec: DimensionedVector = DimensionedVector.from_data(
+    reduction_weight_vec: NodeIndexedVector = NodeIndexedVector.from_data(
         reduction_weight, dimensions=(targets_dimension,)
     )
     for i in tqdm(range(0, max_intermediates, batch_size)):
@@ -285,12 +285,12 @@ def _find_influence_threshold(scores: torch.Tensor, threshold: float) -> torch.T
 
 @timer.time("prune_attribution")
 def prune_attribution(
-    attribution: DimensionedMatrix,
+    attribution: NodeIndexedMatrix,
     logit_weights: torch.Tensor,
     node_threshold: float = 0.6,
     edge_threshold: float = 0.8,
-) -> DimensionedMatrix:
-    """Prune an attribution DimensionedMatrix by removing low-influence nodes and edges.
+) -> NodeIndexedMatrix:
+    """Prune an attribution NodeIndexedMatrix by removing low-influence nodes and edges.
 
     The attribution matrix is expected to have:
     - dim 0 (targets/rows): logit nodes (key="logits") + collected feature nodes
@@ -301,13 +301,13 @@ def prune_attribution(
     on their cumulative contribution to the weighted logit output.
 
     Args:
-        attribution: DimensionedMatrix from the attribution computation.
+        attribution: NodeIndexedMatrix from the attribution computation.
         node_threshold: Retain feature nodes accounting for this fraction of total influence.
         edge_threshold: Retain edges accounting for this fraction of total edge influence.
         logit_weights: Per-logit scalar weights (shape ``[n_logits]``).
 
     Returns:
-        Pruned DimensionedMatrix containing only kept nodes and edges.
+        Pruned NodeIndexedMatrix containing only kept nodes and edges.
     """
     if node_threshold > 1.0 or node_threshold < 0.0:
         raise ValueError("node_threshold must be between 0.0 and 1.0")
@@ -320,12 +320,12 @@ def prune_attribution(
         attribution.dimensions[1].filter_keys(lambda key: key.endswith(".error")) + intermediates_dimension
     )
 
-    node_scores = DimensionedVector.from_data(
+    node_scores = NodeIndexedVector.from_data(
         logit_weights, dimensions=(logits_dimension,)
     ) @ compute_intermediates_attribution(attribution, logits_dimension, intermediates_dimension, max_iter=100)
     influence = node_scores[intermediates_dimension]
     influence.add_nodes(logits_dimension, logit_weights)
-    edge_scores = DimensionedMatrix.from_data(
+    edge_scores = NodeIndexedMatrix.from_data(
         get_normalized_matrix(attribution).data * influence[attribution.dimensions[0]].data[:, None],
         dimensions=attribution.dimensions,
     )
@@ -527,7 +527,7 @@ def attribute(
         max_iter=max_iter,
     )
 
-    sources_dimension = NodeDimension.from_node_infos(sources)
+    sources_dimension = NodeAxis.from_node_infos(sources)
     attribution = attribution[None, sources_dimension + collected_intermediates]
 
     intermediate_ref_map = {node_info.key: node_info.ref.detach() for node_info, _ in intermediates}
@@ -544,11 +544,9 @@ def attribute(
         dim=0,
     )
 
-    activations_vec = DimensionedVector.from_data(
+    activations_vec = NodeIndexedVector.from_data(
         data=activations,
-        dimensions=(
-            NodeDimension.from_node_infos(targets) + collected_intermediates + NodeDimension.from_node_infos(sources),
-        ),
+        dimensions=(NodeAxis.from_node_infos(targets) + collected_intermediates + NodeAxis.from_node_infos(sources),),
     )
 
     prompt_token_ids = full_tensor(tokens).detach().cpu().tolist()
@@ -564,12 +562,12 @@ def attribute(
         )
 
         if len(lorsa_features) > 0:
-            logits_dimension = NodeDimension.from_node_infos(targets)
+            logits_dimension = NodeAxis.from_node_infos(targets)
             intermediates_attribution = compute_intermediates_attribution(
                 attribution, logits_dimension, collected_intermediates, max_iter
             )
 
-            reduction_weight_vec = DimensionedVector.from_data(top_p, dimensions=(logits_dimension,))
+            reduction_weight_vec = NodeIndexedVector.from_data(top_p, dimensions=(logits_dimension,))
             lorsa_influence = reduction_weight_vec @ intermediates_attribution[None, lorsa_features]
             _, top_lorsa_features = lorsa_influence.topk(k=max(1, int(len(lorsa_features) * qk_top_fraction)))
             top_lorsa_node_infos = list(top_lorsa_features)
@@ -627,9 +625,9 @@ def attribute(
             ]
 
             hessian = compute_hessian_matrix(unique_qk_targets, qk_sources, topk=qk_topk)
-            qk_trace_results = Dimensioned(
+            qk_trace_results = NodeIndexed(
                 value=[hessian.value[i] for i in feature_to_unique],
-                dimensions=(NodeDimension.from_node_infos(top_lorsa_node_infos),),
+                dimensions=(NodeAxis.from_node_infos(top_lorsa_node_infos),),
             )
 
     return AttributionResult(
@@ -652,7 +650,7 @@ def qk_trace(
     lorsa_features: list[NodeInfo],
     topk: int = 10,
     batch_size: int = 1,
-) -> Dimensioned[list["Dimensioned[torch.Tensor]"]]:
+) -> NodeIndexed[list["NodeIndexed[torch.Tensor]"]]:
     from lm_saes.utils.distributed.ops import to_local
 
     tokens = ensure_tokenized(inputs, model.tokenizer, device=model.device)
@@ -720,9 +718,9 @@ def qk_trace(
         feature_to_unique.append(unique_map[dedup_key])
 
     hessian = compute_hessian_matrix(unique_qk_targets, sources, topk=topk)
-    return Dimensioned(
+    return NodeIndexed(
         value=[hessian.value[i] for i in feature_to_unique],
-        dimensions=(NodeDimension.from_node_infos(flat_features),),
+        dimensions=(NodeAxis.from_node_infos(flat_features),),
     )
 
 
@@ -730,12 +728,12 @@ def compute_hessian_matrix(
     targets: Sequence[NodeInfoRef],
     sources: Sequence[NodeInfoRef],
     topk: int,
-) -> Dimensioned[list["Dimensioned[torch.Tensor]"]]:
-    sources_dimension = NodeDimension.from_node_infos(sources)
+) -> NodeIndexed[list["NodeIndexed[torch.Tensor]"]]:
+    sources_dimension = NodeAxis.from_node_infos(sources)
     fwd_batch_size = sources[0].ref.shape[0]
     bwd_batch_size = fwd_batch_size // topk
 
-    per_slot_results: list[Dimensioned[torch.Tensor]] = []
+    per_slot_results: list[NodeIndexed[torch.Tensor]] = []
 
     target_queue = NodeInfoQueue(list(targets))
     for target_batch in target_queue.iter(bwd_batch_size):
@@ -769,7 +767,7 @@ def compute_hessian_matrix(
             dim=1,
         )  # (fwd_batch_size, n_sources)
 
-        second_targets = NodeDimension.empty(device=bwd_scores.device)
+        second_targets = NodeAxis.empty(device=bwd_scores.device)
         all_topk_indices = []
         for slot_idx in range(stacked.shape[1]):
             _, topk_indices = first_attributions[slot_idx * topk].topk(topk)
@@ -822,14 +820,14 @@ def compute_hessian_matrix(
             order = [i for i in order if pair_attrs[i].item() != 0.0]
             device = pair_attrs.device
             per_slot_results.append(
-                Dimensioned(
+                NodeIndexed(
                     value=pair_attrs[order] if len(order) > 0 else pair_attrs[:0],
                     dimensions=(
-                        NodeDimension.from_node_infos([first_nodes[i] for i in order], device=device),
-                        NodeDimension.from_node_infos([second_nodes[i] for i in order], device=device),
+                        NodeAxis.from_node_infos([first_nodes[i] for i in order], device=device),
+                        NodeAxis.from_node_infos([second_nodes[i] for i in order], device=device),
                     ),
                 )
             )
 
-    targets_dim = NodeDimension.from_node_infos(list(targets))
-    return Dimensioned(value=per_slot_results, dimensions=(targets_dim,))
+    targets_dim = NodeAxis.from_node_infos(list(targets))
+    return NodeIndexed(value=per_slot_results, dimensions=(targets_dim,))
