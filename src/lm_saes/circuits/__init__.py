@@ -15,7 +15,7 @@ from lm_saes.circuits.hooks import (
     replace_biases_with_leaves,
 )
 from lm_saes.circuits.indexed_tensor import (
-    NodeAxis,
+    NodeDimension,
     NodeIndexed,
     NodeIndexedMatrix,
     NodeIndexedTensor,
@@ -29,7 +29,7 @@ __all__ = [
     "NodeIndexedMatrix",
     "NodeIndexedTensor",
     "NodeIndexedVector",
-    "NodeAxis",
+    "NodeDimension",
     "NodeInfo",
     "NodeInfoQueue",
     "NodeInfoRef",

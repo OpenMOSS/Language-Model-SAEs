@@ -17,7 +17,7 @@ from lm_saes import (
     CircuitStatus,
     LorsaConfig,
     MOLTConfig,
-    NodeAxis,
+    NodeDimension,
     NodeIndexed,
     SAEConfig,
     TransformerLensLanguageModel,
@@ -204,12 +204,12 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
         (
             sum(
                 [results.dimensions[0] + results.dimensions[1] for results, _ in ar.qk_trace_results],
-                NodeAxis.empty(device=device),
+                NodeDimension.empty(device=device),
             ).unique()
             - ov_nodes
         )
         if ar.qk_trace_results is not None
-        else NodeAxis.empty(device=device)
+        else NodeDimension.empty(device=device)
     )
     is_from_qk_tracings = torch.zeros(len(ov_nodes) + len(qk_nodes), device=device, dtype=torch.bool)
     is_from_qk_tracings[len(ov_nodes) :] = True

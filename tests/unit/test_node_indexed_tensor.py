@@ -1,12 +1,12 @@
 """Unit tests for NodeIndexedTensor, NodeIndexedVector, and NodeIndexedMatrix.
 
 Each axis of a :class:`~lm_saes.backend.language_model.NodeIndexedTensor` is
-described by a :class:`~lm_saes.backend.language_model.NodeAxis` (node layout,
+described by a :class:`~lm_saes.backend.language_model.NodeDimension` (node layout,
 offsets, inverse indices). Construction uses ``from_dimensions`` /
 ``from_data(..., dimensions=...)``. Selector-style APIs accept either a
-sequence of :class:`NodeInfo` or a prebuilt :class:`NodeAxis`, while
+sequence of :class:`NodeInfo` or a prebuilt :class:`NodeDimension`, while
 ``nodes_to_offsets`` and ``topk(..., ignore_dimension=...)`` operate on
-:class:`NodeAxis` directly.
+:class:`NodeDimension` directly.
 
 Index convention
 ----------------
@@ -20,7 +20,7 @@ import pytest
 import torch
 
 from lm_saes.circuits.indexed_tensor import (
-    NodeAxis,
+    NodeDimension,
     NodeIndexedMatrix,
     NodeIndexedTensor,
     NodeIndexedVector,
@@ -42,8 +42,8 @@ def _ni2(key: str, *pairs: tuple[int, int]) -> NodeInfo:
     return NodeInfo(key=key, indices=torch.tensor(list(pairs), dtype=torch.long))
 
 
-def _dim(*node_infos: NodeInfo) -> NodeAxis:
-    return NodeAxis.from_node_infos(list(node_infos))
+def _dim(*node_infos: NodeInfo) -> NodeDimension:
+    return NodeDimension.from_node_infos(list(node_infos))
 
 
 # ---------------------------------------------------------------------------
@@ -69,9 +69,9 @@ def test_from_data_stores_values_exactly():
 
 
 def test_from_data_accepts_prebuilt_dimension_instance():
-    """``from_data`` may take a :class:`NodeAxis` instead of a node list."""
+    """``from_data`` may take a :class:`NodeDimension` instead of a node list."""
     node_list = [_ni("a", 0, 3), _ni("b", 7)]
-    d0 = NodeAxis.from_node_infos(node_list)
+    d0 = NodeDimension.from_node_infos(node_list)
     data = torch.tensor([10.0, 20.0, 30.0])
     t = NodeIndexedTensor.from_data(data=data, dimensions=(d0,))
     assert t.dimensions[0] is d0
@@ -79,7 +79,7 @@ def test_from_data_accepts_prebuilt_dimension_instance():
 
 
 def test_from_dimensions_accepts_prebuilt_dimension_instance():
-    d0 = NodeAxis.from_node_infos([_ni("a", 0, 3), _ni("b", 1)])
+    d0 = NodeDimension.from_node_infos([_ni("a", 0, 3), _ni("b", 1)])
     t = NodeIndexedTensor.from_dimensions(dimensions=(d0,))
     assert t.dimensions[0] is d0
     assert t.data.shape == (3,)
@@ -91,7 +91,7 @@ def test_node_mappings_store_correct_offsets():
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 7)],),
     )
-    assert isinstance(t.dimensions[0], NodeAxis)
+    assert isinstance(t.dimensions[0], NodeDimension)
     assert torch.equal(t.dimensions[0].node_mappings["a"].offsets, torch.tensor([0, 1]))
     assert torch.equal(t.dimensions[0].node_mappings["b"].offsets, torch.tensor([2]))
 
@@ -105,7 +105,7 @@ def test_node_mappings_store_correct_indices():
 
 
 # ---------------------------------------------------------------------------
-# NodeAxis.nodes_to_offsets
+# NodeDimension.nodes_to_offsets
 # ---------------------------------------------------------------------------
 
 
@@ -148,7 +148,7 @@ def test_nodes_to_offsets_cross_node_selection():
 
 
 def test_nodes_to_offsets_accepts_dimension_matching_node_info_list():
-    """``NodeAxis.nodes_to_offsets`` accepts another :class:`NodeAxis` layout."""
+    """``NodeDimension.nodes_to_offsets`` accepts another :class:`NodeDimension` layout."""
     t = NodeIndexedTensor.from_dimensions(
         dimensions=([_ni("a", 0, 3), _ni("b", 1, 2)],),
     )
@@ -170,7 +170,7 @@ def test_nodes_to_offsets_dimension_branch_caches_by_dimension_hash():
 
 
 def test_nodes_to_offsets_merged_node_dimension_matches_list():
-    """Selection :class:`NodeAxis` built from two :class:`NodeInfo` with the same key."""
+    """Selection :class:`NodeDimension` built from two :class:`NodeInfo` with the same key."""
     t = NodeIndexedTensor.from_dimensions(dimensions=([_ni("a", 0, 3, 7)],))
     axis = t.dimensions[0]
     selection = _dim(_ni("a", 7), _ni("a", 0))
@@ -179,7 +179,7 @@ def test_nodes_to_offsets_merged_node_dimension_matches_list():
 
 
 # ---------------------------------------------------------------------------
-# NodeAxis.nodes_to_offsets — missing (key, index) pairs return -1
+# NodeDimension.nodes_to_offsets — missing (key, index) pairs return -1
 # ---------------------------------------------------------------------------
 
 
@@ -229,7 +229,7 @@ def test_nodes_to_offsets_2d_in_bounds_unregistered_returns_sentinel():
 
 
 # ---------------------------------------------------------------------------
-# NodeAxis.__sub__ — remove (key, index) pairs
+# NodeDimension.__sub__ — remove (key, index) pairs
 # ---------------------------------------------------------------------------
 
 
@@ -310,7 +310,7 @@ def test_sub_is_inverse_of_add_for_disjoint_pieces():
 
 
 # ---------------------------------------------------------------------------
-# NodeAxis.offsets_to_nodes
+# NodeDimension.offsets_to_nodes
 # ---------------------------------------------------------------------------
 
 
@@ -485,7 +485,7 @@ def test_getitem_accepts_dimension_key_matches_node_info_list():
 
 
 def test_getitem_dimension_key_is_preserved_on_result_axis():
-    """Sliced tensor keeps the selector :class:`NodeAxis` on the indexed axis."""
+    """Sliced tensor keeps the selector :class:`NodeDimension` on the indexed axis."""
     data = torch.tensor([10.0, 20.0, 30.0, 40.0])
     t = NodeIndexedTensor.from_data(
         data=data,
@@ -715,7 +715,7 @@ def test_matrix_add_target_then_addressable():
 
 
 # ---------------------------------------------------------------------------
-# NodeIndexedVector – topk exercises NodeAxis.offsets_to_nodes
+# NodeIndexedVector – topk exercises NodeDimension.offsets_to_nodes
 # ---------------------------------------------------------------------------
 
 

@@ -23,7 +23,7 @@ from .backend.language_model import (
 )
 from .circuits import (
     AttributionResult,
-    NodeAxis,
+    NodeDimension,
     NodeIndexed,
     NodeIndexedMatrix,
     NodeIndexedTensor,
@@ -186,7 +186,7 @@ __all__ = [
     "NodeIndexedMatrix",
     "NodeIndexedTensor",
     "NodeIndexedVector",
-    "NodeAxis",
+    "NodeDimension",
     "NodeInfo",
     "attribute",
     "prune_attribution",

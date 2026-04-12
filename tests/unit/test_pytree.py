@@ -12,7 +12,7 @@ V = TypeVar("V")
 
 @dataclass
 class Dim(PyTree):
-    """Mirrors NodeAxis: a non-generic PyTree used as a typed tuple element."""
+    """Mirrors NodeDimension: a non-generic PyTree used as a typed tuple element."""
 
     data: torch.Tensor
     tag: str
@@ -74,15 +74,15 @@ def test_attribution_result_full_tensor():
     """full_tensor on real AttributionResult with qk_trace_results (parameterized generic field)."""
     from lm_saes.circuits.attribution import AttributionResult
     from lm_saes.circuits.indexed_tensor import (
-        NodeAxis,
+        NodeDimension,
         NodeIndexed,
         NodeIndexedMatrix,
         NodeIndexedVector,
         NodeInfo,
     )
 
-    targets = NodeAxis.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
-    sources = NodeAxis.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
+    targets = NodeDimension.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
+    sources = NodeDimension.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
 
     sample = AttributionResult(
         activations=NodeIndexedVector.from_data(torch.randn(3), dimensions=(targets,)),
@@ -98,12 +98,12 @@ def test_attribution_result_full_tensor():
                 NodeIndexed(
                     value=torch.randn(2, 3),
                     dimensions=(
-                        NodeAxis.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
-                        NodeAxis.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
+                        NodeDimension.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
+                        NodeDimension.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
                     ),
                 ),
             ],
-            dimensions=(NodeAxis.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
+            dimensions=(NodeDimension.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
         ),
     )
 
