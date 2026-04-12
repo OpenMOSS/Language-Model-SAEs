@@ -1,3 +1,10 @@
+## v2.0.0b27 (2026-04-12)
+
+
+- Merge pull request #209 from OpenMOSS/dev
+- Release: revert the renaming of NodeDimension
+- refactor(circuits): rename NodeAxis to NodeDimension
+
 ## v2.0.0b26 (2026-04-12)
 
 
