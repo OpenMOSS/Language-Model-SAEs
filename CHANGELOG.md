@@ -1,3 +1,17 @@
+## v2.0.0b26 (2026-04-12)
+
+
+- Merge pull request #208 from OpenMOSS/dev
+- Release: refactor circuits (naming & move to PyTree base class) and fix attribution
+- fix(circuits): keep order in retrieval_from_intermediates
+- fix(circuits): correct NodeIndexed.__iter__ return type
+- refactor(circuits): rename to NodeAxis, NodeIndexed, NodeIndexedTensor/Vector/Matrix
+- refactor: use PyTree base class to support move to device and full tensor
+- refactor: directly import from lm_saes in server
+- refactor(circuits): move circuit tracing parts to separate module
+- fix(circuits): structure Dimension
+- refactor: use cattrs for (de)serialization
+
 ## v2.0.0b25 (2026-04-10)
 
 
