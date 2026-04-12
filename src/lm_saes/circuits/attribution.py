@@ -142,12 +142,10 @@ def retrieval_from_intermediates(dimension: NodeAxis, intermediates: Sequence[tu
     return [
         NodeInfoRef(
             key=node.key,
-            indices=node.indices
-            if dimension.device_mesh is None
-            else DimMap({}).from_local(node.indices, dimension.device_mesh),
+            indices=node.indices,
             ref=intermediate[0].ref,
         )
-        for node in dimension.node_mappings.values()
+        for node in dimension.node_infos
         for intermediate in intermediates
         if node.key == intermediate[0].key
     ]
