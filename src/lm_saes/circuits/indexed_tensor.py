@@ -113,7 +113,7 @@ def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
 
 
 @dataclass
-class NodeAxis(PyTree):
+class NodeDimension(PyTree):
     node_mappings: dict[Any, Node]
     mapper: DiscreteMapper
 
@@ -176,7 +176,7 @@ class NodeAxis(PyTree):
         device_mesh: DeviceMesh | None = None,
     ) -> Self:
         if len(node_infos) == 0 and device is None:
-            raise ValueError("Cannot build NodeAxis from empty `node_infos` without an explicit device.")
+            raise ValueError("Cannot build NodeDimension from empty `node_infos` without an explicit device.")
         device = device if device is not None else node_infos[0].indices.device
         device_mesh = (
             device_mesh
@@ -242,7 +242,7 @@ class NodeAxis(PyTree):
             for i in range(len(unique_keys))
         ]
 
-    def __add__(self, other: "NodeAxis") -> "NodeAxis":
+    def __add__(self, other: "NodeDimension") -> "NodeDimension":
         self_length = len(self)
         all_keys = list(dict.fromkeys([*self.node_mappings.keys(), *other.node_mappings.keys()]))
         node_mappings = {
@@ -270,11 +270,11 @@ class NodeAxis(PyTree):
         ret = self.__class__._from_node_mappings(
             node_mappings=node_mappings, device=self.device, mapper=self.mapper, device_mesh=self.device_mesh
         )
-        assert len(ret) == len(self) + len(other), "NodeAxis length mismatch"
+        assert len(ret) == len(self) + len(other), "NodeDimension length mismatch"
         return ret
 
-    def __sub__(self, other: "NodeAxis") -> "NodeAxis":
-        """Return a new NodeAxis with every ``(key, index)`` pair present in ``other`` removed from ``self``."""
+    def __sub__(self, other: "NodeDimension") -> "NodeDimension":
+        """Return a new NodeDimension with every ``(key, index)`` pair present in ``other`` removed from ``self``."""
         lookup = other.nodes_to_offsets(self)
         kept = (lookup == -1).nonzero().squeeze(-1)
         return self.offsets_to_nodes(kept)
@@ -286,7 +286,7 @@ class NodeAxis(PyTree):
         return hash(tuple(self.node_mappings.values()))
 
     @timer.time("nodes_to_offsets")
-    def nodes_to_offsets(self, dimension: "NodeAxis") -> torch.Tensor:
+    def nodes_to_offsets(self, dimension: "NodeDimension") -> torch.Tensor:
         """Map every element of ``dimension`` to its offset in ``self``.
 
         Returns a tensor of shape ``(len(dimension),)``. Elements whose ``(key, index)``
@@ -320,15 +320,15 @@ class NodeAxis(PyTree):
         return offsets
 
     @timer.time("offsets_to_nodes")
-    def offsets_to_nodes(self, offsets: torch.Tensor) -> "NodeAxis":
+    def offsets_to_nodes(self, offsets: torch.Tensor) -> "NodeDimension":
         """The reverse of :meth:`nodes_to_offsets`. Map every offset in ``offsets`` to its ``(key, index)`` pair in ``self``.
 
-        Returns a new NodeAxis with one Node per unique ``(key, index)`` pair.
+        Returns a new NodeDimension with one Node per unique ``(key, index)`` pair.
         """
         if self.device_mesh is not None:
             assert isinstance(offsets, DTensor) and all(
                 isinstance(placement, Replicate) for placement in offsets.placements
-            ), "Offsets must be a replicated DTensor when NodeAxis is distributed"
+            ), "Offsets must be a replicated DTensor when NodeDimension is distributed"
             offsets = offsets.to_local()
 
         keys_encoded = self.offset_mapping["keys"][offsets]
@@ -439,15 +439,17 @@ class NodeAxis(PyTree):
 class NodeIndexedTensor(PyTree):
     n_dims: int
     data: torch.Tensor
-    dimensions: tuple[NodeAxis, ...]
+    dimensions: tuple[NodeDimension, ...]
 
     @classmethod
-    def from_data(cls, data: torch.Tensor, dimensions: tuple[Sequence[NodeInfo] | NodeAxis, ...]) -> Self:
+    def from_data(cls, data: torch.Tensor, dimensions: tuple[Sequence[NodeInfo] | NodeDimension, ...]) -> Self:
         self = cls.__new__(cls)
         self.n_dims = data.ndim
         self.data = data
         self.dimensions = tuple(
-            dimension if isinstance(dimension, NodeAxis) else NodeAxis.from_node_infos(dimension, device=data.device)
+            dimension
+            if isinstance(dimension, NodeDimension)
+            else NodeDimension.from_node_infos(dimension, device=data.device)
             for dimension in dimensions
         )
         assert all(len(dimension) == data.shape[dim] for dim, dimension in enumerate(self.dimensions)), (
@@ -458,13 +460,13 @@ class NodeIndexedTensor(PyTree):
     @classmethod
     def from_dimensions(
         cls,
-        dimensions: tuple[Sequence[NodeInfo] | NodeAxis, ...],
+        dimensions: tuple[Sequence[NodeInfo] | NodeDimension, ...],
         device: torch.device | str = "cpu",
         dtype: torch.dtype = torch.float32,
         device_mesh: DeviceMesh | None = None,
     ) -> Self:
         shape = [
-            len(dimension) if isinstance(dimension, NodeAxis) else sum([len(ni) for ni in dimension])
+            len(dimension) if isinstance(dimension, NodeDimension) else sum([len(ni) for ni in dimension])
             for dimension in dimensions
         ]
         return cls.from_data(
@@ -475,7 +477,7 @@ class NodeIndexedTensor(PyTree):
         )
 
     @timer.time("extend")
-    def extend(self, dimension: NodeAxis, dim: int, data: torch.Tensor | None = None):
+    def extend(self, dimension: NodeDimension, dim: int, data: torch.Tensor | None = None):
         new_data_shape = tuple(self.data.shape[i] if i != dim else len(dimension) for i in range(self.n_dims))
 
         if data is None:
@@ -496,20 +498,20 @@ class NodeIndexedTensor(PyTree):
 
     @timer.time("__getitem__")
     @torch.no_grad()
-    def __getitem__(self, key: tuple[NodeAxis | None, ...] | NodeAxis | None) -> Self:
-        """Index the tensor with NodeAxis selections for each dimension.
+    def __getitem__(self, key: tuple[NodeDimension | None, ...] | NodeDimension | None) -> Self:
+        """Index the tensor with NodeDimension selections for each dimension.
 
-        Each dimension accepts a ``NodeAxis`` to select specific node
+        Each dimension accepts a ``NodeDimension`` to select specific node
         elements, or ``None`` to select all elements along that dimension.
 
-        For a 1-D tensor a single ``NodeAxis`` (or ``None``) can be
+        For a 1-D tensor a single ``NodeDimension`` (or ``None``) can be
         passed directly; for higher-rank tensors, pass a tuple with one entry
         per dimension.
 
         Args:
-            key: NodeAxis selectors. A tuple of ``(NodeAxis | None)``
+            key: NodeDimension selectors. A tuple of ``(NodeDimension | None)``
                 with length equal to :attr:`n_dims`, or a bare
-                ``NodeAxis | None`` for 1-D tensors.
+                ``NodeDimension | None`` for 1-D tensors.
 
         Returns:
             A new :class:`NodeIndexedTensor` (or subclass) containing the
@@ -517,7 +519,7 @@ class NodeIndexedTensor(PyTree):
         """
         if not isinstance(key, tuple):
             key = (key,)
-        key = cast(tuple[NodeAxis | None, ...], key)
+        key = cast(tuple[NodeDimension | None, ...], key)
         if len(key) != self.n_dims:
             raise ValueError(f"Expected {self.n_dims} dimension selectors, got {len(key)}")
 
@@ -540,15 +542,15 @@ class NodeIndexedTensor(PyTree):
     @torch.no_grad()
     def __setitem__(
         self,
-        key: tuple[NodeAxis | None, ...] | NodeAxis | None,
+        key: tuple[NodeDimension | None, ...] | NodeDimension | None,
         value: Self | Tensor,
     ):
-        """Assign to a NodeAxis-selected sub-tensor.
+        """Assign to a NodeDimension-selected sub-tensor.
 
         Args:
-            key: NodeAxis selectors. A tuple of ``(NodeAxis | None)``
+            key: NodeDimension selectors. A tuple of ``(NodeDimension | None)``
                 with length equal to :attr:`n_dims`, or a bare
-                ``NodeAxis | None`` for 1-D tensors.
+                ``NodeDimension | None`` for 1-D tensors.
             value: Tensor values to write to the selected region. When a
                 :class:`NodeIndexedTensor` is provided, its underlying
                 :attr:`data` tensor is assigned.
@@ -558,7 +560,7 @@ class NodeIndexedTensor(PyTree):
         """
         if not isinstance(key, tuple):
             key = (key,)
-        key = cast(tuple[NodeAxis | None, ...], key)
+        key = cast(tuple[NodeDimension | None, ...], key)
         if len(key) != self.n_dims:
             raise ValueError(f"Expected {self.n_dims} dimension selectors, got {len(key)}")
 
@@ -619,17 +621,17 @@ class NodeIndexedTensor(PyTree):
         return self.__class__.from_data(~self.data, self.dimensions)
 
     @timer.time("nonzero")
-    def nonzero(self) -> tuple[torch.Tensor, tuple[NodeAxis, ...]]:
+    def nonzero(self) -> tuple[torch.Tensor, tuple[NodeDimension, ...]]:
         indices = self.data.nonzero(as_tuple=True)
         values = self.data[indices]
         return values, tuple(self.dimensions[i].offsets_to_nodes(indices[i]) for i in range(self.n_dims))
 
 
 class NodeIndexedVector(NodeIndexedTensor):
-    def add_nodes(self, node_infos: NodeAxis, data: torch.Tensor | None = None):
+    def add_nodes(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
         self.extend(node_infos, 0, data)
 
-    def topk(self, k: int, ignore_dimension: NodeAxis | None = None):
+    def topk(self, k: int, ignore_dimension: NodeDimension | None = None):
         ignore_indices = (
             self.dimensions[0].nodes_to_offsets(ignore_dimension)
             if ignore_dimension is not None and len(ignore_dimension) > 0
@@ -684,10 +686,10 @@ class NodeIndexedVector(NodeIndexedTensor):
 
 
 class NodeIndexedMatrix(NodeIndexedTensor):
-    def add_targets(self, node_infos: NodeAxis, data: torch.Tensor | None = None):
+    def add_targets(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
         self.extend(node_infos, 0, data)
 
-    def add_sources(self, node_infos: NodeAxis, data: torch.Tensor | None = None):
+    def add_sources(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
         self.extend(node_infos, 1, data)
 
     @overload
@@ -757,7 +759,7 @@ V = TypeVar("V", bound=SupportsGetItem[Any])
 @dataclass
 class NodeIndexed(Generic[V], PyTree):
     value: V
-    dimensions: tuple[NodeAxis, ...]
+    dimensions: tuple[NodeDimension, ...]
 
     def __len__(self) -> int:
         return len(self.dimensions[0])

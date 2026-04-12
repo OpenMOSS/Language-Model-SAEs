@@ -4,7 +4,7 @@ import torch
 
 from lm_saes.circuits.attribution import AttributionResult
 from lm_saes.circuits.indexed_tensor import (
-    NodeAxis,
+    NodeDimension,
     NodeIndexed,
     NodeIndexedMatrix,
     NodeIndexedVector,
@@ -24,8 +24,8 @@ def _deep_equal(a: object, b: object) -> bool:
 
 
 def test_dump_attribution_result() -> None:
-    targets = NodeAxis.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
-    sources = NodeAxis.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
+    targets = NodeDimension.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
+    sources = NodeDimension.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
     activations_data = torch.arange(3, dtype=torch.float32)
     attribution_data = torch.arange(12, dtype=torch.float32).reshape(3, 4)
     logits = torch.arange(5, dtype=torch.float32)
@@ -45,12 +45,12 @@ def test_dump_attribution_result() -> None:
                 NodeIndexed(
                     value=qk_inner,
                     dimensions=(
-                        NodeAxis.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
-                        NodeAxis.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
+                        NodeDimension.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
+                        NodeDimension.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
                     ),
                 ),
             ],
-            dimensions=(NodeAxis.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
+            dimensions=(NodeDimension.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
         ),
     )
 
@@ -135,8 +135,8 @@ def test_dump_attribution_result() -> None:
 
 
 def test_load_attribution_result() -> None:
-    targets = NodeAxis.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
-    sources = NodeAxis.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
+    targets = NodeDimension.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
+    sources = NodeDimension.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
     sample = AttributionResult(
         activations=NodeIndexedVector.from_data(torch.randn(3), dimensions=(targets,)),
         attribution=NodeIndexedMatrix.from_data(torch.randn(3, 4), dimensions=(targets, sources)),
@@ -151,12 +151,12 @@ def test_load_attribution_result() -> None:
                 NodeIndexed(
                     value=torch.randn(2, 3),
                     dimensions=(
-                        NodeAxis.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
-                        NodeAxis.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
+                        NodeDimension.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
+                        NodeDimension.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
                     ),
                 ),
             ],
-            dimensions=(NodeAxis.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
+            dimensions=(NodeDimension.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
         ),
     )
 

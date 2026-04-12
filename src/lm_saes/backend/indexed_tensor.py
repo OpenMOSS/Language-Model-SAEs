@@ -2,7 +2,7 @@
 
 from lm_saes.circuits.indexed_tensor import (
     Node,
-    NodeAxis,
+    NodeDimension,
     NodeIndexed,
     NodeIndexedMatrix,
     NodeIndexedTensor,
@@ -10,14 +10,14 @@ from lm_saes.circuits.indexed_tensor import (
     NodeInfo,
 )
 
-Dimension = NodeAxis
+Dimension = NodeDimension
 Dimensioned = NodeIndexed
 
 __all__ = [
     "Dimension",
     "Dimensioned",
     "Node",
-    "NodeAxis",
+    "NodeDimension",
     "NodeIndexed",
     "NodeIndexedMatrix",
     "NodeIndexedTensor",
