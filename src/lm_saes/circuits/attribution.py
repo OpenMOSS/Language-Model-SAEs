@@ -430,6 +430,12 @@ def collect_cache(
                 for rm in replacement_modules
                 if isinstance(rm, LowRankSparseAttention)
             ]
+            + [
+                rm.cfg.hook_point_out + suffix
+                for rm in replacement_modules
+                if isinstance(rm, LowRankSparseAttention)
+                for suffix in (".sae.hook_q", ".sae.hook_k")
+            ]
             + ln_detach_hooks(model)
             + model_bias_names
             + sae_bias_names,
@@ -566,7 +572,7 @@ def attribute(
 
             _, top_lorsa_features = lorsa_influence.topk(k=max(1, int(len(lorsa_features) * qk_top_fraction)))
 
-            qk_targets = _retrieve_qk_targets(
+            q_targets, k_targets, slot_to_unique = _retrieve_qk_vector_targets(
                 top_lorsa_features,
                 cache,
                 {
@@ -575,8 +581,6 @@ def attribute(
                     if isinstance(rm, LowRankSparseAttention)
                 },
             )
-            unique_qk_targets = qk_targets.dimension.unique()
-            qk_targets_deduped = qk_targets[unique_qk_targets]
 
             assert model.model is not None
             bias_keys = [
@@ -600,9 +604,9 @@ def attribute(
                 + [(k, seq_indices, cache[k]) for k in bias_keys if k in cache]
             )
 
-            hessian = compute_hessian_matrix(qk_targets_deduped, qk_sources, topk=qk_topk)
+            pair_results = compute_qk_pair_attribution(q_targets, k_targets, qk_sources, topk=qk_topk)
             qk_trace_results = NodeIndexed(
-                value=[hessian.value[i] for i in unique_qk_targets.nodes_to_offsets(qk_targets.dimension).tolist()],
+                value=[pair_results.value[unique_idx] for unique_idx in slot_to_unique],
                 dimensions=(top_lorsa_features,),
             )
 
@@ -619,26 +623,64 @@ def attribute(
     )
 
 
-def _retrieve_qk_targets(
+def _retrieve_qk_vector_targets(
     features: NodeDimension,
     cache: dict[str, torch.Tensor],
     ov_group_sizes: dict[str, int],
-) -> NodeRefs:
-    """Map from features to attention scores. If values of ov_group_sizes is larger than 1, the resulting NodeRefs may contain duplicate entries since multiple ov features map to the same qk head."""
-    entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
+) -> tuple[NodeRefs, NodeRefs, list[int]]:
+    """Map Lorsa features to ``Q(q_pos, h)`` / ``K(k_pos, h)`` vector targets.
+
+    For each feature, pick its ``(q_pos, qk_head, k_pos)`` triple where ``k_pos``
+    is the argmax key for that ``(qk_head, q_pos)``, and emit two parallel
+    per-slot ``NodeRefs`` whose value at each slot is a ``(d_qk_head,)``-shaped
+    slice of ``hook_q`` / ``hook_k``. Duplicate triples across features (which
+    arise when ``ov_group_size > 1``) are collapsed — the returned ``NodeRefs``
+    only contain unique targets. The ``slot_to_unique`` list maps each original
+    feature offset to its index in the deduplicated slot list.
+    """
+    slot_triples: list[tuple[str, int, int, int]] = []
     for feature_node in features:
-        attn_score_ref = cache[feature_node.key.replace(".sae.hook_feature_acts", ".sae.hook_attn_score")]
+        sae_path = feature_node.key.replace(".sae.hook_feature_acts", "")
+        attn_score_ref = cache[f"{sae_path}.sae.hook_attn_score"]
         q_pos, ov_head_idx = full_tensor(feature_node.indices)[0].tolist()
-        qk_head_idx = ov_head_idx // ov_group_sizes[feature_node.key.replace(".sae.hook_feature_acts", "")]
-        k_pos = attn_score_ref[0, qk_head_idx, q_pos].argmax().item()
-        entries.append(
+        qk_head_idx = ov_head_idx // ov_group_sizes[sae_path]
+        k_pos = int(attn_score_ref[0, qk_head_idx, q_pos].argmax().item())
+        slot_triples.append((sae_path, int(qk_head_idx), int(q_pos), k_pos))
+
+    seen: dict[tuple[str, int, int, int], int] = {}
+    deduped: list[tuple[str, int, int, int]] = []
+    slot_to_unique: list[int] = []
+    for triple in slot_triples:
+        unique_idx = seen.get(triple)
+        if unique_idx is None:
+            unique_idx = len(deduped)
+            seen[triple] = unique_idx
+            deduped.append(triple)
+        slot_to_unique.append(unique_idx)
+
+    q_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
+    k_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
+    for sae_path, qk_head_idx, q_pos, k_pos in deduped:
+        q_ref = cache[f"{sae_path}.sae.hook_q"]
+        k_ref = cache[f"{sae_path}.sae.hook_k"]
+        device = q_ref.device
+        q_entries.append(
             (
-                feature_node.key.replace(".sae.hook_feature_acts", ".sae.hook_attn_score"),
-                torch.tensor([[qk_head_idx, q_pos, k_pos]]),
-                attn_score_ref,
+                f"{sae_path}.sae.hook_q",
+                torch.tensor([[q_pos, qk_head_idx]], device=device),
+                q_ref,
             )
         )
-    return NodeRefs.from_nodes_and_refs(entries)
+        k_entries.append(
+            (
+                f"{sae_path}.sae.hook_k",
+                torch.tensor([[k_pos, qk_head_idx]], device=device),
+                k_ref,
+            )
+        )
+    q_targets = NodeRefs.from_nodes_and_refs(q_entries)
+    k_targets = NodeRefs.from_nodes_and_refs(k_entries)
+    return q_targets, k_targets, slot_to_unique
 
 
 def qk_trace(
@@ -688,7 +730,7 @@ def qk_trace(
     source_entries.extend((k, pos_indices, cache[k]) for k in bias_keys if k in cache)
     qk_sources = NodeRefs.from_nodes_and_refs(source_entries)
 
-    qk_targets = _retrieve_qk_targets(
+    q_targets, k_targets, slot_to_unique = _retrieve_qk_vector_targets(
         lorsa_features,
         cache,
         {
@@ -697,11 +739,9 @@ def qk_trace(
             if isinstance(rm, LowRankSparseAttention)
         },
     )
-    unique_qk_targets = qk_targets.dimension.unique()
-    qk_targets_deduped = qk_targets[unique_qk_targets]
-    hessian = compute_hessian_matrix(qk_targets_deduped, qk_sources, topk=topk)
+    pair_results = compute_qk_pair_attribution(q_targets, k_targets, qk_sources, topk=topk)
     return NodeIndexed(
-        value=[hessian.value[i] for i in qk_targets.dimension.nodes_to_offsets(unique_qk_targets).tolist()],
+        value=[pair_results.value[unique_idx] for unique_idx in slot_to_unique],
         dimensions=(lorsa_features,),
     )
 
@@ -814,3 +854,147 @@ def compute_hessian_matrix(
             )
 
     return NodeIndexed(value=per_slot_results, dimensions=(targets.dimension,))
+
+
+def compute_qk_pair_attribution(
+    q_targets: NodeRefs,
+    k_targets: NodeRefs,
+    sources: NodeRefs,
+    topk: int,
+) -> NodeIndexed[list["NodeIndexed[torch.Tensor]"]]:
+    """Compute role-labeled QK pair attributions for attention-score targets.
+
+    Each slot ``i`` of ``q_targets`` / ``k_targets`` holds the ``(d_qk_head,)``
+    vectors ``Q(q_i, h_i)`` / ``K(k_i, h_i)`` whose inner product is the
+    attention score of a single Lorsa feature. The bilinear Q→K pair
+    ``T_{ij} := (∂Q/∂s_i)·(∂K/∂s_j)`` is obtained exactly by running the first
+    backward pass as a VJP with ``K`` as cotangent against ``Q`` — the second
+    backward then traces through ``K``'s autograd history, yielding
+
+        ∂(K · ∂Q/∂s_i)/∂s_j = (∂K/∂s_j)·(∂Q/∂s_i) + K·∂²Q/(∂s_i∂s_j) = T_{ij}
+
+    because ``Q`` is linear in sources inside the circuit-trace context (SAE
+    decoders, ``W_Q`` / ``W_K``, and detached LayerNorms are all linear).
+
+    The returned pairs are **role-labeled by construction**: dim-0 of each slot
+    is the Q-side source; dim-1 is the K-side source.
+    """
+    assert len(q_targets.dimension) == len(k_targets.dimension)
+    fwd_batch_size = sources.batch_size
+    bwd_batch_size = fwd_batch_size // topk
+    device = sources.device
+
+    per_slot_results: list[NodeIndexed[torch.Tensor]] = []
+
+    n_slots_total = len(q_targets.dimension)
+    for start in range(0, n_slots_total, bwd_batch_size):
+        end = min(start + bwd_batch_size, n_slots_total)
+        offsets = torch.arange(start, end, device=q_targets.dimension.device)
+        q_sub = q_targets[q_targets.dimension.offsets_to_nodes(offsets)]
+        k_sub = k_targets[k_targets.dimension.offsets_to_nodes(offsets)]
+
+        # Per-slot (d_qk_head,) vectors. Each .values() entry has shape
+        # (fwd_batch, n_slots_for_this_key, d_qk_head); concatenation over keys
+        # glues the slot axis.
+        q_stacked = torch.cat(q_sub.values(), dim=1)
+        k_stacked = torch.cat(k_sub.values(), dim=1)
+        n_slots = q_stacked.shape[1]
+
+        q_vecs = torch.stack(
+            [q_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)],
+            dim=0,
+        )  # (n_slots, topk, d_qk_head)
+        k_vecs = torch.stack(
+            [k_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)],
+            dim=0,
+        )
+
+        # Q-role VJP: treats K as the cotangent but keeps its autograd history
+        # so the second backward picks up the ``∂K/∂s_j`` term.
+        first_grad_Q_refs = torch.autograd.grad(
+            q_vecs,
+            sources.refs(),
+            grad_outputs=k_vecs,
+            create_graph=True,
+            retain_graph=True,
+            allow_unused=True,
+        )
+
+        first_grads = multi_batch_index(
+            [
+                (g if g is not None else torch.zeros_like(ref), indices)
+                for g, (_, indices, ref) in zip(first_grad_Q_refs, sources)
+            ],
+            n_batch_dims=1,
+        )
+        first_attributions = torch.cat(
+            [
+                einops.einsum(
+                    value.detach(),
+                    grad,
+                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                )
+                for value, grad in zip(sources.values(), first_grads)
+            ],
+            dim=1,
+        )  # (fwd_batch, n_sources) — pure Q-role first-order attributions
+
+        q_role_targets_dim = NodeDimension.empty(device=device)
+        all_topk_q_indices = []
+        for slot_idx in range(n_slots):
+            _, topk_q_indices = first_attributions[slot_idx * topk].topk(topk)
+            q_role_targets_dim = q_role_targets_dim + sources.dimension.offsets_to_nodes(offsets=topk_q_indices)
+            all_topk_q_indices.append(topk_q_indices)
+
+        second_bwd_values = first_attributions[
+            torch.arange(n_slots, device=device).unsqueeze(1) * topk + torch.arange(topk, device=device).unsqueeze(0),
+            torch.stack(all_topk_q_indices, dim=0),
+        ].reshape(-1)
+
+        second_grads_refs = torch.autograd.grad(
+            second_bwd_values.sum(),
+            sources.refs(),
+            retain_graph=True,
+            allow_unused=True,
+        )
+
+        second_grads = multi_batch_index(
+            [
+                (g if g is not None else torch.zeros_like(ref), indices)
+                for g, (_, indices, ref) in zip(second_grads_refs, sources)
+            ],
+            n_batch_dims=1,
+        )
+        second_attributions = torch.cat(
+            [
+                einops.einsum(
+                    value.detach(),
+                    grad,
+                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
+                )
+                for value, grad in zip(sources.values(), second_grads)
+            ],
+            dim=1,
+        )
+
+        q_role_targets_list = list(q_role_targets_dim)
+        diag = torch.arange(topk, device=second_attributions.device)
+        for slot_idx in range(n_slots):
+            topk_values, topk_indices = second_attributions[slot_idx * topk : (slot_idx + 1) * topk].topk(topk, dim=-1)
+            pair_attrs = topk_values[diag, diag]
+            k_role_nodes = list(sources.dimension.offsets_to_nodes(topk_indices[diag, diag]))
+            q_role_nodes = q_role_targets_list[slot_idx * topk : (slot_idx + 1) * topk]
+
+            order = torch.argsort(pair_attrs, descending=True).tolist()
+            order = [i for i in order if pair_attrs[i].item() != 0.0]
+            per_slot_results.append(
+                NodeIndexed(
+                    value=pair_attrs[order] if len(order) > 0 else pair_attrs[:0],
+                    dimensions=(
+                        NodeDimension.from_node_infos([q_role_nodes[i] for i in order], device=device),
+                        NodeDimension.from_node_infos([k_role_nodes[i] for i in order], device=device),
+                    ),
+                )
+            )
+
+    return NodeIndexed(value=per_slot_results, dimensions=(q_targets.dimension,))
