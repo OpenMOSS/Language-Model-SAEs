@@ -15,7 +15,7 @@ from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.circuits.hooks import replace_biases_with_leaves
+from lm_saes.circuits.hooks import replace_model_biases_with_leaves, replace_sae_biases_with_leaves
 from lm_saes.circuits.indexed_tensor import (
     NodeDimension,
     NodeIndexed,
@@ -378,65 +378,63 @@ def collect_cache(
 
     assert model.model is not None, "model must be initialized"
     tokens = ensure_tokenized(inputs, model.tokenizer, device=model.device)
+    batch_size, seq_len = tokens.shape[0], tokens.shape[1]
 
-    bias_ctx = (
-        replace_biases_with_leaves(
+    model_bias_ctx = (
+        replace_model_biases_with_leaves(model.model, batch_size, seq_len) if with_bias_leaves else nullcontext([])
+    )
+    sae_bias_ctx = (
+        replace_sae_biases_with_leaves(
             model.model,
             cast(list[SparseDictionary], replacement_modules),
-            batch_size=tokens.shape[0],
-            seq_len=tokens.shape[1],
+            batch_size,
+            seq_len,
         )
         if with_bias_leaves
-        else nullcontext({})
+        else nullcontext([])
     )
 
-    with model.apply_saes(cast(list[SparseDictionary], replacement_modules)):
-        with bias_ctx as bias_leaves:
-            with model.detach_at(
-                ["hook_embed"]
-                + [replacement_module.cfg.hook_point_out + ".error" for replacement_module in replacement_modules]
-                + [
-                    replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts"
-                    for replacement_module in replacement_modules
-                ]
-                + [
-                    replacement_module.cfg.hook_point_out + ".sae.hook_attn_pattern"
-                    for replacement_module in replacement_modules
-                    if isinstance(replacement_module, LowRankSparseAttention)
-                ]
-                + [
-                    replacement_module.cfg.hook_point_out + item
-                    for replacement_module in replacement_modules
-                    if isinstance(replacement_module, LowRankSparseAttention) and replacement_module.cfg.use_post_qk_ln
-                    for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
-                ]
-                + ln_detach_hooks(model)
-                + attn_detach_hooks(model)
-            ):
-                logits, cache = model.run_with_ref_cache(
-                    tokens,
-                    names_filter=["hook_embed.post"]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".error.post"
-                        for replacement_module in replacement_modules
-                    ]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"
-                        for replacement_module in replacement_modules
-                    ]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"
-                        for replacement_module in replacement_modules
-                    ]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_attn_score"
-                        for replacement_module in replacement_modules
-                        if isinstance(replacement_module, LowRankSparseAttention)
-                    ]
-                    + ln_detach_hooks(model),
-                )
+    detach_hook_points = (
+        ["hook_embed"]
+        + [rm.cfg.hook_point_out + ".error" for rm in replacement_modules]
+        + [rm.cfg.hook_point_out + ".sae.hook_feature_acts" for rm in replacement_modules]
+        + [
+            rm.cfg.hook_point_out + ".sae.hook_attn_pattern"
+            for rm in replacement_modules
+            if isinstance(rm, LowRankSparseAttention)
+        ]
+        + [
+            rm.cfg.hook_point_out + item
+            for rm in replacement_modules
+            if isinstance(rm, LowRankSparseAttention) and rm.cfg.use_post_qk_ln
+            for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
+        ]
+        + ln_detach_hooks(model)
+        + attn_detach_hooks(model)
+    )
 
-    cache.update(bias_leaves)
+    with (
+        model_bias_ctx as model_bias_names,
+        model.apply_saes(cast(list[SparseDictionary], replacement_modules)),
+        sae_bias_ctx as sae_bias_names,
+        model.detach_at(detach_hook_points),
+    ):
+        logits, cache = model.run_with_ref_cache(
+            tokens,
+            names_filter=["hook_embed.post"]
+            + [rm.cfg.hook_point_out + ".error.post" for rm in replacement_modules]
+            + [rm.cfg.hook_point_out + ".sae.hook_feature_acts.pre" for rm in replacement_modules]
+            + [rm.cfg.hook_point_out + ".sae.hook_feature_acts.post" for rm in replacement_modules]
+            + [
+                rm.cfg.hook_point_out + ".sae.hook_attn_score"
+                for rm in replacement_modules
+                if isinstance(rm, LowRankSparseAttention)
+            ]
+            + ln_detach_hooks(model)
+            + model_bias_names
+            + sae_bias_names,
+        )
+
     return logits, cache
 
 
@@ -582,11 +580,13 @@ def attribute(
 
             assert model.model is not None
             bias_keys = [
-                f"blocks.{i}.{kind}" for i in range(len(model.model.blocks)) for kind in ("attn.b_O", "mlp.b_out")
+                f"blocks.{i}.{kind}"
+                for i in range(len(model.model.blocks))
+                for kind in ("attn.hook_b_O", "mlp.hook_b_out")
             ] + [
                 rm.cfg.hook_point_out + suffix
                 for rm in replacement_modules
-                for suffix in (".sae.b_Q", ".sae.b_K", ".sae.b_D")
+                for suffix in (".sae.hook_b_Q", ".sae.hook_b_K", ".sae.hook_b_D")
             ]
             qk_sources = sources + NodeRefs.from_nodes_and_refs(
                 [
@@ -678,10 +678,12 @@ def qk_trace(
                 cache[hp + ".sae.hook_feature_acts.post"],
             )
         )
-    bias_keys = [f"blocks.{i}.{kind}" for i in range(len(model.model.blocks)) for kind in ("attn.b_O", "mlp.b_out")] + [
+    bias_keys = [
+        f"blocks.{i}.{kind}" for i in range(len(model.model.blocks)) for kind in ("attn.hook_b_O", "mlp.hook_b_out")
+    ] + [
         rm.cfg.hook_point_out + suffix
         for rm in replacement_modules_cast
-        for suffix in (".sae.b_Q", ".sae.b_K", ".sae.b_D")
+        for suffix in (".sae.hook_b_Q", ".sae.hook_b_K", ".sae.hook_b_D")
     ]
     source_entries.extend((k, pos_indices, cache[k]) for k in bias_keys if k in cache)
     qk_sources = NodeRefs.from_nodes_and_refs(source_entries)

@@ -233,6 +233,8 @@ class LowRankSparseAttention(
         self.hook_reconstructed = HookPoint()
         self.hook_attn_pattern = HookPoint()
         self.hook_attn_score = HookPoint()
+        self.hook_q = HookPoint()
+        self.hook_k = HookPoint()
         self.setup()
 
     @property
@@ -786,7 +788,7 @@ class LowRankSparseAttention(
     ]:
         """Compute queries, keys, values."""
         x = x.to(self.W_Q.dtype)
-        q = (
+        q = self.hook_q(
             torch.einsum(
                 "bsd,Qdq->bsQq",
                 x,
@@ -794,7 +796,7 @@ class LowRankSparseAttention(
             )
             + self.b_Q
         )
-        k = (
+        k = self.hook_k(
             torch.einsum(
                 "bsd,Kdk->bsKk",
                 x,

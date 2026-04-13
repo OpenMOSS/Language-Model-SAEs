@@ -12,7 +12,8 @@ from lm_saes.circuits.attribution import (
 from lm_saes.circuits.hooks import (
     apply_saes,
     detach_at,
-    replace_biases_with_leaves,
+    replace_model_biases_with_leaves,
+    replace_sae_biases_with_leaves,
 )
 from lm_saes.circuits.indexed_tensor import (
     NodeDimension,
@@ -40,6 +41,7 @@ __all__ = [
     "get_normalized_matrix",
     "prune_attribution",
     "qk_trace",
-    "replace_biases_with_leaves",
+    "replace_model_biases_with_leaves",
+    "replace_sae_biases_with_leaves",
     "compute_hessian_matrix",
 ]
