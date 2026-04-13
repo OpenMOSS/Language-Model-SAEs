@@ -1,24 +1,21 @@
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Callable, Union, cast
+from typing import Callable, NamedTuple, cast
 
 import torch
 import torch.nn as nn
 from transformer_lens.hook_points import HookedRootModule, HookPoint
 
+from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.backend.tl_addons import mount_hooked_modules
+from lm_saes.models.lorsa import LowRankSparseAttention
+from lm_saes.models.molt import MixtureOfLinearTransform
+from lm_saes.models.sae import SparseAutoEncoder
+from lm_saes.models.sparse_dictionary import SparseDictionary
 from lm_saes.utils.timer import timer
-
-if TYPE_CHECKING:
-    from lm_saes.backend.language_model import TransformerLensLanguageModel
-    from lm_saes.models.sparse_dictionary import SparseDictionary
 
 
 @contextmanager
-def apply_saes(model: "TransformerLensLanguageModel", saes: list["SparseDictionary"]):
-    from lm_saes.models.lorsa import LowRankSparseAttention
-    from lm_saes.models.molt import MixtureOfLinearTransform
-    from lm_saes.models.sae import SparseAutoEncoder
-
+def apply_saes(model: TransformerLensLanguageModel, saes: list[SparseDictionary]):
     """
     Apply the sparse dictionaries to the model.
     """
@@ -73,7 +70,7 @@ def apply_saes(model: "TransformerLensLanguageModel", saes: list["SparseDictiona
 
 @contextmanager
 def detach_at(
-    model: "TransformerLensLanguageModel",
+    model: TransformerLensLanguageModel,
     hook_points: list[str],
 ):
     """
@@ -112,84 +109,154 @@ def _make_bias_leaf(bias_data: torch.Tensor, batch_size: int, seq_len: int) -> t
     return leaf.requires_grad_(True)
 
 
+class _BiasReplacer(NamedTuple):
+    mount: tuple[str, str, nn.Module]
+    fwd_hook: tuple[str | Callable, Callable]
+    cache_name: str
+    restore: Callable[[], None]
+
+
+def _make_bias_replacer(
+    parent: nn.Module,
+    parent_path: str,
+    bias_attr: str,
+    intercept: str,
+    batch_size: int,
+    seq_len: int,
+) -> _BiasReplacer | None:
+    param = getattr(parent, bias_attr, None)
+    if param is None:
+        return None
+    original = param.data.clone()
+    leaf = _make_bias_leaf(param.data, batch_size, seq_len)
+    param.data.zero_()
+
+    bias_hook = HookPoint()
+    child_name = f"hook_{bias_attr}"
+    return _BiasReplacer(
+        mount=(parent_path, child_name, bias_hook),
+        fwd_hook=(intercept, lambda tensor, **_: tensor + bias_hook(leaf)),
+        cache_name=f"{parent_path}.{child_name}",
+        restore=lambda: getattr(parent, bias_attr).data.copy_(original),
+    )
+
+
 @contextmanager
-def replace_biases_with_leaves(
+def _bias_phase(model: HookedRootModule, replacers: list[_BiasReplacer | None]):
+    active = [r for r in replacers if r is not None]
+    if not active:
+        yield []
+        return
+    try:
+        with mount_hooked_modules(model, [r.mount for r in active]):
+            with model.hooks([r.fwd_hook for r in active]):
+                yield [r.cache_name for r in active]
+    finally:
+        for r in active:
+            r.restore()
+
+
+@contextmanager
+def replace_model_biases_with_leaves(
     model: HookedRootModule,
-    saes: list["SparseDictionary"],
     batch_size: int,
     seq_len: int,
 ):
-    from lm_saes.models.lorsa import LowRankSparseAttention
-    from lm_saes.models.molt import MixtureOfLinearTransform
-    from lm_saes.models.sae import SparseAutoEncoder
+    """Zero ``attn.b_O`` / ``mlp.b_out`` and expose each as a HookPoint mounted
+    on its parent module, with a fwd_hook at ``hook_attn_out`` / ``hook_mlp_out``
+    that adds the leaf back.
 
-    bias_leaves: dict[str, torch.Tensor] = {}
-    # (module, attr_name, original_value, is_param_swap)
-    saved_state: list[tuple[nn.Module, str, Union[torch.Tensor, nn.Parameter], bool]] = []
-    fwd_hooks: list[tuple[str | Callable, Callable]] = []
+    **Must be entered BEFORE** :func:`apply_saes` so these fwd_hooks register
+    first — a transcoder landing on the same hook point then sees a tensor with
+    ``b_O`` / ``b_out`` already restored.
 
-    def _save_zero_and_hook(
-        module: nn.Module,
-        attr_name: str,
-        cache_key: str,
-        hook_point: str,
-    ) -> None:
-        """Zero a base-model bias and register a hook that adds the leaf back."""
-        param = getattr(module, attr_name, None)
-        if param is None:
-            return
-        saved_state.append((module, attr_name, param.data.clone(), False))
-        leaf = _make_bias_leaf(param.data, batch_size, seq_len)
-        bias_leaves[cache_key] = leaf
-        param.data.zero_()
+    Mounted hook points:
+      - ``blocks.{i}.attn.hook_b_O``    intercept: ``blocks.{i}.hook_attn_out``
+      - ``blocks.{i}.mlp.hook_b_out``   intercept: ``blocks.{i}.hook_mlp_out``
+    """
+    replacers: list[_BiasReplacer | None] = []
+    for i, block in enumerate(model.blocks):  # type: ignore[arg-type]
+        if hasattr(block, "attn"):
+            replacers.append(
+                _make_bias_replacer(
+                    block.attn,
+                    f"blocks.{i}.attn",
+                    "b_O",
+                    f"blocks.{i}.hook_attn_out",
+                    batch_size,
+                    seq_len,
+                )
+            )
+        if hasattr(block, "mlp"):
+            replacers.append(
+                _make_bias_replacer(
+                    block.mlp,
+                    f"blocks.{i}.mlp",
+                    "b_out",
+                    f"blocks.{i}.hook_mlp_out",
+                    batch_size,
+                    seq_len,
+                )
+            )
+    with _bias_phase(model, replacers) as names:
+        yield names
 
-        def _hook(tensor: torch.Tensor, hook: HookPoint, _leaf: torch.Tensor = leaf) -> torch.Tensor:
-            return tensor + _leaf
 
-        fwd_hooks.append((hook_point, _hook))
+@contextmanager
+def replace_sae_biases_with_leaves(
+    model: HookedRootModule,
+    saes: list[SparseDictionary],
+    batch_size: int,
+    seq_len: int,
+):
+    """Zero SAE / Lorsa biases (``b_D`` / ``b_Q`` / ``b_K``) and expose each as
+    a HookPoint mounted on the SAE module, with a fwd_hook at the SAE's own
+    ``hook_reconstructed`` / ``hook_q`` / ``hook_k`` that adds the leaf back.
 
-    def _save_and_replace_param(
-        module: nn.Module,
-        attr_name: str,
-        cache_key: str,
-    ) -> None:
-        """Swap an ``nn.Parameter`` with an expanded leaf."""
-        original = module._parameters.get(attr_name)
-        if original is None:
-            return
-        module._parameters.pop(attr_name)
-        saved_state.append((module, attr_name, original, True))
-        leaf = _make_bias_leaf(original.data, batch_size, seq_len)
-        bias_leaves[cache_key] = leaf
-        object.__setattr__(module, attr_name, leaf)
+    **Must be entered AFTER** :func:`apply_saes` so the SAE modules are
+    reachable in ``model.mod_dict`` at ``{hook_point_out}.sae``.
 
-    try:
-        for i, block in enumerate(model.blocks):  # type: ignore[arg-type]
-            if hasattr(block, "attn") and hasattr(block.attn, "b_O") and getattr(block.attn, "b_O") is not None:
-                _save_zero_and_hook(block.attn, "b_O", f"blocks.{i}.attn.b_O", f"blocks.{i}.hook_attn_out")
-            if hasattr(block, "mlp") and hasattr(block.mlp, "b_out") and getattr(block.mlp, "b_out") is not None:
-                _save_zero_and_hook(block.mlp, "b_out", f"blocks.{i}.mlp.b_out", f"blocks.{i}.hook_mlp_out")
-
-        # ---- SAE / MOLT / LORSA biases (parameter replacement) ----
-        for sae in saes:
-            if not isinstance(sae, SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform):
-                continue
-            if isinstance(sae, LowRankSparseAttention):
-                for bias_name in ("b_Q", "b_K"):
-                    if hasattr(sae, bias_name) and getattr(sae, bias_name) is not None:
-                        _save_and_replace_param(sae, bias_name, f"{sae.cfg.hook_point_out}.sae.{bias_name}")
-            # decoder bias b_D (SAE / MOLT / LORSA)
-            if sae.cfg.use_decoder_bias and hasattr(sae, "b_D"):
-                _save_and_replace_param(sae, "b_D", f"{sae.cfg.hook_point_out}.sae.b_D")
-
-        with model.hooks(fwd_hooks):
-            yield bias_leaves
-
-    finally:
-        for module, attr_name, original, is_param_swap in saved_state:
-            if is_param_swap:
-                if attr_name in module.__dict__:
-                    del module.__dict__[attr_name]
-                module._parameters[attr_name] = cast(nn.Parameter, original)
-            else:
-                getattr(module, attr_name).data.copy_(original)
+    Mounted hook points:
+      - ``{hook_point_out}.sae.hook_b_D``   intercept: ``{hook_point_out}.sae.hook_reconstructed``
+      - ``{hook_point_out}.sae.hook_b_Q``   intercept: ``{hook_point_out}.sae.hook_q``  (Lorsa)
+      - ``{hook_point_out}.sae.hook_b_K``   intercept: ``{hook_point_out}.sae.hook_k``  (Lorsa)
+    """
+    replacers: list[_BiasReplacer | None] = []
+    for sae in saes:
+        if not isinstance(sae, SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform):
+            continue
+        sae_path = f"{sae.cfg.hook_point_out}.sae"
+        if isinstance(sae, LowRankSparseAttention):
+            replacers.append(
+                _make_bias_replacer(
+                    sae,
+                    sae_path,
+                    "b_Q",
+                    f"{sae_path}.hook_q",
+                    batch_size,
+                    seq_len,
+                )
+            )
+            replacers.append(
+                _make_bias_replacer(
+                    sae,
+                    sae_path,
+                    "b_K",
+                    f"{sae_path}.hook_k",
+                    batch_size,
+                    seq_len,
+                )
+            )
+        if sae.cfg.use_decoder_bias:
+            replacers.append(
+                _make_bias_replacer(
+                    sae,
+                    sae_path,
+                    "b_D",
+                    f"{sae_path}.hook_reconstructed",
+                    batch_size,
+                    seq_len,
+                )
+            )
+    with _bias_phase(model, replacers) as names:
+        yield names

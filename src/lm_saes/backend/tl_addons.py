@@ -170,27 +170,27 @@ def mount_hooked_modules(
 
     Args:
         model: A TransformerLens HookedRootModule (e.g. HookedTransformer).
-        hooked_modules: Sequence of (hook_point_name, child_name, module) triples.
-            hook_point_name – name of an existing HookPoint in model.mod_dict.
-            child_name      – attribute name to mount the module under.
-            module          – the nn.Module to mount.
+        hooked_modules: Sequence of (parent_name, child_name, module) triples.
+            parent_name – name of any existing ``nn.Module`` in model.mod_dict
+                (commonly a HookPoint, but any module is accepted).
+            child_name  – attribute name to mount the module under.
+            module      – the nn.Module to mount.
 
     Yields:
         The model with the modules mounted.
     """
-    for hook_point_name, child_name, module in hooked_modules:
-        hook_point = model.mod_dict[hook_point_name]
-        assert isinstance(hook_point, HookPoint)
-        hook_point.add_module(child_name, module)
+    for parent_name, child_name, module in hooked_modules:
+        parent = model.mod_dict[parent_name]
+        parent.add_module(child_name, module)
 
     model.setup()
 
     try:
         yield model
     finally:
-        for hook_point_name, child_name, module in hooked_modules:
-            hook_point = model.mod_dict[hook_point_name]
-            delattr(hook_point, child_name)
+        for parent_name, child_name, module in hooked_modules:
+            parent = model.mod_dict[parent_name]
+            delattr(parent, child_name)
             if isinstance(module, HookedRootModule):
                 module.setup()
         model.setup()
