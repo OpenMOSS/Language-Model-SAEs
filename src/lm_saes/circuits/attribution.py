@@ -900,13 +900,15 @@ def compute_hessian_matrix(
 
 
 def _extract_topk_pairwise_attributions(
-    q_side: NodeIndexedMatrix,  # (Q_picks, sources)
-    k_side: NodeIndexedMatrix,  # (K_picks, sources)
+    q_side: NodeIndexedMatrix,  # (q_picks, sources)
+    k_side: NodeIndexedMatrix,  # (k_picks, sources)
     topk: int,
 ) -> NodeIndexed[torch.Tensor]:
     """Extract topk, deduped, non-zero pairwise attributions."""
-    k_side = k_side.clone()
-    k_side[None, q_side.dimensions[0]] = 0
+    # Dedup: zero out K-side columns whose source is also a Q-pick.
+    if len(k_side.dimensions[0]) > 0 and len(q_side.dimensions[0]) > 0:
+        k_side = k_side.clone()
+        k_side[None, q_side.dimensions[0]] = 0
 
     q_top = q_side.flat_topk(topk)
     k_top = k_side.flat_topk(topk)
@@ -1021,10 +1023,10 @@ def compute_qk_tracing(
                 ),
             )
             k_side = NodeIndexedMatrix.from_data(
-                data=slot_rows[k_mask].T.contiguous(),
+                data=slot_rows[k_mask],
                 dimensions=(
-                    sources.dimension,
                     sources.dimension.offsets_to_nodes(pick_src[s][k_mask]),
+                    sources.dimension,
                 ),
             )
             return _extract_topk_pairwise_attributions(q_side, k_side, topk=topk)
