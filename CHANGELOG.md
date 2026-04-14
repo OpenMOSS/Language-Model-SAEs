@@ -1,3 +1,21 @@
+## v2.0.0b28 (2026-04-14)
+
+
+- Merge pull request #212 from OpenMOSS/dev
+- Release: fix and refactor QK tracing
+- fix(serialize): migrate decorator must target staticmethod's underlying func
+- fix(circuits): drop k_side transpose in slot_pair_attribution, guard empty side
+- refactor(circuits): extract attribution_scores helper, add flat_topk, rewrite qk pair dedup via zero-out
+- chore(server): bf16 dtype and explicit device_mesh in model/SAE loaders
+- fix(circuits): correct QK tracing scale, target post-LN/rotary Q/K, dedup pairs
+- feat(circuits): QKTracingResult bundle with Q/K marginals and merged top-k picks
+- feat(circuits): role-labeled QK pair attribution via VJP with K as cotangent
+- chore: add .playwright-mcp to .gitignore
+- fix(circuits): split bias leaves around apply_saes so SAE sees correct tensor
+- refactor(circuits): reduce intermediate dimension variables in attribution
+- fix(backend): align interfaces of model.qk_trace and qk_trace
+- refactor(circuits): replace NodeInfoRef with collection type NodeRefs
+
 ## v2.0.0b27 (2026-04-12)
 
 

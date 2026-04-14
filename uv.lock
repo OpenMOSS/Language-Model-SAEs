@@ -1659,7 +1659,7 @@ wheels = [
 
 [[package]]
 name = "lm-saes"
-version = "2.0.0b27"
+version = "2.0.0b28"
 source = { editable = "." }
 dependencies = [
     { name = "cattrs" },
