@@ -72,7 +72,7 @@ def test_generic_pytree_nested_list_full_tensor():
 
 def test_attribution_result_full_tensor():
     """full_tensor on real AttributionResult with qk_trace_results (parameterized generic field)."""
-    from lm_saes.circuits.attribution import AttributionResult
+    from lm_saes.circuits.attribution import AttributionResult, QKTracingResult
     from lm_saes.circuits.indexed_tensor import (
         NodeDimension,
         NodeIndexed,
@@ -83,6 +83,7 @@ def test_attribution_result_full_tensor():
 
     targets = NodeDimension.from_node_infos([NodeInfo(key="layer_0", indices=torch.arange(3).unsqueeze(1))])
     sources = NodeDimension.from_node_infos([NodeInfo(key="layer_1", indices=torch.arange(4).unsqueeze(1))])
+    target_dim = NodeDimension.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))])
 
     sample = AttributionResult(
         activations=NodeIndexedVector.from_data(torch.randn(3), dimensions=(targets,)),
@@ -93,17 +94,41 @@ def test_attribution_result_full_tensor():
         prompt_tokens=["a", "b", "c"],
         logit_token_ids=[4, 5],
         logit_tokens=["d", "e"],
-        qk_trace_results=NodeIndexed(
-            value=[
-                NodeIndexed(
-                    value=torch.randn(2, 3),
-                    dimensions=(
-                        NodeDimension.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
-                        NodeDimension.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
+        qk_trace_results=QKTracingResult(
+            q_marginal=NodeIndexed(
+                value=[
+                    NodeIndexed(
+                        value=torch.randn(2),
+                        dimensions=(
+                            NodeDimension.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
+                        ),
                     ),
-                ),
-            ],
-            dimensions=(NodeDimension.from_node_infos([NodeInfo(key="target", indices=torch.arange(1).unsqueeze(1))]),),
+                ],
+                dimensions=(target_dim,),
+            ),
+            k_marginal=NodeIndexed(
+                value=[
+                    NodeIndexed(
+                        value=torch.randn(3),
+                        dimensions=(
+                            NodeDimension.from_node_infos([NodeInfo(key="k", indices=torch.arange(3).unsqueeze(1))]),
+                        ),
+                    ),
+                ],
+                dimensions=(target_dim,),
+            ),
+            pairs=NodeIndexed(
+                value=[
+                    NodeIndexed(
+                        value=torch.randn(2),
+                        dimensions=(
+                            NodeDimension.from_node_infos([NodeInfo(key="q", indices=torch.arange(2).unsqueeze(1))]),
+                            NodeDimension.from_node_infos([NodeInfo(key="k", indices=torch.arange(2).unsqueeze(1))]),
+                        ),
+                    ),
+                ],
+                dimensions=(target_dim,),
+            ),
         ),
     )
 
@@ -111,5 +136,17 @@ def test_attribution_result_full_tensor():
 
     assert isinstance(result, AttributionResult)
     assert torch.equal(result.activations.data, sample.activations.data)
-    assert isinstance(result.qk_trace_results, NodeIndexed)
-    assert torch.equal(result.qk_trace_results.value[0].value, sample.qk_trace_results.value[0].value)
+    assert isinstance(result.qk_trace_results, QKTracingResult)
+    assert sample.qk_trace_results is not None
+    assert torch.equal(
+        result.qk_trace_results.pairs.value[0].value,
+        sample.qk_trace_results.pairs.value[0].value,
+    )
+    assert torch.equal(
+        result.qk_trace_results.q_marginal.value[0].value,
+        sample.qk_trace_results.q_marginal.value[0].value,
+    )
+    assert torch.equal(
+        result.qk_trace_results.k_marginal.value[0].value,
+        sample.qk_trace_results.k_marginal.value[0].value,
+    )
