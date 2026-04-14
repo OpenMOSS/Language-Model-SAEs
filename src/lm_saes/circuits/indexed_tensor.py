@@ -37,6 +37,13 @@ from lm_saes.utils.timer import timer
 @register_overrides(_inv_indices=override(omit=True))
 @dataclass(frozen=True)
 class Node(PyTree):
+    """Represents a specific position in a computational graph.
+
+    A node is identified by its `key` and its `indices`, where `key` usually specifies a tensor in a computational graph, and `indices` retrieves the element-wise concrete nodes from the tensor. In this sense, :class:`Node` actually represents multiple nodes from the same tensor.
+
+    :class:`Node` provides similar semantics to :class:`NodeInfo`, but with stronger bound to :class:`NodeDimension` (with `offsets`) and provides `_inv_indices` for efficient inverse lookup (for `NodeDimension.nodes_to_offsets`).
+    """
+
     key: Any
     """Key of the node. Should be a hashable object."""
 
@@ -44,7 +51,7 @@ class Node(PyTree):
     """Indices of elements in the node's data. Should be of shape `(n_elements, d_index)`."""
 
     offsets: torch.Tensor
-    """In-tensor offsets of elements. Should be of shape `(n_elements,)`."""
+    """In-NodeDimension offsets of elements. Should be of shape `(n_elements,)`."""
 
     _inv_indices: torch.Tensor | None = field(default=None, repr=False, compare=False)
     """Inverse indices of elements."""
@@ -64,7 +71,7 @@ class Node(PyTree):
 
 @dataclass
 class NodeInfo(PyTree):
-    """Node identifier with key and indices into the node's data."""
+    """Defines the essential information of a node."""
 
     key: Any
     """Key of the node. Should be a hashable object."""
@@ -114,6 +121,13 @@ def compute_inv_indices(indices: torch.Tensor) -> torch.Tensor:
 
 @dataclass
 class NodeDimension(PyTree):
+    """Represents a ordered set of nodes. Semantically, `NodeDimension` is an ordered set of :class:`NodeInfo`s, but it uses :class:`Node` internally for efficient storage and lookup.
+
+    :class:`NodeDimension` makes it possible to label a tensor axis by a set of nodes. This is useful for circuit tracing where tensor elements are collected from/related to very different positions in model activations. :class:`NodeDimension` can track what each element in the tensor corresponds to.
+
+    Two core methods of :class:`NodeDimension` are `offsets_to_nodes` and `nodes_to_offsets`, which provide bi-directional mappings between nodes and their in-:class:`NodeDimension` indices.
+    """
+
     node_mappings: dict[Any, Node]
     mapper: DiscreteMapper
 
@@ -437,6 +451,8 @@ class NodeDimension(PyTree):
 
 @dataclass
 class NodeIndexedTensor(PyTree):
+    """A tensor with its axes labeled by :class:`NodeDimension`."""
+
     n_dims: int
     data: torch.Tensor
     dimensions: tuple[NodeDimension, ...]
@@ -543,7 +559,7 @@ class NodeIndexedTensor(PyTree):
     def __setitem__(
         self,
         key: tuple[NodeDimension | None, ...] | NodeDimension | None,
-        value: Self | Tensor,
+        value: Self | Tensor | Number,
     ):
         """Assign to a NodeDimension-selected sub-tensor.
 
@@ -628,6 +644,8 @@ class NodeIndexedTensor(PyTree):
 
 
 class NodeIndexedVector(NodeIndexedTensor):
+    """1D version of :class:`NodeIndexedTensor`."""
+
     def add_nodes(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
         self.extend(node_infos, 0, data)
 
@@ -686,6 +704,8 @@ class NodeIndexedVector(NodeIndexedTensor):
 
 
 class NodeIndexedMatrix(NodeIndexedTensor):
+    """2D version of :class:`NodeIndexedTensor`."""
+
     def add_targets(self, node_infos: NodeDimension, data: torch.Tensor | None = None):
         self.extend(node_infos, 0, data)
 
@@ -711,6 +731,28 @@ class NodeIndexedMatrix(NodeIndexedTensor):
             return NodeIndexedMatrix.from_data(data, dimensions=(self.dimensions[0], other.dimensions[1]))
         else:
             raise ValueError(f"Invalid type as right operand in NodeIndexedMatrix.matmul: {type(other)}")
+
+    def flat_topk(self, k: int) -> "NodeIndexed[torch.Tensor]":
+        """Global top-``k`` over the flattened matrix.
+
+        Maps to ``torch.topk(self.data.reshape(-1), k)``. Returns a
+        :class:`NodeIndexed` whose ``value`` is a 1-D tensor of length
+        ``min(k, numel)`` and whose two dimensions sub-select the row and
+        column node of each picked entry.
+        """
+        k = min(k, self.data.numel())
+        flat = self.data.reshape(-1)
+        top_values, top_indices = torch.topk(flat, k)
+        n_cols = self.data.shape[1]
+        row_offsets = top_indices // n_cols
+        col_offsets = top_indices % n_cols
+        return NodeIndexed(
+            value=top_values,
+            dimensions=(
+                self.dimensions[0].offsets_to_nodes(row_offsets),
+                self.dimensions[1].offsets_to_nodes(col_offsets),
+            ),
+        )
 
     def any(self, dim: int) -> NodeIndexedVector:
         """Reduce along *dim* with logical OR, mirroring ``torch.Tensor.any(dim)``.
@@ -758,6 +800,11 @@ V = TypeVar("V", bound=SupportsGetItem[Any])
 
 @dataclass
 class NodeIndexed(Generic[V], PyTree):
+    """General list-like container with labeled axes.
+
+    It allow using multiple :class:`NodeDimension`s to label the list, which is useful when each element in the list corresponds to a pair of nodes. If `len(dimensions) == 1`, it is semantically similar to :class:`NodeIndexedTensor`.
+    """
+
     value: V
     dimensions: tuple[NodeDimension, ...]
 

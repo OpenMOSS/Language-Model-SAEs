@@ -44,7 +44,7 @@ def migrate(*, before: str) -> Callable[[Callable[[Any], Any]], Any]:
 
     def decorator(func: Callable[[Any], Any]) -> Any:
         setattr(func, "__migrate_before__", before)
-        return staticmethod(func)
+        return func
 
     return decorator
 

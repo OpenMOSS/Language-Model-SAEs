@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -81,18 +83,6 @@ class NodeRefs:
         """Index each ref by its node indices: ``mapping[key][:, *indices]``."""
         return multi_batch_index([(ref, indices) for _, indices, ref in self], n_batch_dims=1)
 
-    @timer.time("grads")
-    def grads(self) -> list[torch.Tensor]:
-        """Like :meth:`values` but on ``.grad``."""
-        return multi_batch_index(
-            [(grad if (grad := ref.grad) is not None else torch.zeros_like(ref), indices) for _, indices, ref in self],
-            n_batch_dims=1,
-        )
-
-    def clear_grads(self) -> None:
-        for ref in self.mapping.values():
-            ref.grad = None
-
     def iter_batches(self, batch_size: int) -> Iterator[NodeRefs]:
         """Yield sub-:class:`NodeRefs` of at most `batch_size` elements."""
         queue = list(self.dimension.node_infos)
@@ -138,13 +128,9 @@ class IntermediateRefs:
 
 @dataclass
 class QKTracingResult(PyTree):
-    """Bundled output of :func:`compute_qk_tracing`.
+    """Result of QK tracing.
 
-    Each outer ``NodeIndexed`` is keyed by the Lorsa-feature target slot. Within
-    a slot, ``q_marginal`` / ``k_marginal`` are 1-D top-k rankings of per-side
-    first-order source attributions, and ``pairs`` is a 2-D ranking over
-    (Q-role, K-role) pair attributions produced by a single second backward
-    driven by a merged Q/K top-k pick list.
+    It contains the marginal attributions for Q and K roles, and the second-order pairwise attributions for QK pairs.
     """
 
     q_marginal: NodeIndexed[list[NodeIndexed[torch.Tensor]]]
@@ -152,19 +138,8 @@ class QKTracingResult(PyTree):
     pairs: NodeIndexed[list[NodeIndexed[torch.Tensor]]]
 
     @migrate(before="2")
-    def _v1_to_v2(data: dict[str, Any]) -> dict[str, Any]:  # type: ignore[misc]
-        """Legacy MongoDB blobs stored ``qk_trace_results`` as a bare
-        ``NodeIndexed[list[NodeIndexed[torch.Tensor]]]`` (the pair-only shape
-        predating the bundled return type). Promote them by wrapping the
-        legacy value as ``pairs`` and populating ``q_marginal`` /
-        ``k_marginal`` with structurally-valid placeholders: each slot
-        reuses the pair slot's Q-role / K-role :class:`NodeDimension`
-        respectively, and fills the attribution values with zeros. The
-        zero-filled marginals are a deliberate lossy fallback — legacy
-        circuits never computed a dedicated K-marginal pass, so there is no
-        authoritative value to restore.
-        """
-
+    @staticmethod
+    def _v1_to_v2(data: dict[str, Any]) -> dict[str, Any]:
         def _dim_size(dim_raw: dict[str, Any]) -> int:
             return sum(int(node["indices"].shape[0]) for node in dim_raw.values()) if dim_raw else 0
 
@@ -185,6 +160,8 @@ class QKTracingResult(PyTree):
 
 @dataclass
 class AttributionResult(PyTree):
+    """Result of attribution computation."""
+
     activations: NodeIndexedVector
     attribution: NodeIndexedMatrix
     logits: torch.Tensor
@@ -226,6 +203,28 @@ def compute_intermediates_attribution(
     return influence
 
 
+def attribution_scores(
+    grad_refs: Sequence[torch.Tensor | None],
+    sources: NodeRefs,
+) -> torch.Tensor:
+    """Input×gradient attribution scores of shape ``(fwd_batch, n_sources)``."""
+    indexed = multi_batch_index(
+        [(g if g is not None else torch.zeros_like(ref), indices) for g, (_, indices, ref) in zip(grad_refs, sources)],
+        n_batch_dims=1,
+    )
+    return torch.cat(
+        [
+            einops.einsum(
+                value.detach(),
+                grad,
+                "batch n_elements ..., batch n_elements ... -> batch n_elements",
+            )
+            for value, grad in zip(sources.values(), indexed)
+        ],
+        dim=1,
+    )
+
+
 @timer.time("greedily_collect_attribution")
 def greedily_collect_attribution(
     targets: NodeRefs,
@@ -248,27 +247,19 @@ def greedily_collect_attribution(
 
     batch_size = targets.batch_size
 
-    with torch.no_grad():
-        source_values = [value.detach() for value in all_sources.values()]
+    def per_target_attribution(targets: NodeRefs) -> torch.Tensor:
+        root = maybe_local_map(torch.diag)(torch.cat(targets.values(), dim=1))
+        grad_refs = torch.autograd.grad(
+            root.sum(),
+            all_sources.refs(),
+            retain_graph=True,
+            materialize_grads=True,
+        )
+        return attribution_scores(grad_refs, all_sources)[: root.shape[0]]
 
     for target_batch in targets.iter_batches(batch_size):
-        all_sources.clear_grads()
-        root = maybe_local_map(torch.diag)(torch.cat(target_batch.values(), dim=1))
-
         with timer.time("backward"):
-            root.sum().backward(retain_graph=True)
-
-        attribution[target_batch.dimension, None] = torch.cat(
-            [
-                einops.einsum(
-                    value[: root.shape[0]],
-                    grad.detach()[: root.shape[0]],
-                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                )
-                for value, grad in zip(source_values, all_sources.grads())
-            ],
-            dim=1,
-        ).to(attribution.data.dtype)
+            attribution[target_batch.dimension, None] = per_target_attribution(target_batch).to(attribution.data.dtype)
 
     collected = NodeDimension.empty(
         device=targets.device,
@@ -277,7 +268,7 @@ def greedily_collect_attribution(
     reduction_weight_vec: NodeIndexedVector = NodeIndexedVector.from_data(
         reduction_weight, dimensions=(targets.dimension,)
     )
-    for i in tqdm(range(0, max_intermediates, batch_size)):
+    for i in tqdm(range(0, max_intermediates, batch_size), desc="OV Attribution"):
         cur_batch_size = min(batch_size, max_intermediates - i)
         intermediates_attribution = compute_intermediates_attribution(
             attribution, targets.dimension, collected, max_iter
@@ -289,27 +280,12 @@ def greedily_collect_attribution(
 
         collected = collected + selected_nodes
 
-        all_sources.clear_grads()
         selected_refs = intermediates.upstream[selected_nodes]
-        root = maybe_local_map(torch.diag)(torch.cat(selected_refs.values(), dim=1))
-
         with timer.time("backward"):
-            root.sum().backward(retain_graph=True)
-
-        attribution.add_targets(
-            selected_nodes,
-            torch.cat(
-                [
-                    einops.einsum(
-                        value[: root.shape[0]],
-                        grad.detach()[: root.shape[0]],
-                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                    )
-                    for value, grad in zip(source_values, all_sources.grads())
-                ],
-                dim=1,
-            ).to(attribution.data.dtype),
-        )
+            attribution.add_targets(
+                selected_nodes,
+                per_target_attribution(selected_refs).to(attribution.data.dtype),
+            )
 
     return attribution, collected
 
@@ -423,7 +399,9 @@ def collect_cache(
     replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
     with_bias_leaves: bool = False,
 ):
-    from contextlib import nullcontext
+    """Run model forward pass and collect useful cache for circuit tracing.
+
+    This function internally replaces model/SAE bias with batched leaves, for batch-simulation of Jacobian computation. It also uses `run_with_ref_cache` to directly collect the tensors that are in the computational graph, instead of cloning them in normal `run_with_cache`."""
 
     assert model.model is not None, "model must be initialized"
     tokens = ensure_tokenized(inputs, model.tokenizer, device=model.device)
@@ -506,6 +484,30 @@ def attribute(
     qk_top_fraction: float = 0.6,
     qk_topk: int = 10,
 ):
+    """Run end-to-end circuit attribution for a single prompt.
+
+    Args:
+        model: The language model to attribute through.
+        inputs: Prompt as a token tensor or raw string (tokenized internally).
+        replacement_modules: SAE / Lorsa / MoLT modules spliced into the
+            residual stream as the upstream feature basis.
+        max_n_logits: Maximum number of top output logits to treat as targets.
+        desired_logit_prob: Cumulative probability mass that the selected top
+            logits must cover; the actual target count is the smallest prefix
+            of the top logits whose probabilities sum to at least this value.
+        batch_size: Forward replication factor — the prompt is repeated this
+            many times so that each target can be backwarded through a
+            distinct forward-batch row to simulate the Jacobian computation.
+            Affects the memory usage strongly.
+        max_features: The number of upstream features collected by the
+            greedy attribution loop; ``None`` means collecting all features.
+        enable_qk_tracing: If ``True``, also run Q/K bilinear pair attribution
+            for Lorsa attention targets. Note this will increase the memory usage,
+            and takes more time to compute (typically 2x-10x slower).
+        qk_top_fraction: Fraction of top Lorsa features to include
+            as QK tracing targets.
+        qk_topk: Number of QK tracing results to keep. This applies to both Q/K marginal attributions and pairwise attributions.
+    """
     assert not enable_qk_tracing or batch_size >= qk_topk, (
         f"attribute(batch_size={batch_size}) must be >= qk_topk={qk_topk} when enable_qk_tracing=True"
     )
@@ -693,22 +695,12 @@ def _retrieve_qk_vector_targets(
     ov_group_sizes: dict[str, int],
     attn_scales: dict[str, float],
 ) -> tuple[NodeRefs, NodeRefs, list[int]]:
-    """Map Lorsa features to ``Q(q_pos, h)`` / ``K(k_pos, h)`` vector targets.
+    """Given Lorsa feature nodes, retrieve the QK targets (QK vectors which multiply to the attention score). Note that the QK pairs may be duplicated for different Lorsa features for OV groups larger than 1, since different OV heads share the same QK heads. This function deduplicates the QK pairs and returns the mapping from the original feature offsets to the deduplicated slot indices.
 
-    For each feature, pick its ``(q_pos, qk_head, k_pos)`` triple where ``k_pos``
-    is the argmax key for that ``(qk_head, q_pos)``, and emit two parallel
-    per-slot ``NodeRefs`` whose value at each slot is a ``(d_qk_head,)``-shaped
-    slice of ``hook_q`` / ``hook_k``. Duplicate triples across features (which
-    arise when ``ov_group_size > 1``) are collapsed — the returned ``NodeRefs``
-    only contain unique targets. The ``slot_to_unique`` list maps each original
-    feature offset to its index in the deduplicated slot list.
-
-    The cached ``hook_q`` / ``hook_k`` tensors are **pre-scaled by**
-    ``1 / sqrt(attn_scale)`` (per Lorsa module). This makes the implicit
-    bilinear target ``Q·K`` evaluate to ``(Q·K) / attn_scale`` — the actual
-    attention score fed into softmax — so the resulting pair attributions and
-    marginals are on the same scale as the pre-refactor ``compute_hessian_matrix``
-    path which targeted ``hook_attn_score`` directly.
+    Returns:
+        A tuple of (`q_targets`, `k_targets`, `slot_to_unique`)
+        - `q_targets` and `k_targets` are `NodeRefs` containing the Q and K targets respectively.
+        - `slot_to_unique` is a list of ints mapping the original feature offsets to the deduplicated slot indices.
     """
     slot_triples: list[tuple[str, int, int, int]] = []
     for feature_node in features:
@@ -730,17 +722,12 @@ def _retrieve_qk_vector_targets(
             deduped.append(triple)
         slot_to_unique.append(unique_idx)
 
-    # Memoize per-sae_path scaled refs — one scaled copy per Lorsa module,
-    # shared across all slots that target the same module.
-    scaled_q_refs: dict[str, torch.Tensor] = {}
-    scaled_k_refs: dict[str, torch.Tensor] = {}
-
+    @functools.cache
     def _scaled_refs(sae_path: str) -> tuple[torch.Tensor, torch.Tensor]:
-        if sae_path not in scaled_q_refs:
-            inv_sqrt_scale = attn_scales[sae_path] ** -0.5
-            scaled_q_refs[sae_path] = cache[f"{sae_path}.sae.hook_q_post_rot"] * inv_sqrt_scale
-            scaled_k_refs[sae_path] = cache[f"{sae_path}.sae.hook_k_post_rot"] * inv_sqrt_scale
-        return scaled_q_refs[sae_path], scaled_k_refs[sae_path]
+        inv_sqrt_scale = attn_scales[sae_path] ** -0.5
+        return cache[f"{sae_path}.sae.hook_q_post_rot"] * inv_sqrt_scale, cache[
+            f"{sae_path}.sae.hook_k_post_rot"
+        ] * inv_sqrt_scale
 
     q_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
     k_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
@@ -867,25 +854,7 @@ def compute_hessian_matrix(
             retain_graph=True,
             allow_unused=True,
         )
-
-        first_grads = multi_batch_index(
-            [
-                (g if g is not None else torch.zeros_like(ref), indices)
-                for g, (_, indices, ref) in zip(first_grad_refs, sources)
-            ],
-            n_batch_dims=1,
-        )
-        first_attributions = torch.cat(
-            [
-                einops.einsum(
-                    value.detach(),
-                    grad,
-                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                )
-                for value, grad in zip(sources.values(), first_grads)
-            ],
-            dim=1,
-        )  # (fwd_batch_size, n_sources)
+        first_attributions = attribution_scores(first_grad_refs, sources)
 
         second_targets = NodeDimension.empty(device=bwd_scores.device)
         all_topk_indices = []
@@ -904,27 +873,9 @@ def compute_hessian_matrix(
             second_bwd_values.sum(),
             sources.refs(),
             retain_graph=True,
-            allow_unused=True,
+            materialize_grads=True,
         )
-
-        second_grads = multi_batch_index(
-            [
-                (g if g is not None else torch.zeros_like(ref), indices)
-                for g, (_, indices, ref) in zip(second_grads_refs, sources)
-            ],
-            n_batch_dims=1,
-        )
-        second_attributions = torch.cat(
-            [
-                einops.einsum(
-                    value.detach(),
-                    grad,
-                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                )
-                for value, grad in zip(sources.values(), second_grads)
-            ],
-            dim=1,
-        )
+        second_attributions = attribution_scores(second_grads_refs, sources)
         second_targets_list = list(second_targets)
         diag = torch.arange(topk, device=second_attributions.device)
         for slot_idx in range(stacked.shape[1]):
@@ -934,19 +885,13 @@ def compute_hessian_matrix(
             first_nodes = second_targets_list[slot_idx * topk : (slot_idx + 1) * topk]
 
             order = torch.argsort(pair_attrs, descending=True).tolist()
-            # Drop pairs whose attribution is exactly zero: they come from
-            # ties inside `topk` over all-zero tails (e.g. sources whose
-            # gradient path to this target is structurally zero), and the
-            # specific pick among those ties is arbitrary and differs
-            # between runs with different source orderings.
             order = [i for i in order if pair_attrs[i].item() != 0.0]
-            device = pair_attrs.device
             per_slot_results.append(
                 NodeIndexed(
                     value=pair_attrs[order] if len(order) > 0 else pair_attrs[:0],
                     dimensions=(
-                        NodeDimension.from_node_infos([first_nodes[i] for i in order], device=device),
-                        NodeDimension.from_node_infos([second_nodes[i] for i in order], device=device),
+                        NodeDimension.from_node_infos([first_nodes[i] for i in order], device=pair_attrs.device),
+                        NodeDimension.from_node_infos([second_nodes[i] for i in order], device=pair_attrs.device),
                     ),
                 )
             )
@@ -954,76 +899,30 @@ def compute_hessian_matrix(
     return NodeIndexed(value=per_slot_results, dimensions=(targets.dimension,))
 
 
-def _first_order_attributions(
-    grad_refs: Sequence[torch.Tensor | None],
-    sources: NodeRefs,
-) -> torch.Tensor:
-    """Turn per-ref raw gradient tensors into a ``(fwd_batch, n_sources)`` table
-    of ``v_i · grad_i`` scalars, one per source element — the same pattern as
-    :func:`compute_hessian_matrix` uses for its ``first_attributions`` tensor.
-    """
-    indexed = multi_batch_index(
-        [(g if g is not None else torch.zeros_like(ref), indices) for g, (_, indices, ref) in zip(grad_refs, sources)],
-        n_batch_dims=1,
-    )
-    return torch.cat(
-        [
-            einops.einsum(
-                value.detach(),
-                grad,
-                "batch n_elements ..., batch n_elements ... -> batch n_elements",
-            )
-            for value, grad in zip(sources.values(), indexed)
-        ],
-        dim=1,
-    )
-
-
-def _emit_pair_slot(
-    pair_rows: torch.Tensor,
-    pick_is_q: torch.Tensor,
-    pick_src: torch.Tensor,
-    sources: NodeRefs,
-    device: torch.device,
+def _extract_topk_pairwise_attributions(
+    q_side: NodeIndexedMatrix,  # (Q_picks, sources)
+    k_side: NodeIndexedMatrix,  # (K_picks, sources)
+    topk: int,
 ) -> NodeIndexed[torch.Tensor]:
-    """Fold per-pick rows into a deduped ``(Q, K)`` NodeIndexed.
+    """Extract topk, deduped, non-zero pairwise attributions."""
+    k_side = k_side.clone()
+    k_side[None, q_side.dimensions[0]] = 0
 
-    Each row is ``T[pick, :]`` for a Q-pick or ``T[:, pick]`` for a K-pick;
-    its argmax is the complementary partner. A pair ``(i, j)`` can surface
-    twice — once from the Q side picking ``j`` as partner for ``i`` and once
-    from the K side picking ``i`` as partner for ``j`` — so we dedup on
-    ``(q_node, k_node)`` keeping the first (largest) occurrence.
-    """
-    partner_val, partner_idx = (t.squeeze(-1) for t in pair_rows.topk(1, dim=-1))
-    q_src = torch.where(pick_is_q, pick_src, partner_idx)
-    k_src = torch.where(pick_is_q, partner_idx, pick_src)
-    q_nodes = list(sources.dimension.offsets_to_nodes(q_src))
-    k_nodes = list(sources.dimension.offsets_to_nodes(k_src))
+    q_top = q_side.flat_topk(topk)
+    k_top = k_side.flat_topk(topk)
 
-    def _key(ni: NodeInfo) -> tuple:
-        return (ni.key, tuple(ni.indices.flatten().tolist()))
+    merged_values = torch.cat([q_top.value, k_top.value])
+    merged_q_role = q_top.dimensions[0] + k_top.dimensions[1]
+    merged_k_role = q_top.dimensions[1] + k_top.dimensions[0]
 
-    seen: set[tuple] = set()
-    kept: list[tuple[NodeInfo, NodeInfo, torch.Tensor]] = []
-    for i in torch.argsort(partner_val, descending=True).tolist():
-        if partner_val[i].item() == 0.0:
-            continue
-        pair_key = (_key(q_nodes[i]), _key(k_nodes[i]))
-        if pair_key in seen:
-            continue
-        seen.add(pair_key)
-        kept.append((q_nodes[i], k_nodes[i], partner_val[i]))
-
-    if not kept:
-        empty = NodeDimension.empty(device=device)
-        return NodeIndexed(value=partner_val[:0], dimensions=(empty, empty))
-
-    q_kept, k_kept, vals_kept = zip(*kept)
+    nonzero_count = int((merged_values != 0.0).sum().item())
+    n_final = min(topk, nonzero_count)
+    top_values, top_offsets = torch.topk(merged_values, n_final)
     return NodeIndexed(
-        value=torch.stack(list(vals_kept)),
+        value=top_values,
         dimensions=(
-            NodeDimension.from_node_infos(list(q_kept), device=device),
-            NodeDimension.from_node_infos(list(k_kept), device=device),
+            merged_q_role.offsets_to_nodes(top_offsets),
+            merged_k_role.offsets_to_nodes(top_offsets),
         ),
     )
 
@@ -1034,38 +933,21 @@ def compute_qk_tracing(
     sources: NodeRefs,
     topk: int,
 ) -> QKTracingResult:
-    """Role-labeled QK tracing — Q-marginal, K-marginal, and Q→K pair
-    attributions — for attention-score targets.
+    """Role-labeled QK tracing for attention-score targets.
 
-    Two first-order VJPs decompose the bilinear score ``s = (Q·K)/attn_scale``
-    into per-source Q-role and K-role contributions:
-
-    - ``a_Q[i] = v_i · Σ_d K[d]·∂Q[d]/∂s_i`` (VJP of Q with K as cotangent)
-    - ``a_K[j] = v_j · Σ_d Q[d]·∂K[d]/∂s_j`` (VJP of K with Q as cotangent)
-
-    A merged top-k over ``[a_Q, a_K]`` per slot picks the most influential
-    role-tagged sources. A single second backward driven by the role-matched
-    scalars yields, per pick, a row of the bilinear tensor
-    ``T_{ij} := v_i·v_j·(∂Q/∂s_i)·(∂K/∂s_j)`` — ``T[i, :]`` for a Q-pick,
-    ``T[:, j]`` for a K-pick — whose argmax gives the complementary partner.
-    The second-order identity holds exactly because Q and K are linear in
-    sources inside the circuit-trace context (SAE decoders, ``W_Q``/``W_K``,
-    detached LN, and rotary embeddings are all linear).
-
-    Returned pairs carry a structural role label: dim-0 is always the Q-side
-    source, dim-1 the K-side source, regardless of which side picked them.
+    Decomposes the bilinear score ``s = (Q·K)/attn_scale`` into per-source
+    Q-role and K-role first-order attributions via two VJPs with the opposite
+    side as cotangent, then picks the top sources from the merged ranking and
+    runs a second backward to recover exact bilinear pair attributions
+    ``T_{ij} = v_i·v_j·(∂Q/∂s_i)·(∂K/∂s_j)``.
     """
     assert len(q_targets.dimension) == len(k_targets.dimension)
     device = sources.device
     bwd_batch_size = sources.batch_size // topk
     n_slots_total = len(q_targets.dimension)
 
-    def _diag(stacked: torch.Tensor) -> torch.Tensor:
-        n_slots = stacked.shape[1]
-        return torch.stack([stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
-
-    def _first_order(outputs: torch.Tensor, cotangent: torch.Tensor) -> torch.Tensor:
-        return _first_order_attributions(
+    def vjp_attribution(outputs: torch.Tensor, cotangent: torch.Tensor) -> torch.Tensor:
+        return attribution_scores(
             torch.autograd.grad(
                 outputs,
                 sources.refs(),
@@ -1077,31 +959,33 @@ def compute_qk_tracing(
             sources,
         )
 
-    def _topk_marginal(slot_row: torch.Tensor) -> NodeIndexed[torch.Tensor]:
-        values, indices = slot_row.topk(topk)
-        order = [i for i in torch.argsort(values, descending=True).tolist() if values[i].item() != 0.0]
+    def topk_nonzero(scores: torch.Tensor) -> NodeIndexed[torch.Tensor]:
+        values, indices = scores.topk(topk)
+        keep = values != 0.0
         return NodeIndexed(
-            value=values[order] if order else values[:0],
-            dimensions=(sources.dimension.offsets_to_nodes(indices[order] if order else indices[:0]),),
+            value=values[keep],
+            dimensions=(sources.dimension.offsets_to_nodes(indices[keep]),),
         )
 
     q_marginal_slots: list[NodeIndexed[torch.Tensor]] = []
     k_marginal_slots: list[NodeIndexed[torch.Tensor]] = []
     pair_slots: list[NodeIndexed[torch.Tensor]] = []
 
-    starts = range(0, n_slots_total, bwd_batch_size)
-    for start in tqdm(starts, desc="qk_tracing", disable=len(starts) <= 1):
-        end = min(start + bwd_batch_size, n_slots_total)
-        offsets = torch.arange(start, end, device=q_targets.dimension.device)
-        q_sub = q_targets[q_targets.dimension.offsets_to_nodes(offsets)]
-        k_sub = k_targets[k_targets.dimension.offsets_to_nodes(offsets)]
+    n_batches = (n_slots_total + bwd_batch_size - 1) // bwd_batch_size
+    batch_iter = zip(q_targets.iter_batches(bwd_batch_size), k_targets.iter_batches(bwd_batch_size))
+    for q_sub, k_sub in tqdm(batch_iter, total=n_batches, desc="QK Tracing", disable=n_batches <= 1):
+        # Use `topk`-sized slots for computing second-order attributions.
+        # The first-order gradient computation should be replicated for `topk` time
+        # for the same reason of `collect_cache` replicating `batch_size` times
+        # in forward pass.
+        q_stacked = torch.cat(q_sub.values(), dim=1)
+        k_stacked = torch.cat(k_sub.values(), dim=1)
+        n_slots = q_stacked.shape[1]
+        q_vecs = torch.stack([q_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
+        k_vecs = torch.stack([k_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
 
-        q_vecs = _diag(torch.cat(q_sub.values(), dim=1))
-        k_vecs = _diag(torch.cat(k_sub.values(), dim=1))
-        n_slots = q_vecs.shape[0]
-
-        a_Q = _first_order(q_vecs, k_vecs)
-        a_K = _first_order(k_vecs, q_vecs)
+        a_Q = vjp_attribution(q_vecs, k_vecs)
+        a_K = vjp_attribution(k_vecs, q_vecs)
         n_sources = a_Q.shape[1]
 
         slot_first_rows = torch.arange(n_slots, device=device) * topk
@@ -1112,28 +996,40 @@ def compute_qk_tracing(
 
         bwd_rows = slot_first_rows.unsqueeze(1) + torch.arange(topk, device=device).unsqueeze(0)
         second_bwd_values = torch.where(is_q_pick, a_Q[bwd_rows, pick_src], a_K[bwd_rows, pick_src]).reshape(-1)
-        second_attributions = _first_order_attributions(
+        second_attributions = attribution_scores(
             torch.autograd.grad(
                 second_bwd_values.sum(),
                 sources.refs(),
                 retain_graph=True,
-                allow_unused=True,
+                materialize_grads=True,
             ),
             sources,
         )
 
-        q_marginal_slots.extend(_topk_marginal(a_Q[s * topk]) for s in range(n_slots))
-        k_marginal_slots.extend(_topk_marginal(a_K[s * topk]) for s in range(n_slots))
-        pair_slots.extend(
-            _emit_pair_slot(
-                second_attributions[s * topk : (s + 1) * topk],
-                is_q_pick[s],
-                pick_src[s],
-                sources,
-                device,
+        q_marginal_slots.extend(topk_nonzero(a_Q[s * topk]) for s in range(n_slots))
+        k_marginal_slots.extend(topk_nonzero(a_K[s * topk]) for s in range(n_slots))
+
+        def slot_pair_attribution(s: int) -> NodeIndexed[torch.Tensor]:
+            slot_rows = second_attributions[s * topk : (s + 1) * topk]
+            q_mask = is_q_pick[s]
+            k_mask = ~q_mask
+            q_side = NodeIndexedMatrix.from_data(
+                data=slot_rows[q_mask],
+                dimensions=(
+                    sources.dimension.offsets_to_nodes(pick_src[s][q_mask]),
+                    sources.dimension,
+                ),
             )
-            for s in range(n_slots)
-        )
+            k_side = NodeIndexedMatrix.from_data(
+                data=slot_rows[k_mask].T.contiguous(),
+                dimensions=(
+                    sources.dimension,
+                    sources.dimension.offsets_to_nodes(pick_src[s][k_mask]),
+                ),
+            )
+            return _extract_topk_pairwise_attributions(q_side, k_side, topk=topk)
+
+        pair_slots.extend(slot_pair_attribution(s) for s in range(n_slots))
 
     outer = (q_targets.dimension,)
     return QKTracingResult(
