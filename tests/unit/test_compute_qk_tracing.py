@@ -130,9 +130,8 @@ def _expected_q_marginal(
     values_slot: torch.Tensor,
 ) -> torch.Tensor:
     """``a_Q[i] = v_i · Σ_d (B_slot @ values_slot)[d] · A_slot[d, i]``."""
-    Q_vec = A_slot @ values_slot  # (d_qk_head,)
-    K_vec = B_slot @ values_slot  # (d_qk_head,)
-    return values_slot * (K_vec @ A_slot)  # (n_sources,) — v_i · (K · A[:,i])
+    K_vec = B_slot @ values_slot
+    return values_slot * (K_vec @ A_slot)
 
 
 def _expected_k_marginal(
@@ -296,8 +295,8 @@ def test_k_dominant_pair_recovered_via_k_side_pick():
     the Q-marginal top-1 is NOT source 3, and lower the partner recovery so
     only the K-side pick path can find the best (i*, j*) pair.
     """
-    n_sources, d_qk_head, topk = 4, 1, 1
-    A0 = torch.tensor([[2.0, 2.0, 2.0, 3.0]])  # d_qk_head=1 × n_sources
+    topk = 1
+    A0 = torch.tensor([[2.0, 2.0, 2.0, 3.0]])
     B0 = torch.tensor([[10.0, 0.0, 0.0, 0.0]])
     values0 = torch.tensor([1.0, 1.0, 1.0, 1.0])
 
@@ -332,3 +331,36 @@ def test_k_dominant_pair_recovered_via_k_side_pick():
     top_k_src = int(k_nodes[0].indices[0, 0].item())
     assert top_k_src == 0
     assert torch.allclose(k_marginal.value[0], torch.tensor(90.0), atol=1e-5)
+
+
+def test_pair_dedup_when_same_pair_picked_from_both_sides():
+    """With a single dominant ``(i*, j*)`` pair, both the Q-side and K-side
+    picks will surface it — the Q-pick at ``i*`` sees ``j*`` as its partner via
+    ``T[i*, :]`` and the K-pick at ``j*`` sees ``i*`` as its partner via
+    ``T[:, j*]``. The emitted ``pairs`` slot must contain ``(i*, j*)`` **once**,
+    not twice.
+    """
+    topk = 2
+    # A and B both load source 1 and source 3 prominently, so a_Q and a_K both
+    # rank those two highly. Merged top-2 across [a_Q, a_K] then picks one from
+    # the Q side and one from the K side — but they resolve to the same pair.
+    A0 = torch.tensor([[0.0, 4.0, 0.0, 0.0]])  # Q picks source 1
+    B0 = torch.tensor([[0.0, 0.0, 0.0, 5.0]])  # K picks source 3
+    values0 = torch.tensor([1.0, 1.0, 1.0, 1.0])
+
+    # a_Q[i] = v_i · K_vec[0] · A[0, i] = 5 · A[0, i] = [0, 20, 0, 0]
+    # a_K[j] = v_j · Q_vec[0] · B[0, j] = 4 · B[0, j] = [0, 0, 0, 20]
+    # merged = [0, 20, 0, 0, 0, 0, 0, 20]  → top-2 picks: (Q, src=1) and (K, src=3)
+    # T[1, :] = [0, 0, 0, 20]  → argmax j = 3, value 20 → pair (Q=1, K=3)
+    # T[:, 3] = [0, 20, 0, 0]  → argmax i = 1, value 20 → pair (Q=1, K=3) — duplicate
+    # After dedup: exactly one pair (Q=1, K=3, value=20).
+    q_targets, k_targets, sources = _build_single_slot(A0, B0, values0, topk)
+    result = compute_qk_tracing(q_targets, k_targets, sources, topk=topk)
+    slot = result.pairs.value[0]
+
+    assert len(slot.value) == 1, f"expected exactly one pair after dedup, got {len(slot.value)}"
+    q_node = list(slot.dimensions[0])[0]
+    k_node = list(slot.dimensions[1])[0]
+    assert int(q_node.indices[0, 0].item()) == 1
+    assert int(k_node.indices[0, 0].item()) == 3
+    assert torch.allclose(slot.value[0], torch.tensor(20.0), atol=1e-5)
