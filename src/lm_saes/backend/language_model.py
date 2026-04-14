@@ -41,7 +41,7 @@ from lm_saes.utils.misc import pad_and_truncate_tokens
 from lm_saes.utils.timer import timer
 
 if TYPE_CHECKING:
-    from lm_saes.circuits.indexed_tensor import NodeInfo
+    from lm_saes.circuits.indexed_tensor import NodeDimension
     from lm_saes.models.sparse_dictionary import SparseDictionary
 
 
@@ -542,7 +542,7 @@ class TransformerLensLanguageModel(LanguageModel):
         self,
         inputs: torch.Tensor | str,
         replacement_modules: list[SparseDictionary],
-        lorsa_features: list[NodeInfo],
+        lorsa_features: NodeDimension,
         topk: int = 10,
         batch_size: int = 1,
     ):

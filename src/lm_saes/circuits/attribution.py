@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import functools
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import (
-    Generic,
+    Any,
     Iterator,
+    Self,
     Sequence,
-    TypeVar,
     cast,
 )
 
 import einops
 import torch
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
 
 from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.circuits.hooks import replace_biases_with_leaves
+from lm_saes.circuits.hooks import replace_model_biases_with_leaves, replace_sae_biases_with_leaves
 from lm_saes.circuits.indexed_tensor import (
     NodeDimension,
     NodeIndexed,
@@ -24,6 +27,7 @@ from lm_saes.circuits.indexed_tensor import (
     NodeInfo,
 )
 from lm_saes.core.pytree import PyTree
+from lm_saes.core.serialize import migrate
 from lm_saes.models.lorsa import LowRankSparseAttention
 from lm_saes.models.molt import MixtureOfLinearTransform
 from lm_saes.models.sae import SparseAutoEncoder
@@ -35,42 +39,129 @@ from lm_saes.utils.timer import timer
 
 
 @dataclass
-class NodeInfoRef(NodeInfo):
-    """NodeInfo with reference to node (tensor) in computation graph."""
+class NodeRefs:
+    """Collection of named tensor references indexed by a :class:`NodeDimension`."""
 
-    ref: torch.Tensor
+    mapping: dict[str, torch.Tensor]
+    dimension: NodeDimension
+
+    @classmethod
+    def from_nodes_and_refs(cls, entries: Sequence[tuple[str, torch.Tensor, torch.Tensor]]) -> Self:
+        """Construct from ``(key, indices, ref)`` triples."""
+        mapping: dict[str, torch.Tensor] = {}
+        node_infos: list[NodeInfo] = []
+        for key, indices, ref in entries:
+            mapping[key] = ref
+            node_infos.append(NodeInfo(key=key, indices=indices))
+        if len(node_infos) == 0:
+            raise ValueError("Cannot build NodeRefs from empty entries without an explicit device.")
+        return cls(mapping=mapping, dimension=NodeDimension.from_node_infos(node_infos))
+
+    @property
+    def device(self) -> torch.device:
+        return next(iter(self.mapping.values())).device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return next(iter(self.mapping.values())).dtype
+
+    @property
+    def device_mesh(self) -> DeviceMesh | None:
+        first = next(iter(self.mapping.values()))
+        return first.device_mesh if isinstance(first, DTensor) else None
+
+    @property
+    def batch_size(self) -> int:
+        return next(iter(self.mapping.values())).shape[0]
+
+    def refs(self) -> list[torch.Tensor]:
+        """Unique ref tensors in insertion order (for ``torch.autograd.grad``)."""
+        return list(self.mapping.values())
+
+    @timer.time("values")
+    def values(self) -> list[torch.Tensor]:
+        """Index each ref by its node indices: ``mapping[key][:, *indices]``."""
+        return multi_batch_index([(ref, indices) for _, indices, ref in self], n_batch_dims=1)
+
+    def iter_batches(self, batch_size: int) -> Iterator[NodeRefs]:
+        """Yield sub-:class:`NodeRefs` of at most `batch_size` elements."""
+        queue = list(self.dimension.node_infos)
+        while queue:
+            accumulated = 0
+            batch: list[NodeInfo] = []
+            while accumulated < batch_size and queue:
+                ni = queue[0]
+                remaining = batch_size - accumulated
+                if len(ni) > remaining:
+                    batch.append(ni[:remaining])
+                    queue[0] = ni[remaining:]
+                    accumulated = batch_size
+                else:
+                    batch.append(queue.pop(0))
+                    accumulated += len(batch[-1])
+            yield self[NodeDimension.from_node_infos(batch, device=self.dimension.device)]
+
+    def __add__(self, other: NodeRefs) -> NodeRefs:
+        """Combine two :class:`NodeRefs` (merge mappings, concatenate dimensions)."""
+        return NodeRefs(mapping={**self.mapping, **other.mapping}, dimension=self.dimension + other.dimension)
+
+    def __getitem__(self, index: NodeDimension) -> NodeRefs:
+        """Subset to a sub-dimension (filter mapping to relevant keys)."""
+        relevant_keys = {node.key for node in index.node_mappings.values()}
+        return NodeRefs(
+            mapping={k: v for k, v in self.mapping.items() if k in relevant_keys},
+            dimension=index,
+        )
+
+    def __iter__(self) -> Iterator[tuple[str, torch.Tensor, torch.Tensor]]:
+        for ni in self.dimension.node_infos:
+            yield (ni.key, ni.indices, self.mapping[ni.key])
 
 
-NodeInfoT = TypeVar("NodeInfoT", bound=NodeInfo)
+@dataclass
+class IntermediateRefs:
+    """Paired upstream/downstream refs for intermediate nodes."""
+
+    upstream: NodeRefs
+    downstream: NodeRefs
 
 
-class NodeInfoQueue(Generic[NodeInfoT]):
-    def __init__(self, node_infos: Sequence[NodeInfoT] = ()):
-        self.queue = list(node_infos)
+@dataclass
+class QKTracingResult(PyTree):
+    """Result of QK tracing.
 
-    def enqueue(self, node_info: Sequence[NodeInfoT]):
-        self.queue.extend(node_info)
+    It contains the marginal attributions for Q and K roles, and the second-order pairwise attributions for QK pairs.
+    """
 
-    def dequeue(self, batch_size: int) -> Sequence[NodeInfoT]:
-        accumulated = 0
-        results = []
-        while accumulated < batch_size and len(self.queue) > 0:
-            if accumulated + len(self.queue[0]) > batch_size:
-                results.append(self.queue[0][: batch_size - accumulated])
-                self.queue[0] = self.queue[0][batch_size - accumulated :]
-                accumulated = batch_size
-            else:
-                results.append(self.queue.pop(0))
-                accumulated += len(results[-1])
-        return results
+    q_marginal: NodeIndexed[list[NodeIndexed[torch.Tensor]]]
+    k_marginal: NodeIndexed[list[NodeIndexed[torch.Tensor]]]
+    pairs: NodeIndexed[list[NodeIndexed[torch.Tensor]]]
 
-    def iter(self, batch_size: int) -> Iterator[Sequence[NodeInfoT]]:
-        while len(self.queue) > 0:
-            yield self.dequeue(batch_size)
+    @migrate(before="2")
+    @staticmethod
+    def _v1_to_v2(data: dict[str, Any]) -> dict[str, Any]:
+        def _dim_size(dim_raw: dict[str, Any]) -> int:
+            return sum(int(node["indices"].shape[0]) for node in dim_raw.values()) if dim_raw else 0
+
+        q_marginal_slots: list[dict[str, Any]] = []
+        k_marginal_slots: list[dict[str, Any]] = []
+        for slot in data["value"]:
+            q_dim_raw = slot["dimensions"][0]
+            k_dim_raw = slot["dimensions"][1]
+            q_marginal_slots.append({"value": torch.zeros(_dim_size(q_dim_raw)), "dimensions": [q_dim_raw]})
+            k_marginal_slots.append({"value": torch.zeros(_dim_size(k_dim_raw)), "dimensions": [k_dim_raw]})
+
+        return {
+            "q_marginal": {"value": q_marginal_slots, "dimensions": data["dimensions"]},
+            "k_marginal": {"value": k_marginal_slots, "dimensions": data["dimensions"]},
+            "pairs": data,
+        }
 
 
 @dataclass
 class AttributionResult(PyTree):
+    """Result of attribution computation."""
+
     activations: NodeIndexedVector
     attribution: NodeIndexedMatrix
     logits: torch.Tensor
@@ -79,7 +170,7 @@ class AttributionResult(PyTree):
     prompt_tokens: list[str] = field(default_factory=list)
     logit_token_ids: list[int] = field(default_factory=list)
     logit_tokens: list[str] = field(default_factory=list)
-    qk_trace_results: NodeIndexed[list[NodeIndexed[torch.Tensor]]] | None = None
+    qk_trace_results: QKTracingResult | None = None
 
 
 def get_normalized_matrix(matrix: NodeIndexedMatrix) -> NodeIndexedMatrix:
@@ -112,137 +203,91 @@ def compute_intermediates_attribution(
     return influence
 
 
-@timer.time("values")
-def values(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-    return multi_batch_index(
-        [node_info.ref for node_info in node_infos],
-        [node_info.indices for node_info in node_infos],
+def attribution_scores(
+    grad_refs: Sequence[torch.Tensor | None],
+    sources: NodeRefs,
+) -> torch.Tensor:
+    """Input×gradient attribution scores of shape ``(fwd_batch, n_sources)``."""
+    indexed = multi_batch_index(
+        [(g if g is not None else torch.zeros_like(ref), indices) for g, (_, indices, ref) in zip(grad_refs, sources)],
         n_batch_dims=1,
     )
-
-
-@timer.time("grads")
-def grads(node_infos: Sequence[NodeInfoRef]) -> list[torch.Tensor]:
-    return multi_batch_index(
+    return torch.cat(
         [
-            node_info.ref.grad if node_info.ref.grad is not None else torch.zeros_like(node_info.ref)
-            for node_info in node_infos
+            einops.einsum(
+                value.detach(),
+                grad,
+                "batch n_elements ..., batch n_elements ... -> batch n_elements",
+            )
+            for value, grad in zip(sources.values(), indexed)
         ],
-        [node_info.indices for node_info in node_infos],
-        n_batch_dims=1,
+        dim=1,
     )
-
-
-def clear_grads(node_infos: Sequence[NodeInfoRef]) -> None:
-    for node_info in node_infos:
-        node_info.ref.grad = None
-
-
-def retrieval_from_intermediates(dimension: NodeDimension, intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]]):
-    return [
-        NodeInfoRef(
-            key=node.key,
-            indices=node.indices,
-            ref=intermediate[0].ref,
-        )
-        for node in dimension.node_infos
-        for intermediate in intermediates
-        if node.key == intermediate[0].key
-    ]
 
 
 @timer.time("greedily_collect_attribution")
 def greedily_collect_attribution(
-    targets: Sequence[NodeInfoRef],
-    sources: Sequence[NodeInfoRef],
-    intermediates: Sequence[tuple[NodeInfoRef, NodeInfoRef]],  # [up as target, down as source]
+    targets: NodeRefs,
+    sources: NodeRefs,
+    intermediates: IntermediateRefs,
     max_intermediates: int,
     reduction_weight: torch.Tensor,
     max_iter: int = 100,
 ) -> tuple[NodeIndexedMatrix, NodeDimension]:
-    """
-    Greedily collect attribution from targets to sources through intermediates.
-    """
+    """Greedily collect attribution from targets to sources through intermediates."""
 
-    all_sources = list(sources) + [intermediate[1] for intermediate in intermediates]
+    all_sources = sources + intermediates.downstream
 
-    targets_dimension = NodeDimension.from_node_infos(targets)
-    all_sources_dimension = NodeDimension.from_node_infos(all_sources)
-    source_intermediates_dimension = NodeDimension.from_node_infos([intermediate[1] for intermediate in intermediates])
     attribution = NodeIndexedMatrix.from_dimensions(
-        dimensions=(targets_dimension, all_sources_dimension),
-        device=targets[0].ref.device,
-        dtype=targets[0].ref.dtype,
-        device_mesh=targets[0].ref.device_mesh if isinstance(targets[0].ref, DTensor) else None,
+        dimensions=(targets.dimension, all_sources.dimension),
+        device=targets.device,
+        dtype=targets.dtype,
+        device_mesh=targets.device_mesh,
     )
 
-    batch_size = targets[0].ref.shape[0]
+    batch_size = targets.batch_size
 
-    queue = NodeInfoQueue(targets)
-    with torch.no_grad():
-        source_values = [value.detach() for value in values(all_sources)]
+    def per_target_attribution(targets: NodeRefs) -> torch.Tensor:
+        root = maybe_local_map(torch.diag)(torch.cat(targets.values(), dim=1))
+        grad_refs = torch.autograd.grad(
+            root.sum(),
+            all_sources.refs(),
+            retain_graph=True,
+            materialize_grads=True,
+        )
+        return attribution_scores(grad_refs, all_sources)[: root.shape[0]]
 
-    for target_batch in queue.iter(batch_size):
-        clear_grads(all_sources)
-        root = maybe_local_map(torch.diag)(torch.cat(values(target_batch), dim=1))
-
+    for target_batch in targets.iter_batches(batch_size):
         with timer.time("backward"):
-            root.sum().backward(retain_graph=True)
+            attribution[target_batch.dimension, None] = per_target_attribution(target_batch).to(attribution.data.dtype)
 
-        attribution[NodeDimension.from_node_infos(target_batch), None] = torch.cat(
-            [
-                einops.einsum(
-                    value[: root.shape[0]],
-                    grad.detach()[: root.shape[0]],
-                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                )
-                for value, grad in zip(source_values, grads(all_sources))
-            ],
-            dim=1,
-        ).to(attribution.data.dtype)
-
-    collected_intermediates_dimension = NodeDimension.empty(
-        device=targets[0].ref.device,
-        device_mesh=targets[0].ref.device_mesh if isinstance(targets[0].ref, DTensor) else None,
+    collected = NodeDimension.empty(
+        device=targets.device,
+        device_mesh=targets.device_mesh,
     )
     reduction_weight_vec: NodeIndexedVector = NodeIndexedVector.from_data(
-        reduction_weight, dimensions=(targets_dimension,)
+        reduction_weight, dimensions=(targets.dimension,)
     )
-    for i in tqdm(range(0, max_intermediates, batch_size)):
+    for i in tqdm(range(0, max_intermediates, batch_size), desc="OV Attribution"):
         cur_batch_size = min(batch_size, max_intermediates - i)
         intermediates_attribution = compute_intermediates_attribution(
-            attribution, targets_dimension, collected_intermediates_dimension, max_iter
+            attribution, targets.dimension, collected, max_iter
         )
 
-        influence = reduction_weight_vec @ intermediates_attribution[None, source_intermediates_dimension]
+        influence = reduction_weight_vec @ intermediates_attribution[None, intermediates.downstream.dimension]
 
-        _, selected_nodes = influence.topk(k=cur_batch_size, ignore_dimension=collected_intermediates_dimension)
+        _, selected_nodes = influence.topk(k=cur_batch_size, ignore_dimension=collected)
 
-        collected_intermediates_dimension = collected_intermediates_dimension + selected_nodes
+        collected = collected + selected_nodes
 
-        clear_grads(all_sources)
-        node_refs = retrieval_from_intermediates(selected_nodes, intermediates)
-        root = maybe_local_map(torch.diag)(torch.cat(values(node_refs), dim=1))
-
+        selected_refs = intermediates.upstream[selected_nodes]
         with timer.time("backward"):
-            root.sum().backward(retain_graph=True)
+            attribution.add_targets(
+                selected_nodes,
+                per_target_attribution(selected_refs).to(attribution.data.dtype),
+            )
 
-        attribution.add_targets(
-            selected_nodes,
-            torch.cat(
-                [
-                    einops.einsum(
-                        value[: root.shape[0]],
-                        grad.detach()[: root.shape[0]],
-                        "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                    )
-                    for value, grad in zip(source_values, grads(all_sources))
-                ],
-                dim=1,
-            ).to(attribution.data.dtype),
-        )
-
-    return attribution, collected_intermediates_dimension
+    return attribution, collected
 
 
 def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
@@ -312,17 +357,15 @@ def prune_attribution(
     if edge_threshold > 1.0 or edge_threshold < 0.0:
         raise ValueError("edge_threshold must be between 0.0 and 1.0")
 
-    logits_dimension = attribution.dimensions[0].filter_keys(lambda key: key == "logits")
-    intermediates_dimension = attribution.dimensions[0].filter_keys(lambda key: key != "logits")
-    optional_sources_dimension = (
-        attribution.dimensions[1].filter_keys(lambda key: key.endswith(".error")) + intermediates_dimension
-    )
+    logits = attribution.dimensions[0].filter_keys(lambda key: key == "logits")
+    intermediates = attribution.dimensions[0].filter_keys(lambda key: key != "logits")
+    optional_sources = attribution.dimensions[1].filter_keys(lambda key: key.endswith(".error")) + intermediates
 
-    node_scores = NodeIndexedVector.from_data(
-        logit_weights, dimensions=(logits_dimension,)
-    ) @ compute_intermediates_attribution(attribution, logits_dimension, intermediates_dimension, max_iter=100)
-    influence = node_scores[intermediates_dimension]
-    influence.add_nodes(logits_dimension, logit_weights)
+    node_scores = NodeIndexedVector.from_data(logit_weights, dimensions=(logits,)) @ compute_intermediates_attribution(
+        attribution, logits, intermediates, max_iter=100
+    )
+    influence = node_scores[intermediates]
+    influence.add_nodes(logits, logit_weights)
     edge_scores = NodeIndexedMatrix.from_data(
         get_normalized_matrix(attribution).data * influence[attribution.dimensions[0]].data[:, None],
         dimensions=attribution.dimensions,
@@ -332,27 +375,19 @@ def prune_attribution(
     edge_mask = edge_scores.map(lambda x: x >= _find_influence_threshold(x, edge_threshold))
 
     old_node_mask = node_mask.clone()
-    node_mask[optional_sources_dimension] = node_mask[optional_sources_dimension] & edge_mask[
-        None, optional_sources_dimension
-    ].any(0)
-    node_mask[intermediates_dimension] = node_mask[intermediates_dimension] & edge_mask[
-        intermediates_dimension, None
-    ].any(1)
+    node_mask[optional_sources] = node_mask[optional_sources] & edge_mask[None, optional_sources].any(0)
+    node_mask[intermediates] = node_mask[intermediates] & edge_mask[intermediates, None].any(1)
 
     while not torch.equal(node_mask.data, old_node_mask.data):
         old_node_mask = node_mask.clone()
-        edge_mask.masked_fill_dim_(1, ~node_mask[optional_sources_dimension], False)
-        edge_mask.masked_fill_dim_(0, ~node_mask[intermediates_dimension], False)
-        node_mask[optional_sources_dimension] = node_mask[optional_sources_dimension] & edge_mask[
-            None, optional_sources_dimension
-        ].any(0)
-        node_mask[intermediates_dimension] = node_mask[intermediates_dimension] & edge_mask[
-            intermediates_dimension, None
-        ].any(1)
+        edge_mask.masked_fill_dim_(1, ~node_mask[optional_sources], False)
+        edge_mask.masked_fill_dim_(0, ~node_mask[intermediates], False)
+        node_mask[optional_sources] = node_mask[optional_sources] & edge_mask[None, optional_sources].any(0)
+        node_mask[intermediates] = node_mask[intermediates] & edge_mask[intermediates, None].any(1)
 
     attribution = attribution.clone()
-    attribution.masked_fill_dim_(1, ~node_mask[optional_sources_dimension], 0)
-    attribution.masked_fill_dim_(0, ~node_mask[intermediates_dimension], 0)
+    attribution.masked_fill_dim_(1, ~node_mask[optional_sources], 0)
+    attribution.masked_fill_dim_(0, ~node_mask[intermediates], 0)
     attribution.masked_fill_(~edge_mask, 0)
     return attribution
 
@@ -364,69 +399,75 @@ def collect_cache(
     replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform],
     with_bias_leaves: bool = False,
 ):
-    from contextlib import nullcontext
+    """Run model forward pass and collect useful cache for circuit tracing.
+
+    This function internally replaces model/SAE bias with batched leaves, for batch-simulation of Jacobian computation. It also uses `run_with_ref_cache` to directly collect the tensors that are in the computational graph, instead of cloning them in normal `run_with_cache`."""
 
     assert model.model is not None, "model must be initialized"
     tokens = ensure_tokenized(inputs, model.tokenizer, device=model.device)
+    batch_size, seq_len = tokens.shape[0], tokens.shape[1]
 
-    bias_ctx = (
-        replace_biases_with_leaves(
+    model_bias_ctx = (
+        replace_model_biases_with_leaves(model.model, batch_size, seq_len) if with_bias_leaves else nullcontext([])
+    )
+    sae_bias_ctx = (
+        replace_sae_biases_with_leaves(
             model.model,
             cast(list[SparseDictionary], replacement_modules),
-            batch_size=tokens.shape[0],
-            seq_len=tokens.shape[1],
+            batch_size,
+            seq_len,
         )
         if with_bias_leaves
-        else nullcontext({})
+        else nullcontext([])
     )
 
-    with model.apply_saes(cast(list[SparseDictionary], replacement_modules)):
-        with bias_ctx as bias_leaves:
-            with model.detach_at(
-                ["hook_embed"]
-                + [replacement_module.cfg.hook_point_out + ".error" for replacement_module in replacement_modules]
-                + [
-                    replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts"
-                    for replacement_module in replacement_modules
-                ]
-                + [
-                    replacement_module.cfg.hook_point_out + ".sae.hook_attn_pattern"
-                    for replacement_module in replacement_modules
-                    if isinstance(replacement_module, LowRankSparseAttention)
-                ]
-                + [
-                    replacement_module.cfg.hook_point_out + item
-                    for replacement_module in replacement_modules
-                    if isinstance(replacement_module, LowRankSparseAttention) and replacement_module.cfg.use_post_qk_ln
-                    for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
-                ]
-                + ln_detach_hooks(model)
-                + attn_detach_hooks(model)
-            ):
-                logits, cache = model.run_with_ref_cache(
-                    tokens,
-                    names_filter=["hook_embed.post"]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".error.post"
-                        for replacement_module in replacement_modules
-                    ]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"
-                        for replacement_module in replacement_modules
-                    ]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"
-                        for replacement_module in replacement_modules
-                    ]
-                    + [
-                        replacement_module.cfg.hook_point_out + ".sae.hook_attn_score"
-                        for replacement_module in replacement_modules
-                        if isinstance(replacement_module, LowRankSparseAttention)
-                    ]
-                    + ln_detach_hooks(model),
-                )
+    detach_hook_points = (
+        ["hook_embed"]
+        + [rm.cfg.hook_point_out + ".error" for rm in replacement_modules]
+        + [rm.cfg.hook_point_out + ".sae.hook_feature_acts" for rm in replacement_modules]
+        + [
+            rm.cfg.hook_point_out + ".sae.hook_attn_pattern"
+            for rm in replacement_modules
+            if isinstance(rm, LowRankSparseAttention)
+        ]
+        + [
+            rm.cfg.hook_point_out + item
+            for rm in replacement_modules
+            if isinstance(rm, LowRankSparseAttention) and rm.cfg.use_post_qk_ln
+            for item in (".sae.ln_q.hook_scale", ".sae.ln_k.hook_scale")
+        ]
+        + ln_detach_hooks(model)
+        + attn_detach_hooks(model)
+    )
 
-    cache.update(bias_leaves)
+    with (
+        model_bias_ctx as model_bias_names,
+        model.apply_saes(cast(list[SparseDictionary], replacement_modules)),
+        sae_bias_ctx as sae_bias_names,
+        model.detach_at(detach_hook_points),
+    ):
+        logits, cache = model.run_with_ref_cache(
+            tokens,
+            names_filter=["hook_embed.post"]
+            + [rm.cfg.hook_point_out + ".error.post" for rm in replacement_modules]
+            + [rm.cfg.hook_point_out + ".sae.hook_feature_acts.pre" for rm in replacement_modules]
+            + [rm.cfg.hook_point_out + ".sae.hook_feature_acts.post" for rm in replacement_modules]
+            + [
+                rm.cfg.hook_point_out + ".sae.hook_attn_score"
+                for rm in replacement_modules
+                if isinstance(rm, LowRankSparseAttention)
+            ]
+            + [
+                rm.cfg.hook_point_out + suffix
+                for rm in replacement_modules
+                if isinstance(rm, LowRankSparseAttention)
+                for suffix in (".sae.hook_q_post_rot", ".sae.hook_k_post_rot")
+            ]
+            + ln_detach_hooks(model)
+            + model_bias_names
+            + sae_bias_names,
+        )
+
     return logits, cache
 
 
@@ -443,17 +484,41 @@ def attribute(
     qk_top_fraction: float = 0.6,
     qk_topk: int = 10,
 ):
+    """Run end-to-end circuit attribution for a single prompt.
+
+    Args:
+        model: The language model to attribute through.
+        inputs: Prompt as a token tensor or raw string (tokenized internally).
+        replacement_modules: SAE / Lorsa / MoLT modules spliced into the
+            residual stream as the upstream feature basis.
+        max_n_logits: Maximum number of top output logits to treat as targets.
+        desired_logit_prob: Cumulative probability mass that the selected top
+            logits must cover; the actual target count is the smallest prefix
+            of the top logits whose probabilities sum to at least this value.
+        batch_size: Forward replication factor — the prompt is repeated this
+            many times so that each target can be backwarded through a
+            distinct forward-batch row to simulate the Jacobian computation.
+            Affects the memory usage strongly.
+        max_features: The number of upstream features collected by the
+            greedy attribution loop; ``None`` means collecting all features.
+        enable_qk_tracing: If ``True``, also run Q/K bilinear pair attribution
+            for Lorsa attention targets. Note this will increase the memory usage,
+            and takes more time to compute (typically 2x-10x slower).
+        qk_top_fraction: Fraction of top Lorsa features to include
+            as QK tracing targets.
+        qk_topk: Number of QK tracing results to keep. This applies to both Q/K marginal attributions and pairwise attributions.
+    """
     assert not enable_qk_tracing or batch_size >= qk_topk, (
         f"attribute(batch_size={batch_size}) must be >= qk_topk={qk_topk} when enable_qk_tracing=True"
     )
     tokens = ensure_tokenized(inputs, model.tokenizer, device=model.device)
-    replacement_modules_cast: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
+    replacement_modules: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
         list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
     )
     batch_logits, cache = collect_cache(
         model,
         einops.repeat(tokens, "n -> b n", b=batch_size),
-        replacement_modules_cast,
+        replacement_modules,
         with_bias_leaves=enable_qk_tracing,
     )
 
@@ -465,13 +530,15 @@ def attribute(
 
     seq_len = cache["hook_embed.post"].shape[1]
 
-    targets: list[NodeInfoRef] = [
-        NodeInfoRef(
-            key="logits",
-            ref=batch_logits[:, -1, :] - batch_logits[:, -1, :].mean(dim=-1, keepdim=True),
-            indices=top_idx.unsqueeze(-1),
-        )
-    ]
+    targets = NodeRefs.from_nodes_and_refs(
+        [
+            (
+                "logits",
+                top_idx.unsqueeze(-1),
+                batch_logits[:, -1, :] - batch_logits[:, -1, :].mean(dim=-1, keepdim=True),
+            ),
+        ]
+    )
 
     seq_indices = (
         torch.arange(seq_len, device=model.device).unsqueeze(-1)
@@ -482,38 +549,29 @@ def attribute(
             placements=DimMap({}).placements(model.device_mesh),
         )
     )
-    sources: list[NodeInfoRef] = [
-        NodeInfoRef(
-            key="hook_embed",
-            ref=cache["hook_embed.post"],
-            indices=seq_indices,
-        )
-    ] + [
-        NodeInfoRef(
-            key=replacement_module.cfg.hook_point_out + ".error",
-            ref=cache[replacement_module.cfg.hook_point_out + ".error.post"],
-            indices=seq_indices,
-        )
-        for (replacement_module) in replacement_modules_cast
-    ]
+    sources = NodeRefs.from_nodes_and_refs(
+        [("hook_embed", seq_indices, cache["hook_embed.post"])]
+        + [
+            (rm.cfg.hook_point_out + ".error", seq_indices, cache[rm.cfg.hook_point_out + ".error.post"])
+            for rm in replacement_modules
+        ]
+    )
 
-    intermediates: list[tuple[NodeInfoRef, NodeInfoRef]] = [
+    intermediate_entries = [
         (
-            NodeInfoRef(
-                key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
-                ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"],
-                indices=nonzero(cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.pre"][0]),
-            ),
-            NodeInfoRef(
-                key=replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts",
-                ref=cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
-                indices=nonzero(cache[replacement_module.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0]),
-            ),
+            rm.cfg.hook_point_out + ".sae.hook_feature_acts",
+            nonzero(cache[rm.cfg.hook_point_out + ".sae.hook_feature_acts.pre"][0]),
+            cache[rm.cfg.hook_point_out + ".sae.hook_feature_acts.pre"],
+            cache[rm.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
         )
-        for replacement_module in replacement_modules_cast
+        for rm in replacement_modules
     ]
+    intermediates = IntermediateRefs(
+        upstream=NodeRefs.from_nodes_and_refs([(key, idx, pre) for key, idx, pre, _ in intermediate_entries]),
+        downstream=NodeRefs.from_nodes_and_refs([(key, idx, post) for key, idx, _, post in intermediate_entries]),
+    )
 
-    max_intermediates = max_features if max_features is not None else len(intermediates)
+    max_intermediates = max_features if max_features is not None else len(replacement_modules)
     max_iter = len(replacement_modules) + 10
 
     attribution, collected_intermediates = greedily_collect_attribution(
@@ -525,28 +583,22 @@ def attribute(
         max_iter=max_iter,
     )
 
-    sources_dimension = NodeDimension.from_node_infos(sources)
-    attribution = attribution[None, sources_dimension + collected_intermediates]
+    attribution = attribution[None, sources.dimension + collected_intermediates]
 
-    intermediate_ref_map = {node_info.key: node_info.ref.detach() for node_info, _ in intermediates}
     activations = torch.cat(
         multi_batch_index(
-            [node_info.ref[0].detach() for node_info in targets],
-            [node_info.indices for node_info in targets],
+            [(ref[0].detach(), indices) for _, indices, ref in targets],
         )
         + multi_batch_index(
-            [intermediate_ref_map[node_info.key][0] for node_info in collected_intermediates],
-            [node_info.indices for node_info in collected_intermediates],
+            [(ref[0].detach(), indices) for key, indices, ref in intermediates.upstream[collected_intermediates]],
         )
-        + [torch.ones_like(node_info.indices[:, 0], dtype=node_info.ref.dtype) for node_info in sources],
+        + [torch.ones_like(indices[:, 0], dtype=sources.dtype) for _, indices, _ in sources],
         dim=0,
     )
 
     activations_vec = NodeIndexedVector.from_data(
         data=activations,
-        dimensions=(
-            NodeDimension.from_node_infos(targets) + collected_intermediates + NodeDimension.from_node_infos(sources),
-        ),
+        dimensions=(targets.dimension + collected_intermediates + sources.dimension,),
     )
 
     prompt_token_ids = full_tensor(tokens).detach().cpu().tolist()
@@ -557,77 +609,71 @@ def attribute(
         lorsa_features = collected_intermediates.filter_keys(
             lambda key: any(
                 isinstance(rm, LowRankSparseAttention) and key == rm.cfg.hook_point_out + ".sae.hook_feature_acts"
-                for rm in replacement_modules_cast
+                for rm in replacement_modules
             )
         )
 
         if len(lorsa_features) > 0:
-            logits_dimension = NodeDimension.from_node_infos(targets)
-            intermediates_attribution = compute_intermediates_attribution(
-                attribution, logits_dimension, collected_intermediates, max_iter
+            lorsa_influence = (
+                NodeIndexedVector.from_data(top_p, dimensions=(targets.dimension,))
+                @ compute_intermediates_attribution(attribution, targets.dimension, collected_intermediates, max_iter)[
+                    None, lorsa_features
+                ]
             )
 
-            reduction_weight_vec = NodeIndexedVector.from_data(top_p, dimensions=(logits_dimension,))
-            lorsa_influence = reduction_weight_vec @ intermediates_attribution[None, lorsa_features]
             _, top_lorsa_features = lorsa_influence.topk(k=max(1, int(len(lorsa_features) * qk_top_fraction)))
-            top_lorsa_node_infos = list(top_lorsa_features)
 
-            rm_mapping = {rm.cfg.hook_point_out: rm for rm in replacement_modules_cast}
-            # Dedup features that map to the same (hp, head, q, k): they would produce
-            # identical Hessian computations, so compute once and fan out.
-            unique_map: dict[tuple[str, int, int, int], int] = {}
-            unique_qk_targets: list[NodeInfoRef] = []
-            feature_to_unique: list[int] = []
-            for feature_node in top_lorsa_node_infos:
-                hp = feature_node.key.replace(".sae.hook_feature_acts", "")
-                attn_score_ref = cache[hp + ".sae.hook_attn_score"]
-                head_idx = (
-                    int(full_tensor(feature_node.indices)[0, 1])
-                    // cast(LowRankSparseAttention, rm_mapping[hp]).cfg.ov_group_size
-                )
-                q_pos, k_pos = torch.unravel_index(attn_score_ref[0, head_idx].argmax(), attn_score_ref.shape[-2:])
-                dedup_key = (hp, head_idx, int(q_pos), int(k_pos))
-                if dedup_key not in unique_map:
-                    unique_map[dedup_key] = len(unique_qk_targets)
-                    unique_qk_targets.append(
-                        NodeInfoRef(
-                            key=hp + ".sae.hook_attn_score",
-                            ref=attn_score_ref,
-                            indices=torch.tensor(
-                                [[head_idx, int(q_pos), int(k_pos)]], device=model.device, dtype=torch.long
-                            ),
-                        )
-                    )
-                feature_to_unique.append(unique_map[dedup_key])
-
-            from lm_saes.utils.distributed.ops import to_local
+            q_targets, k_targets, slot_to_unique = _retrieve_qk_vector_targets(
+                top_lorsa_features,
+                cache,
+                {
+                    rm.cfg.hook_point_out: rm.cfg.ov_group_size
+                    for rm in replacement_modules
+                    if isinstance(rm, LowRankSparseAttention)
+                },
+                {
+                    rm.cfg.hook_point_out: rm.attn_scale
+                    for rm in replacement_modules
+                    if isinstance(rm, LowRankSparseAttention)
+                },
+            )
 
             assert model.model is not None
             bias_keys = [
-                *(f"blocks.{i}.{kind}" for i in range(len(model.model.blocks)) for kind in ("attn.b_O", "mlp.b_out")),
-                *(
-                    rm.cfg.hook_point_out + suffix
-                    for rm in replacement_modules_cast
-                    for suffix in (".sae.b_Q", ".sae.b_K", ".sae.b_D")
-                ),
+                f"blocks.{i}.{kind}"
+                for i in range(len(model.model.blocks))
+                for kind in ("attn.hook_b_O", "mlp.hook_b_out")
+            ] + [
+                rm.cfg.hook_point_out + suffix
+                for rm in replacement_modules
+                for suffix in (".sae.hook_b_Q", ".sae.hook_b_K", ".sae.hook_b_D")
             ]
-            qk_sources: list[NodeInfoRef] = [
-                *sources,
-                *(
-                    NodeInfoRef(
-                        key=rm.cfg.hook_point_out + ".sae.hook_feature_acts",
-                        ref=cache[rm.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
-                        indices=to_local(nonzero(cache[rm.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0])),
+            qk_sources = sources + NodeRefs.from_nodes_and_refs(
+                [
+                    (
+                        rm.cfg.hook_point_out + ".sae.hook_feature_acts",
+                        nonzero(cache[rm.cfg.hook_point_out + ".sae.hook_feature_acts.post"][0]),
+                        cache[rm.cfg.hook_point_out + ".sae.hook_feature_acts.post"],
                     )
-                    for rm in replacement_modules_cast
-                ),
-                *(NodeInfoRef(key=k, ref=cache[k], indices=seq_indices) for k in bias_keys if k in cache),
-            ]
+                    for rm in replacement_modules
+                ]
+                + [(k, seq_indices, cache[k]) for k in bias_keys if k in cache]
+            )
 
-            hessian = compute_hessian_matrix(unique_qk_targets, qk_sources, topk=qk_topk)
-            qk_trace_results = NodeIndexed(
-                value=[hessian.value[i] for i in feature_to_unique],
-                dimensions=(NodeDimension.from_node_infos(top_lorsa_node_infos),),
+            tracing_results = compute_qk_tracing(q_targets, k_targets, qk_sources, topk=qk_topk)
+            qk_trace_results = QKTracingResult(
+                q_marginal=NodeIndexed(
+                    value=[tracing_results.q_marginal.value[unique_idx] for unique_idx in slot_to_unique],
+                    dimensions=(top_lorsa_features,),
+                ),
+                k_marginal=NodeIndexed(
+                    value=[tracing_results.k_marginal.value[unique_idx] for unique_idx in slot_to_unique],
+                    dimensions=(top_lorsa_features,),
+                ),
+                pairs=NodeIndexed(
+                    value=[tracing_results.pairs.value[unique_idx] for unique_idx in slot_to_unique],
+                    dimensions=(top_lorsa_features,),
+                ),
             )
 
     return AttributionResult(
@@ -643,16 +689,78 @@ def attribute(
     )
 
 
+def _retrieve_qk_vector_targets(
+    features: NodeDimension,
+    cache: dict[str, torch.Tensor],
+    ov_group_sizes: dict[str, int],
+    attn_scales: dict[str, float],
+) -> tuple[NodeRefs, NodeRefs, list[int]]:
+    """Given Lorsa feature nodes, retrieve the QK targets (QK vectors which multiply to the attention score). Note that the QK pairs may be duplicated for different Lorsa features for OV groups larger than 1, since different OV heads share the same QK heads. This function deduplicates the QK pairs and returns the mapping from the original feature offsets to the deduplicated slot indices.
+
+    Returns:
+        A tuple of (`q_targets`, `k_targets`, `slot_to_unique`)
+        - `q_targets` and `k_targets` are `NodeRefs` containing the Q and K targets respectively.
+        - `slot_to_unique` is a list of ints mapping the original feature offsets to the deduplicated slot indices.
+    """
+    slot_triples: list[tuple[str, int, int, int]] = []
+    for feature_node in features:
+        sae_path = feature_node.key.replace(".sae.hook_feature_acts", "")
+        attn_score_ref = cache[f"{sae_path}.sae.hook_attn_score"]
+        q_pos, ov_head_idx = full_tensor(feature_node.indices)[0].tolist()
+        qk_head_idx = ov_head_idx // ov_group_sizes[sae_path]
+        k_pos = int(attn_score_ref[0, qk_head_idx, q_pos].argmax().item())
+        slot_triples.append((sae_path, int(qk_head_idx), int(q_pos), k_pos))
+
+    seen: dict[tuple[str, int, int, int], int] = {}
+    deduped: list[tuple[str, int, int, int]] = []
+    slot_to_unique: list[int] = []
+    for triple in slot_triples:
+        unique_idx = seen.get(triple)
+        if unique_idx is None:
+            unique_idx = len(deduped)
+            seen[triple] = unique_idx
+            deduped.append(triple)
+        slot_to_unique.append(unique_idx)
+
+    @functools.cache
+    def _scaled_refs(sae_path: str) -> tuple[torch.Tensor, torch.Tensor]:
+        inv_sqrt_scale = attn_scales[sae_path] ** -0.5
+        return cache[f"{sae_path}.sae.hook_q_post_rot"] * inv_sqrt_scale, cache[
+            f"{sae_path}.sae.hook_k_post_rot"
+        ] * inv_sqrt_scale
+
+    q_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
+    k_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
+    for sae_path, qk_head_idx, q_pos, k_pos in deduped:
+        q_ref, k_ref = _scaled_refs(sae_path)
+        device = q_ref.device
+        q_entries.append(
+            (
+                f"{sae_path}.sae.hook_q_post_rot",
+                torch.tensor([[q_pos, qk_head_idx]], device=device),
+                q_ref,
+            )
+        )
+        k_entries.append(
+            (
+                f"{sae_path}.sae.hook_k_post_rot",
+                torch.tensor([[k_pos, qk_head_idx]], device=device),
+                k_ref,
+            )
+        )
+    q_targets = NodeRefs.from_nodes_and_refs(q_entries)
+    k_targets = NodeRefs.from_nodes_and_refs(k_entries)
+    return q_targets, k_targets, slot_to_unique
+
+
 def qk_trace(
     model: TransformerLensLanguageModel,
     inputs: torch.Tensor | str,
     replacement_modules: list[SparseDictionary],
-    lorsa_features: list[NodeInfo],
+    lorsa_features: NodeDimension,
     topk: int = 10,
     batch_size: int = 1,
-) -> NodeIndexed[list["NodeIndexed[torch.Tensor]"]]:
-    from lm_saes.utils.distributed.ops import to_local
-
+) -> QKTracingResult:
     tokens = ensure_tokenized(inputs, model.tokenizer, device=model.device)
     replacement_modules_cast: list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform] = cast(
         list[SparseAutoEncoder | LowRankSparseAttention | MixtureOfLinearTransform], replacement_modules
@@ -669,109 +777,90 @@ def qk_trace(
     pos_indices = torch.arange(seq_len, device=model.device).unsqueeze(-1)
 
     # sources: embed + errors + feature_acts + bias leaves
-    sources: list[NodeInfoRef] = [NodeInfoRef(key="hook_embed", ref=cache["hook_embed.post"], indices=pos_indices)]
+    source_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = [
+        ("hook_embed", pos_indices, cache["hook_embed.post"]),
+    ]
     for rm in replacement_modules_cast:
         hp = rm.cfg.hook_point_out
-        sources.append(NodeInfoRef(key=hp + ".error", ref=cache[hp + ".error.post"], indices=pos_indices))
-        sources.append(
-            NodeInfoRef(
-                key=hp + ".sae.hook_feature_acts",
-                ref=cache[hp + ".sae.hook_feature_acts.post"],
-                indices=to_local(nonzero(cache[hp + ".sae.hook_feature_acts.post"][0])),
+        source_entries.append((hp + ".error", pos_indices, cache[hp + ".error.post"]))
+        source_entries.append(
+            (
+                hp + ".sae.hook_feature_acts",
+                nonzero(cache[hp + ".sae.hook_feature_acts.post"][0]),
+                cache[hp + ".sae.hook_feature_acts.post"],
             )
         )
     bias_keys = [
-        *(f"blocks.{i}.{kind}" for i in range(len(model.model.blocks)) for kind in ("attn.b_O", "mlp.b_out")),
-        *(
-            rm.cfg.hook_point_out + suffix
-            for rm in replacement_modules_cast
-            for suffix in (".sae.b_Q", ".sae.b_K", ".sae.b_D")
-        ),
+        f"blocks.{i}.{kind}" for i in range(len(model.model.blocks)) for kind in ("attn.hook_b_O", "mlp.hook_b_out")
+    ] + [
+        rm.cfg.hook_point_out + suffix
+        for rm in replacement_modules_cast
+        for suffix in (".sae.hook_b_Q", ".sae.hook_b_K", ".sae.hook_b_D")
     ]
-    sources.extend(NodeInfoRef(key=k, ref=cache[k], indices=pos_indices) for k in bias_keys if k in cache)
+    source_entries.extend((k, pos_indices, cache[k]) for k in bias_keys if k in cache)
+    qk_sources = NodeRefs.from_nodes_and_refs(source_entries)
 
-    flat_features: list[NodeInfo] = [row for feat in lorsa_features for row in feat]
-
-    rm_mapping = {rm.cfg.hook_point_out: rm for rm in replacement_modules_cast}
-
-    unique_map: dict[tuple[str, int, int, int], int] = {}
-    unique_qk_targets: list[NodeInfoRef] = []
-    feature_to_unique: list[int] = []
-    for feature_node in flat_features:
-        hp = feature_node.key.replace(".sae.hook_feature_acts", "")
-        attn_score_ref = cache[hp + ".sae.hook_attn_score"]
-        head_idx = (
-            int(full_tensor(feature_node.indices)[0, 1])
-            // cast(LowRankSparseAttention, rm_mapping[hp]).cfg.ov_group_size
-        )
-        q_pos, k_pos = torch.unravel_index(attn_score_ref[0, head_idx].argmax(), attn_score_ref.shape[-2:])
-        dedup_key = (hp, head_idx, int(q_pos), int(k_pos))
-        if dedup_key not in unique_map:
-            unique_map[dedup_key] = len(unique_qk_targets)
-            unique_qk_targets.append(
-                NodeInfoRef(
-                    key=hp + ".sae.hook_attn_score",
-                    ref=attn_score_ref,
-                    indices=torch.tensor([[head_idx, int(q_pos), int(k_pos)]], device=model.device, dtype=torch.long),
-                )
-            )
-        feature_to_unique.append(unique_map[dedup_key])
-
-    hessian = compute_hessian_matrix(unique_qk_targets, sources, topk=topk)
-    return NodeIndexed(
-        value=[hessian.value[i] for i in feature_to_unique],
-        dimensions=(NodeDimension.from_node_infos(flat_features),),
+    q_targets, k_targets, slot_to_unique = _retrieve_qk_vector_targets(
+        lorsa_features,
+        cache,
+        {
+            rm.cfg.hook_point_out: rm.cfg.ov_group_size
+            for rm in replacement_modules_cast
+            if isinstance(rm, LowRankSparseAttention)
+        },
+        {
+            rm.cfg.hook_point_out: rm.attn_scale
+            for rm in replacement_modules_cast
+            if isinstance(rm, LowRankSparseAttention)
+        },
+    )
+    tracing_results = compute_qk_tracing(q_targets, k_targets, qk_sources, topk=topk)
+    return QKTracingResult(
+        q_marginal=NodeIndexed(
+            value=[tracing_results.q_marginal.value[unique_idx] for unique_idx in slot_to_unique],
+            dimensions=(lorsa_features,),
+        ),
+        k_marginal=NodeIndexed(
+            value=[tracing_results.k_marginal.value[unique_idx] for unique_idx in slot_to_unique],
+            dimensions=(lorsa_features,),
+        ),
+        pairs=NodeIndexed(
+            value=[tracing_results.pairs.value[unique_idx] for unique_idx in slot_to_unique],
+            dimensions=(lorsa_features,),
+        ),
     )
 
 
 def compute_hessian_matrix(
-    targets: Sequence[NodeInfoRef],
-    sources: Sequence[NodeInfoRef],
+    targets: NodeRefs,
+    sources: NodeRefs,
     topk: int,
 ) -> NodeIndexed[list["NodeIndexed[torch.Tensor]"]]:
-    sources_dimension = NodeDimension.from_node_infos(sources)
-    fwd_batch_size = sources[0].ref.shape[0]
+    fwd_batch_size = sources.batch_size
     bwd_batch_size = fwd_batch_size // topk
 
     per_slot_results: list[NodeIndexed[torch.Tensor]] = []
 
-    target_queue = NodeInfoQueue(list(targets))
-    for target_batch in target_queue.iter(bwd_batch_size):
-        stacked = torch.cat(values(target_batch), dim=1)  # (fwd_batch, n_slots)
+    for target_batch in targets.iter_batches(bwd_batch_size):
+        stacked = torch.cat(target_batch.values(), dim=1)  # (fwd_batch, n_slots)
         bwd_scores = torch.stack(
             [stacked[i * topk : (i + 1) * topk, i] for i in range(stacked.shape[1])],
             dim=0,
         )
         first_grad_refs = torch.autograd.grad(
             bwd_scores.sum(),
-            [s.ref for s in sources],
+            sources.refs(),
             create_graph=True,
             retain_graph=True,
             allow_unused=True,
         )
-
-        first_grads = multi_batch_index(
-            [g if g is not None else torch.zeros_like(s.ref) for g, s in zip(first_grad_refs, sources)],
-            [s.indices for s in sources],
-            n_batch_dims=1,
-        )
-        first_attributions = torch.cat(
-            [
-                einops.einsum(
-                    value.detach(),
-                    grad,
-                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                )
-                for value, grad in zip(values(sources), first_grads)
-            ],
-            dim=1,
-        )  # (fwd_batch_size, n_sources)
+        first_attributions = attribution_scores(first_grad_refs, sources)
 
         second_targets = NodeDimension.empty(device=bwd_scores.device)
         all_topk_indices = []
         for slot_idx in range(stacked.shape[1]):
             _, topk_indices = first_attributions[slot_idx * topk].topk(topk)
-            second_targets = second_targets + sources_dimension.offsets_to_nodes(offsets=topk_indices)
+            second_targets = second_targets + sources.dimension.offsets_to_nodes(offsets=topk_indices)
             all_topk_indices.append(topk_indices)
 
         second_bwd_values = first_attributions[
@@ -782,52 +871,171 @@ def compute_hessian_matrix(
 
         second_grads_refs = torch.autograd.grad(
             second_bwd_values.sum(),
-            [s.ref for s in sources],
+            sources.refs(),
             retain_graph=True,
-            allow_unused=True,
+            materialize_grads=True,
         )
-
-        second_grads = multi_batch_index(
-            [g if g is not None else torch.zeros_like(s.ref) for g, s in zip(second_grads_refs, sources)],
-            [s.indices for s in sources],
-            n_batch_dims=1,
-        )
-        second_attributions = torch.cat(
-            [
-                einops.einsum(
-                    value.detach(),
-                    grad,
-                    "batch n_elements ..., batch n_elements ... -> batch n_elements",
-                )
-                for value, grad in zip(values(sources), second_grads)
-            ],
-            dim=1,
-        )
+        second_attributions = attribution_scores(second_grads_refs, sources)
         second_targets_list = list(second_targets)
         diag = torch.arange(topk, device=second_attributions.device)
         for slot_idx in range(stacked.shape[1]):
             topk_values, topk_indices = second_attributions[slot_idx * topk : (slot_idx + 1) * topk].topk(topk, dim=-1)
             pair_attrs = topk_values[diag, diag]
-            second_nodes = list(sources_dimension.offsets_to_nodes(topk_indices[diag, diag]))
+            second_nodes = list(sources.dimension.offsets_to_nodes(topk_indices[diag, diag]))
             first_nodes = second_targets_list[slot_idx * topk : (slot_idx + 1) * topk]
 
             order = torch.argsort(pair_attrs, descending=True).tolist()
-            # Drop pairs whose attribution is exactly zero: they come from
-            # ties inside `topk` over all-zero tails (e.g. sources whose
-            # gradient path to this target is structurally zero), and the
-            # specific pick among those ties is arbitrary and differs
-            # between runs with different source orderings.
             order = [i for i in order if pair_attrs[i].item() != 0.0]
-            device = pair_attrs.device
             per_slot_results.append(
                 NodeIndexed(
                     value=pair_attrs[order] if len(order) > 0 else pair_attrs[:0],
                     dimensions=(
-                        NodeDimension.from_node_infos([first_nodes[i] for i in order], device=device),
-                        NodeDimension.from_node_infos([second_nodes[i] for i in order], device=device),
+                        NodeDimension.from_node_infos([first_nodes[i] for i in order], device=pair_attrs.device),
+                        NodeDimension.from_node_infos([second_nodes[i] for i in order], device=pair_attrs.device),
                     ),
                 )
             )
 
-    targets_dim = NodeDimension.from_node_infos(list(targets))
-    return NodeIndexed(value=per_slot_results, dimensions=(targets_dim,))
+    return NodeIndexed(value=per_slot_results, dimensions=(targets.dimension,))
+
+
+def _extract_topk_pairwise_attributions(
+    q_side: NodeIndexedMatrix,  # (q_picks, sources)
+    k_side: NodeIndexedMatrix,  # (k_picks, sources)
+    topk: int,
+) -> NodeIndexed[torch.Tensor]:
+    """Extract topk, deduped, non-zero pairwise attributions."""
+    # Dedup: zero out K-side columns whose source is also a Q-pick.
+    if len(k_side.dimensions[0]) > 0 and len(q_side.dimensions[0]) > 0:
+        k_side = k_side.clone()
+        k_side[None, q_side.dimensions[0]] = 0
+
+    q_top = q_side.flat_topk(topk)
+    k_top = k_side.flat_topk(topk)
+
+    merged_values = torch.cat([q_top.value, k_top.value])
+    merged_q_role = q_top.dimensions[0] + k_top.dimensions[1]
+    merged_k_role = q_top.dimensions[1] + k_top.dimensions[0]
+
+    nonzero_count = int((merged_values != 0.0).sum().item())
+    n_final = min(topk, nonzero_count)
+    top_values, top_offsets = torch.topk(merged_values, n_final)
+    return NodeIndexed(
+        value=top_values,
+        dimensions=(
+            merged_q_role.offsets_to_nodes(top_offsets),
+            merged_k_role.offsets_to_nodes(top_offsets),
+        ),
+    )
+
+
+def compute_qk_tracing(
+    q_targets: NodeRefs,
+    k_targets: NodeRefs,
+    sources: NodeRefs,
+    topk: int,
+) -> QKTracingResult:
+    """Role-labeled QK tracing for attention-score targets.
+
+    Decomposes the bilinear score ``s = (Q·K)/attn_scale`` into per-source
+    Q-role and K-role first-order attributions via two VJPs with the opposite
+    side as cotangent, then picks the top sources from the merged ranking and
+    runs a second backward to recover exact bilinear pair attributions
+    ``T_{ij} = v_i·v_j·(∂Q/∂s_i)·(∂K/∂s_j)``.
+    """
+    assert len(q_targets.dimension) == len(k_targets.dimension)
+    device = sources.device
+    bwd_batch_size = sources.batch_size // topk
+    n_slots_total = len(q_targets.dimension)
+
+    def vjp_attribution(outputs: torch.Tensor, cotangent: torch.Tensor) -> torch.Tensor:
+        return attribution_scores(
+            torch.autograd.grad(
+                outputs,
+                sources.refs(),
+                grad_outputs=cotangent,
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True,
+            ),
+            sources,
+        )
+
+    def topk_nonzero(scores: torch.Tensor) -> NodeIndexed[torch.Tensor]:
+        values, indices = scores.topk(topk)
+        keep = values != 0.0
+        return NodeIndexed(
+            value=values[keep],
+            dimensions=(sources.dimension.offsets_to_nodes(indices[keep]),),
+        )
+
+    q_marginal_slots: list[NodeIndexed[torch.Tensor]] = []
+    k_marginal_slots: list[NodeIndexed[torch.Tensor]] = []
+    pair_slots: list[NodeIndexed[torch.Tensor]] = []
+
+    n_batches = (n_slots_total + bwd_batch_size - 1) // bwd_batch_size
+    batch_iter = zip(q_targets.iter_batches(bwd_batch_size), k_targets.iter_batches(bwd_batch_size))
+    for q_sub, k_sub in tqdm(batch_iter, total=n_batches, desc="QK Tracing", disable=n_batches <= 1):
+        # Use `topk`-sized slots for computing second-order attributions.
+        # The first-order gradient computation should be replicated for `topk` time
+        # for the same reason of `collect_cache` replicating `batch_size` times
+        # in forward pass.
+        q_stacked = torch.cat(q_sub.values(), dim=1)
+        k_stacked = torch.cat(k_sub.values(), dim=1)
+        n_slots = q_stacked.shape[1]
+        q_vecs = torch.stack([q_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
+        k_vecs = torch.stack([k_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
+
+        a_Q = vjp_attribution(q_vecs, k_vecs)
+        a_K = vjp_attribution(k_vecs, q_vecs)
+        n_sources = a_Q.shape[1]
+
+        slot_first_rows = torch.arange(n_slots, device=device) * topk
+        merged = torch.cat([a_Q[slot_first_rows].detach(), a_K[slot_first_rows].detach()], dim=-1)
+        _, pick_flat = merged.topk(topk, dim=-1)
+        is_q_pick = pick_flat < n_sources
+        pick_src = torch.where(is_q_pick, pick_flat, pick_flat - n_sources)
+
+        bwd_rows = slot_first_rows.unsqueeze(1) + torch.arange(topk, device=device).unsqueeze(0)
+        second_bwd_values = torch.where(is_q_pick, a_Q[bwd_rows, pick_src], a_K[bwd_rows, pick_src]).reshape(-1)
+        second_attributions = attribution_scores(
+            torch.autograd.grad(
+                second_bwd_values.sum(),
+                sources.refs(),
+                retain_graph=True,
+                materialize_grads=True,
+            ),
+            sources,
+        )
+
+        q_marginal_slots.extend(topk_nonzero(a_Q[s * topk]) for s in range(n_slots))
+        k_marginal_slots.extend(topk_nonzero(a_K[s * topk]) for s in range(n_slots))
+
+        def slot_pair_attribution(s: int) -> NodeIndexed[torch.Tensor]:
+            slot_rows = second_attributions[s * topk : (s + 1) * topk]
+            q_mask = is_q_pick[s]
+            k_mask = ~q_mask
+            q_side = NodeIndexedMatrix.from_data(
+                data=slot_rows[q_mask],
+                dimensions=(
+                    sources.dimension.offsets_to_nodes(pick_src[s][q_mask]),
+                    sources.dimension,
+                ),
+            )
+            k_side = NodeIndexedMatrix.from_data(
+                data=slot_rows[k_mask],
+                dimensions=(
+                    sources.dimension.offsets_to_nodes(pick_src[s][k_mask]),
+                    sources.dimension,
+                ),
+            )
+            return _extract_topk_pairwise_attributions(q_side, k_side, topk=topk)
+
+        pair_slots.extend(slot_pair_attribution(s) for s in range(n_slots))
+
+    outer = (q_targets.dimension,)
+    return QKTracingResult(
+        q_marginal=NodeIndexed(value=q_marginal_slots, dimensions=outer),
+        k_marginal=NodeIndexed(value=k_marginal_slots, dimensions=outer),
+        pairs=NodeIndexed(value=pair_slots, dimensions=outer),
+    )

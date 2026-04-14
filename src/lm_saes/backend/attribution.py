@@ -2,8 +2,8 @@
 
 from lm_saes.circuits.attribution import (
     AttributionResult,
-    NodeInfoQueue,
-    NodeInfoRef,
+    IntermediateRefs,
+    NodeRefs,
     attribute,
     compute_intermediates_attribution,
     get_normalized_matrix,
@@ -13,8 +13,8 @@ from lm_saes.circuits.attribution import (
 
 __all__ = [
     "AttributionResult",
-    "NodeInfoQueue",
-    "NodeInfoRef",
+    "IntermediateRefs",
+    "NodeRefs",
     "attribute",
     "compute_intermediates_attribution",
     "get_normalized_matrix",

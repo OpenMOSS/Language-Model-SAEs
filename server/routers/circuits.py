@@ -203,7 +203,9 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     qk_nodes = (
         (
             sum(
-                [results.dimensions[0] + results.dimensions[1] for results, _ in ar.qk_trace_results],
+                [results.dimensions[0] + results.dimensions[1] for results, _ in ar.qk_trace_results.pairs]
+                + [results.dimensions[0] for results, _ in ar.qk_trace_results.q_marginal]
+                + [results.dimensions[0] for results, _ in ar.qk_trace_results.k_marginal],
                 NodeDimension.empty(device=device),
             ).unique()
             - ov_nodes
@@ -329,21 +331,32 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     ]
 
     if ar.qk_trace_results is not None:
-        qk_targets_node_offsets = nodes.nodes_to_offsets(ar.qk_trace_results.dimensions[0]).tolist()
+        qk_targets_node_offsets = nodes.nodes_to_offsets(ar.qk_trace_results.pairs.dimensions[0]).tolist()
 
-        def make_qk_contributors(qk_trace_results: NodeIndexed[torch.Tensor]) -> list[tuple[str, str, float]]:
-            q_node_offsets = nodes.nodes_to_offsets(qk_trace_results.dimensions[0]).tolist()
-            k_node_offsets = nodes.nodes_to_offsets(qk_trace_results.dimensions[1]).tolist()
+        def make_qk_pair_contributors(pair_slot: NodeIndexed[torch.Tensor]) -> list[tuple[str, str, float]]:
+            q_node_offsets = nodes.nodes_to_offsets(pair_slot.dimensions[0]).tolist()
+            k_node_offsets = nodes.nodes_to_offsets(pair_slot.dimensions[1]).tolist()
             return [
                 (node_ids[q_node_offset], node_ids[k_node_offset], float(result))
-                for q_node_offset, k_node_offset, result in zip(q_node_offsets, k_node_offsets, qk_trace_results.value)
+                for q_node_offset, k_node_offset, result in zip(q_node_offsets, k_node_offsets, pair_slot.value)
             ]
 
-        for qk_target_node_offset, (qk_trace_results, _) in zip(qk_targets_node_offsets, ar.qk_trace_results):
+        def make_qk_marginal_contributors(marginal_slot: NodeIndexed[torch.Tensor]) -> list[tuple[str, float]]:
+            node_offsets = nodes.nodes_to_offsets(marginal_slot.dimensions[0]).tolist()
+            return [
+                (node_ids[node_offset], float(result)) for node_offset, result in zip(node_offsets, marginal_slot.value)
+            ]
+
+        for qk_target_node_offset, (pair_slot, _), (q_marginal_slot, _), (k_marginal_slot, _) in zip(
+            qk_targets_node_offsets,
+            ar.qk_trace_results.pairs,
+            ar.qk_trace_results.q_marginal,
+            ar.qk_trace_results.k_marginal,
+        ):
             node_entries[qk_target_node_offset]["qk_tracing_results"] = {
-                "pair_wise_contributors": make_qk_contributors(qk_trace_results),
-                "top_q_marginal_contributors": [],
-                "top_k_marginal_contributors": [],
+                "pair_wise_contributors": make_qk_pair_contributors(pair_slot),
+                "top_q_marginal_contributors": make_qk_marginal_contributors(q_marginal_slot),
+                "top_k_marginal_contributors": make_qk_marginal_contributors(k_marginal_slot),
             }
 
     graph_data: dict[str, Any] = {
@@ -441,7 +454,7 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest, backgroun
     sae_names = sae_set.sae_names
 
     model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
-    model = get_model(name=model_name)
+    model = get_model(name=model_name, device_mesh=None)
     if not isinstance(model, TransformerLensLanguageModel):
         return Response(
             content="Circuit tracing only supports TransformerLens backend",

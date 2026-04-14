@@ -204,3 +204,4 @@ pyrightconfig.json
 # Claude Code
 CLAUDE.md
 .claude/
+.playwright-mcp/

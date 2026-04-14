@@ -233,6 +233,10 @@ class LowRankSparseAttention(
         self.hook_reconstructed = HookPoint()
         self.hook_attn_pattern = HookPoint()
         self.hook_attn_score = HookPoint()
+        self.hook_q = HookPoint()
+        self.hook_k = HookPoint()
+        self.hook_q_post_rot = HookPoint()
+        self.hook_k_post_rot = HookPoint()
         self.setup()
 
     @property
@@ -786,7 +790,7 @@ class LowRankSparseAttention(
     ]:
         """Compute queries, keys, values."""
         x = x.to(self.W_Q.dtype)
-        q = (
+        q = self.hook_q(
             torch.einsum(
                 "bsd,Qdq->bsQq",
                 x,
@@ -794,7 +798,7 @@ class LowRankSparseAttention(
             )
             + self.b_Q
         )
-        k = (
+        k = self.hook_k(
             torch.einsum(
                 "bsd,Kdk->bsKk",
                 x,
@@ -818,6 +822,9 @@ class LowRankSparseAttention(
         if self.cfg.positional_embedding_type == "rotary":
             q = self._apply_rotary(q)
             k = self._apply_rotary(k)
+
+        q = self.hook_q_post_rot(q)
+        k = self.hook_k_post_rot(k)
 
         return q, k, v
 

@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(workers_on_mount(preload_models, preload_saes))
 
     for model in preload_models:
-        get_model(name=model)
+        get_model(name=model, device_mesh=None)
 
     # Format: "circuit_id:node_threshold:edge_threshold,..."
     # Thresholds default to 0.6 and 0.8 if omitted.
