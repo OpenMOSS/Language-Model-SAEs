@@ -235,6 +235,8 @@ class LowRankSparseAttention(
         self.hook_attn_score = HookPoint()
         self.hook_q = HookPoint()
         self.hook_k = HookPoint()
+        self.hook_q_post_rot = HookPoint()
+        self.hook_k_post_rot = HookPoint()
         self.setup()
 
     @property
@@ -820,6 +822,9 @@ class LowRankSparseAttention(
         if self.cfg.positional_embedding_type == "rotary":
             q = self._apply_rotary(q)
             k = self._apply_rotary(k)
+
+        q = self.hook_q_post_rot(q)
+        k = self.hook_k_post_rot(k)
 
         return q, k, v
 

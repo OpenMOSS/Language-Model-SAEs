@@ -483,7 +483,7 @@ def collect_cache(
                 rm.cfg.hook_point_out + suffix
                 for rm in replacement_modules
                 if isinstance(rm, LowRankSparseAttention)
-                for suffix in (".sae.hook_q", ".sae.hook_k")
+                for suffix in (".sae.hook_q_post_rot", ".sae.hook_k_post_rot")
             ]
             + ln_detach_hooks(model)
             + model_bias_names
@@ -629,6 +629,11 @@ def attribute(
                     for rm in replacement_modules
                     if isinstance(rm, LowRankSparseAttention)
                 },
+                {
+                    rm.cfg.hook_point_out: rm.attn_scale
+                    for rm in replacement_modules
+                    if isinstance(rm, LowRankSparseAttention)
+                },
             )
 
             assert model.model is not None
@@ -686,6 +691,7 @@ def _retrieve_qk_vector_targets(
     features: NodeDimension,
     cache: dict[str, torch.Tensor],
     ov_group_sizes: dict[str, int],
+    attn_scales: dict[str, float],
 ) -> tuple[NodeRefs, NodeRefs, list[int]]:
     """Map Lorsa features to ``Q(q_pos, h)`` / ``K(k_pos, h)`` vector targets.
 
@@ -696,6 +702,13 @@ def _retrieve_qk_vector_targets(
     arise when ``ov_group_size > 1``) are collapsed — the returned ``NodeRefs``
     only contain unique targets. The ``slot_to_unique`` list maps each original
     feature offset to its index in the deduplicated slot list.
+
+    The cached ``hook_q`` / ``hook_k`` tensors are **pre-scaled by**
+    ``1 / sqrt(attn_scale)`` (per Lorsa module). This makes the implicit
+    bilinear target ``Q·K`` evaluate to ``(Q·K) / attn_scale`` — the actual
+    attention score fed into softmax — so the resulting pair attributions and
+    marginals are on the same scale as the pre-refactor ``compute_hessian_matrix``
+    path which targeted ``hook_attn_score`` directly.
     """
     slot_triples: list[tuple[str, int, int, int]] = []
     for feature_node in features:
@@ -717,22 +730,33 @@ def _retrieve_qk_vector_targets(
             deduped.append(triple)
         slot_to_unique.append(unique_idx)
 
+    # Memoize per-sae_path scaled refs — one scaled copy per Lorsa module,
+    # shared across all slots that target the same module.
+    scaled_q_refs: dict[str, torch.Tensor] = {}
+    scaled_k_refs: dict[str, torch.Tensor] = {}
+
+    def _scaled_refs(sae_path: str) -> tuple[torch.Tensor, torch.Tensor]:
+        if sae_path not in scaled_q_refs:
+            inv_sqrt_scale = attn_scales[sae_path] ** -0.5
+            scaled_q_refs[sae_path] = cache[f"{sae_path}.sae.hook_q_post_rot"] * inv_sqrt_scale
+            scaled_k_refs[sae_path] = cache[f"{sae_path}.sae.hook_k_post_rot"] * inv_sqrt_scale
+        return scaled_q_refs[sae_path], scaled_k_refs[sae_path]
+
     q_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
     k_entries: list[tuple[str, torch.Tensor, torch.Tensor]] = []
     for sae_path, qk_head_idx, q_pos, k_pos in deduped:
-        q_ref = cache[f"{sae_path}.sae.hook_q"]
-        k_ref = cache[f"{sae_path}.sae.hook_k"]
+        q_ref, k_ref = _scaled_refs(sae_path)
         device = q_ref.device
         q_entries.append(
             (
-                f"{sae_path}.sae.hook_q",
+                f"{sae_path}.sae.hook_q_post_rot",
                 torch.tensor([[q_pos, qk_head_idx]], device=device),
                 q_ref,
             )
         )
         k_entries.append(
             (
-                f"{sae_path}.sae.hook_k",
+                f"{sae_path}.sae.hook_k_post_rot",
                 torch.tensor([[k_pos, qk_head_idx]], device=device),
                 k_ref,
             )
@@ -794,6 +818,11 @@ def qk_trace(
         cache,
         {
             rm.cfg.hook_point_out: rm.cfg.ov_group_size
+            for rm in replacement_modules_cast
+            if isinstance(rm, LowRankSparseAttention)
+        },
+        {
+            rm.cfg.hook_point_out: rm.attn_scale
             for rm in replacement_modules_cast
             if isinstance(rm, LowRankSparseAttention)
         },
@@ -950,24 +979,52 @@ def _first_order_attributions(
     )
 
 
-def _topk_to_nodeindexed(
-    slot_row: torch.Tensor,
+def _emit_pair_slot(
+    pair_rows: torch.Tensor,
+    pick_is_q: torch.Tensor,
+    pick_src: torch.Tensor,
     sources: NodeRefs,
-    topk: int,
     device: torch.device,
 ) -> NodeIndexed[torch.Tensor]:
-    """Top-k of a single slot's first-order attribution vector, packaged as a
-    1-D ``NodeIndexed`` with the source :class:`NodeDimension` on the dim axis.
-    Drops zero-valued entries with the same tie-breaking guard used by
-    :func:`compute_hessian_matrix`.
+    """Fold per-pick rows into a deduped ``(Q, K)`` NodeIndexed.
+
+    Each row is ``T[pick, :]`` for a Q-pick or ``T[:, pick]`` for a K-pick;
+    its argmax is the complementary partner. A pair ``(i, j)`` can surface
+    twice — once from the Q side picking ``j`` as partner for ``i`` and once
+    from the K side picking ``i`` as partner for ``j`` — so we dedup on
+    ``(q_node, k_node)`` keeping the first (largest) occurrence.
     """
-    values, indices = slot_row.topk(topk)
-    order = torch.argsort(values, descending=True).tolist()
-    order = [i for i in order if values[i].item() != 0.0]
-    kept_nodes = list(sources.dimension.offsets_to_nodes(indices[order] if order else indices[:0]))
+    partner_val, partner_idx = (t.squeeze(-1) for t in pair_rows.topk(1, dim=-1))
+    q_src = torch.where(pick_is_q, pick_src, partner_idx)
+    k_src = torch.where(pick_is_q, partner_idx, pick_src)
+    q_nodes = list(sources.dimension.offsets_to_nodes(q_src))
+    k_nodes = list(sources.dimension.offsets_to_nodes(k_src))
+
+    def _key(ni: NodeInfo) -> tuple:
+        return (ni.key, tuple(ni.indices.flatten().tolist()))
+
+    seen: set[tuple] = set()
+    kept: list[tuple[NodeInfo, NodeInfo, torch.Tensor]] = []
+    for i in torch.argsort(partner_val, descending=True).tolist():
+        if partner_val[i].item() == 0.0:
+            continue
+        pair_key = (_key(q_nodes[i]), _key(k_nodes[i]))
+        if pair_key in seen:
+            continue
+        seen.add(pair_key)
+        kept.append((q_nodes[i], k_nodes[i], partner_val[i]))
+
+    if not kept:
+        empty = NodeDimension.empty(device=device)
+        return NodeIndexed(value=partner_val[:0], dimensions=(empty, empty))
+
+    q_kept, k_kept, vals_kept = zip(*kept)
     return NodeIndexed(
-        value=values[order] if len(order) > 0 else values[:0],
-        dimensions=(NodeDimension.from_node_infos(kept_nodes, device=device),),
+        value=torch.stack(list(vals_kept)),
+        dimensions=(
+            NodeDimension.from_node_infos(list(q_kept), device=device),
+            NodeDimension.from_node_infos(list(k_kept), device=device),
+        ),
     )
 
 
@@ -977,187 +1034,110 @@ def compute_qk_tracing(
     sources: NodeRefs,
     topk: int,
 ) -> QKTracingResult:
-    """Compute role-labeled QK tracing (Q-marginal, K-marginal, Q→K pairs) for
-    attention-score targets.
+    """Role-labeled QK tracing — Q-marginal, K-marginal, and Q→K pair
+    attributions — for attention-score targets.
 
-    The function runs two first-order VJPs — one for each side of the bilinear
-    ``s[q,k] = Σ_d Q(q,h)[d]·K(k,h)[d]``:
+    Two first-order VJPs decompose the bilinear score ``s = (Q·K)/attn_scale``
+    into per-source Q-role and K-role contributions:
 
-    - **Q-VJP**: ``grad(Q, sources, grad_outputs=K, create_graph=True)`` →
-      per-source scalars ``a_Q[i] = v_i · Σ_d K[d]·∂Q[d]/∂s_i`` (pure Q-role).
-    - **K-VJP**: ``grad(K, sources, grad_outputs=Q, create_graph=True)`` →
-      per-source scalars ``a_K[j] = v_j · Σ_d Q[d]·∂K[d]/∂s_j`` (pure K-role).
+    - ``a_Q[i] = v_i · Σ_d K[d]·∂Q[d]/∂s_i`` (VJP of Q with K as cotangent)
+    - ``a_K[j] = v_j · Σ_d Q[d]·∂K[d]/∂s_j`` (VJP of K with Q as cotangent)
 
-    Both VJPs keep ``create_graph=True`` so the subsequent second backward can
-    trace through the unused cotangent (``K`` for Q-picks, ``Q`` for K-picks).
+    A merged top-k over ``[a_Q, a_K]`` per slot picks the most influential
+    role-tagged sources. A single second backward driven by the role-matched
+    scalars yields, per pick, a row of the bilinear tensor
+    ``T_{ij} := v_i·v_j·(∂Q/∂s_i)·(∂K/∂s_j)`` — ``T[i, :]`` for a Q-pick,
+    ``T[:, j]`` for a K-pick — whose argmax gives the complementary partner.
+    The second-order identity holds exactly because Q and K are linear in
+    sources inside the circuit-trace context (SAE decoders, ``W_Q``/``W_K``,
+    detached LN, and rotary embeddings are all linear).
 
-    Picks for the second-order pair computation come from a **merged** top-k
-    over the concatenated ``[a_Q, a_K]`` vector per slot — each pick carries a
-    role tag (``Q`` if the pick fell in the first half, ``K`` otherwise). The
-    second backward is driven by a mixed ``second_bwd_values`` tensor that
-    reads from ``a_Q`` for Q-picks and ``a_K`` for K-picks.
-
-    For a Q-pick at source ``i``, the resulting row equals ``T[i, :]`` (the
-    ``i``-th row of the bilinear Hessian ``T_{ij} := v_i·v_j·(∂Q/∂s_i)·(∂K/∂s_j)``);
-    its argmax over ``j`` is the K-role partner. For a K-pick at source ``j``
-    the row equals ``T[:, j]``; its argmax over ``i`` is the Q-role partner.
-    The second-order identity holds exactly because ``Q`` and ``K`` are linear
-    in sources inside the circuit-trace context (SAE decoders, ``W_Q``/``W_K``,
-    and detached LayerNorms are all linear), so ``∂²Q/(∂s_i∂s_j) = 0``.
-
-    The returned :class:`QKTracingResult` has three parallel outer dimensions
-    over target slots; pair emission is **role-labeled by construction** —
-    dim-0 is Q-side, dim-1 is K-side, regardless of whether the pick came from
-    the Q side or the K side of ``merged``.
+    Returned pairs carry a structural role label: dim-0 is always the Q-side
+    source, dim-1 the K-side source, regardless of which side picked them.
     """
     assert len(q_targets.dimension) == len(k_targets.dimension)
-    fwd_batch_size = sources.batch_size
-    bwd_batch_size = fwd_batch_size // topk
     device = sources.device
+    bwd_batch_size = sources.batch_size // topk
+    n_slots_total = len(q_targets.dimension)
+
+    def _diag(stacked: torch.Tensor) -> torch.Tensor:
+        n_slots = stacked.shape[1]
+        return torch.stack([stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
+
+    def _first_order(outputs: torch.Tensor, cotangent: torch.Tensor) -> torch.Tensor:
+        return _first_order_attributions(
+            torch.autograd.grad(
+                outputs,
+                sources.refs(),
+                grad_outputs=cotangent,
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True,
+            ),
+            sources,
+        )
+
+    def _topk_marginal(slot_row: torch.Tensor) -> NodeIndexed[torch.Tensor]:
+        values, indices = slot_row.topk(topk)
+        order = [i for i in torch.argsort(values, descending=True).tolist() if values[i].item() != 0.0]
+        return NodeIndexed(
+            value=values[order] if order else values[:0],
+            dimensions=(sources.dimension.offsets_to_nodes(indices[order] if order else indices[:0]),),
+        )
 
     q_marginal_slots: list[NodeIndexed[torch.Tensor]] = []
     k_marginal_slots: list[NodeIndexed[torch.Tensor]] = []
     pair_slots: list[NodeIndexed[torch.Tensor]] = []
 
-    print("CUDA summary before VJPs:")
-    print(torch.cuda.memory_summary(device=device))
-
-    n_slots_total = len(q_targets.dimension)
-    for start in range(0, n_slots_total, bwd_batch_size):
+    starts = range(0, n_slots_total, bwd_batch_size)
+    for start in tqdm(starts, desc="qk_tracing", disable=len(starts) <= 1):
         end = min(start + bwd_batch_size, n_slots_total)
         offsets = torch.arange(start, end, device=q_targets.dimension.device)
         q_sub = q_targets[q_targets.dimension.offsets_to_nodes(offsets)]
         k_sub = k_targets[k_targets.dimension.offsets_to_nodes(offsets)]
 
-        # Per-slot (d_qk_head,) vectors. Each .values() entry has shape
-        # (fwd_batch, n_slots_for_this_key, d_qk_head); concatenation over keys
-        # glues the slot axis.
-        q_stacked = torch.cat(q_sub.values(), dim=1)
-        k_stacked = torch.cat(k_sub.values(), dim=1)
-        n_slots = q_stacked.shape[1]
+        q_vecs = _diag(torch.cat(q_sub.values(), dim=1))
+        k_vecs = _diag(torch.cat(k_sub.values(), dim=1))
+        n_slots = q_vecs.shape[0]
 
-        q_vecs = torch.stack(
-            [q_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)],
-            dim=0,
-        )  # (n_slots, topk, d_qk_head)
-        k_vecs = torch.stack(
-            [k_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)],
-            dim=0,
+        a_Q = _first_order(q_vecs, k_vecs)
+        a_K = _first_order(k_vecs, q_vecs)
+        n_sources = a_Q.shape[1]
+
+        slot_first_rows = torch.arange(n_slots, device=device) * topk
+        merged = torch.cat([a_Q[slot_first_rows].detach(), a_K[slot_first_rows].detach()], dim=-1)
+        _, pick_flat = merged.topk(topk, dim=-1)
+        is_q_pick = pick_flat < n_sources
+        pick_src = torch.where(is_q_pick, pick_flat, pick_flat - n_sources)
+
+        bwd_rows = slot_first_rows.unsqueeze(1) + torch.arange(topk, device=device).unsqueeze(0)
+        second_bwd_values = torch.where(is_q_pick, a_Q[bwd_rows, pick_src], a_K[bwd_rows, pick_src]).reshape(-1)
+        second_attributions = _first_order_attributions(
+            torch.autograd.grad(
+                second_bwd_values.sum(),
+                sources.refs(),
+                retain_graph=True,
+                allow_unused=True,
+            ),
+            sources,
         )
 
-        # Q-role VJP: per-source ``a_Q[i] = v_i · Σ_d K[d]·∂Q[d]/∂s_i``.
-        first_grad_Q_refs = torch.autograd.grad(
-            q_vecs,
-            sources.refs(),
-            grad_outputs=k_vecs,
-            create_graph=True,
-            retain_graph=True,
-            allow_unused=True,
-        )
-        first_attributions_Q = _first_order_attributions(first_grad_Q_refs, sources)
-
-        # print("CUDA summary after Q-VJP:")
-        # print(torch.cuda.memory_summary(device=device))
-
-        # K-role VJP: per-source ``a_K[j] = v_j · Σ_d Q[d]·∂K[d]/∂s_j``.
-        first_grad_K_refs = torch.autograd.grad(
-            k_vecs,
-            sources.refs(),
-            grad_outputs=q_vecs,
-            create_graph=True,
-            retain_graph=True,
-            allow_unused=True,
-        )
-        first_attributions_K = _first_order_attributions(first_grad_K_refs, sources)
-
-        # print("CUDA summary after K-VJP:")
-        # print(torch.cuda.memory_summary(device=device))
-
-        n_sources = first_attributions_Q.shape[1]
-
-        # Pick top-k per slot from a merged Q|K ranking. For ranking we only
-        # need one representative row per slot — all ``topk`` replicate rows
-        # in ``[slot*topk, (slot+1)*topk)`` carry identical attribution values
-        # because the forward is a repeat of the same input.
-        merged_per_slot_for_ranking = torch.stack(
-            [
-                torch.cat(
-                    [
-                        first_attributions_Q[slot * topk].detach(),
-                        first_attributions_K[slot * topk].detach(),
-                    ],
-                    dim=0,
-                )
-                for slot in range(n_slots)
-            ],
-            dim=0,
-        )  # (n_slots, 2*n_sources)
-        _, pick_flat_indices = merged_per_slot_for_ranking.topk(topk, dim=-1)
-        is_q_pick = pick_flat_indices < n_sources
-        pick_src_indices = torch.where(is_q_pick, pick_flat_indices, pick_flat_indices - n_sources)
-
-        # For the actual second backward we must gather each (slot, k) pick
-        # from row ``slot*topk + k`` of the differentiable first_attributions
-        # tensors, so that each pick's gradient flows through its own distinct
-        # forward-batch row and per-pick gradients don't mix when we sum.
-        bwd_row_indices = torch.arange(n_slots, device=device).unsqueeze(1) * topk + torch.arange(
-            topk, device=device
-        ).unsqueeze(0)  # (n_slots, topk)
-        q_picked_vals = first_attributions_Q[bwd_row_indices, pick_src_indices]  # (n_slots, topk)
-        k_picked_vals = first_attributions_K[bwd_row_indices, pick_src_indices]
-        second_bwd_values = torch.where(is_q_pick, q_picked_vals, k_picked_vals).reshape(-1)
-
-        second_grads_refs = torch.autograd.grad(
-            second_bwd_values.sum(),
-            sources.refs(),
-            retain_graph=True,
-            allow_unused=True,
-        )
-        second_attributions = _first_order_attributions(second_grads_refs, sources)
-
-        # print("CUDA summary after second backward:")
-        # print(torch.cuda.memory_summary(device=device))
-
-        # Emit marginals (independent of the pair picks) and pairs.
-        for slot_idx in range(n_slots):
-            q_marginal_slots.append(_topk_to_nodeindexed(first_attributions_Q[slot_idx * topk], sources, topk, device))
-            k_marginal_slots.append(_topk_to_nodeindexed(first_attributions_K[slot_idx * topk], sources, topk, device))
-
-            # Each pick's row in second_attributions is:
-            #   Q-pick at i → T[i, :]  (argmax over j is K-role partner)
-            #   K-pick at j → T[:, j]  (argmax over i is Q-role partner)
-            pair_q_infos: list[NodeInfo] = []
-            pair_k_infos: list[NodeInfo] = []
-            pair_values: list[torch.Tensor] = []
-            for k_idx in range(topk):
-                row = second_attributions[slot_idx * topk + k_idx]
-                partner_val, partner_idx = row.topk(1)
-                pick_is_q = bool(is_q_pick[slot_idx, k_idx].item())
-                pick_node = list(sources.dimension.offsets_to_nodes(pick_src_indices[slot_idx, k_idx : k_idx + 1]))[0]
-                partner_node = list(sources.dimension.offsets_to_nodes(partner_idx))[0]
-                if pick_is_q:
-                    pair_q_infos.append(pick_node)
-                    pair_k_infos.append(partner_node)
-                else:
-                    pair_q_infos.append(partner_node)
-                    pair_k_infos.append(pick_node)
-                pair_values.append(partner_val.squeeze(0))
-
-            pair_attrs = torch.stack(pair_values) if pair_values else torch.empty(0, device=device)
-            order = torch.argsort(pair_attrs, descending=True).tolist()
-            order = [i for i in order if pair_attrs[i].item() != 0.0]
-            pair_slots.append(
-                NodeIndexed(
-                    value=pair_attrs[order] if len(order) > 0 else pair_attrs[:0],
-                    dimensions=(
-                        NodeDimension.from_node_infos([pair_q_infos[i] for i in order], device=device),
-                        NodeDimension.from_node_infos([pair_k_infos[i] for i in order], device=device),
-                    ),
-                )
+        q_marginal_slots.extend(_topk_marginal(a_Q[s * topk]) for s in range(n_slots))
+        k_marginal_slots.extend(_topk_marginal(a_K[s * topk]) for s in range(n_slots))
+        pair_slots.extend(
+            _emit_pair_slot(
+                second_attributions[s * topk : (s + 1) * topk],
+                is_q_pick[s],
+                pick_src[s],
+                sources,
+                device,
             )
+            for s in range(n_slots)
+        )
 
+    outer = (q_targets.dimension,)
     return QKTracingResult(
-        q_marginal=NodeIndexed(value=q_marginal_slots, dimensions=(q_targets.dimension,)),
-        k_marginal=NodeIndexed(value=k_marginal_slots, dimensions=(q_targets.dimension,)),
-        pairs=NodeIndexed(value=pair_slots, dimensions=(q_targets.dimension,)),
+        q_marginal=NodeIndexed(value=q_marginal_slots, dimensions=outer),
+        k_marginal=NodeIndexed(value=k_marginal_slots, dimensions=outer),
+        pairs=NodeIndexed(value=pair_slots, dimensions=outer),
     )
