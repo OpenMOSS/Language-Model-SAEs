@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+import torch
 from datasets import Dataset
 from torch.distributed.device_mesh import DeviceMesh
 
@@ -33,6 +34,7 @@ def get_model(*, name: str, device_mesh: DeviceMesh | None = None) -> LanguageMo
         raise ValueError(f"Model {name} not found")
     cfg.tokenizer_only = tokenizer_only
     cfg.device = device
+    cfg.dtype = torch.bfloat16
     return load_model(cfg, device_mesh=device_mesh)
 
 
@@ -53,7 +55,7 @@ def get_sae(*, name: str, device_mesh: DeviceMesh | None = None) -> SparseDictio
     """Load and cache a sparse autoencoder."""
     path = client.get_sae_path(name, sae_series)
     assert path is not None, f"SAE {name} not found"
-    sae = SparseDictionary.from_pretrained(path, device=device, device_mesh=device_mesh)
+    sae = SparseDictionary.from_pretrained(path, device=device, dtype=torch.bfloat16, device_mesh=device_mesh)
     sae.eval()
     return sae
 
