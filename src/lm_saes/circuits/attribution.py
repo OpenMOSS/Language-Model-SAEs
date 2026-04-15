@@ -247,6 +247,7 @@ def greedily_collect_attribution(
 
     batch_size = targets.batch_size
 
+    @timer.time("per_target_attribution")
     def per_target_attribution(targets: NodeRefs) -> torch.Tensor:
         root = maybe_local_map(torch.diag)(torch.cat(targets.values(), dim=1))
         grad_refs = torch.autograd.grad(
@@ -258,8 +259,7 @@ def greedily_collect_attribution(
         return attribution_scores(grad_refs, all_sources)[: root.shape[0]]
 
     for target_batch in targets.iter_batches(batch_size):
-        with timer.time("backward"):
-            attribution[target_batch.dimension, None] = per_target_attribution(target_batch).to(attribution.data.dtype)
+        attribution[target_batch.dimension, None] = per_target_attribution(target_batch).to(attribution.data.dtype)
 
     collected = NodeDimension.empty(
         device=targets.device,
@@ -281,11 +281,10 @@ def greedily_collect_attribution(
         collected = collected + selected_nodes
 
         selected_refs = intermediates.upstream[selected_nodes]
-        with timer.time("backward"):
-            attribution.add_targets(
-                selected_nodes,
-                per_target_attribution(selected_refs).to(attribution.data.dtype),
-            )
+        attribution.add_targets(
+            selected_nodes,
+            per_target_attribution(selected_refs).to(attribution.data.dtype),
+        )
 
     return attribution, collected
 
@@ -937,11 +936,10 @@ def compute_qk_tracing(
 ) -> QKTracingResult:
     """Role-labeled QK tracing for attention-score targets.
 
-    Decomposes the bilinear score ``s = (Q·K)/attn_scale`` into per-source
-    Q-role and K-role first-order attributions via two VJPs with the opposite
-    side as cotangent, then picks the top sources from the merged ranking and
-    runs a second backward to recover exact bilinear pair attributions
-    ``T_{ij} = v_i·v_j·(∂Q/∂s_i)·(∂K/∂s_j)``.
+    `q_targets` and `k_targets` are pre-attention-score vectors. They must hold the following properties:
+    - Having the same length;
+    - Multiplying to directly produce attention scores.
+        - This means if extra steps exist in model forward between Q/K and attention score (e.g. rotary embedding, layernorms, attention score scaling), these steps must be applied and pass the final version to `q_targets` and `k_targets`.
     """
     assert len(q_targets.dimension) == len(k_targets.dimension)
     device = sources.device
