@@ -1,3 +1,11 @@
+## v2.0.0b29 (2026-04-15)
+
+
+- Merge pull request #213 from OpenMOSS/dev
+- Release: fix docs deploy
+- fix(docs): bump pymdown-extensions to 10.21.2 for pygments 2.20 compat
+- refactor(circuits): minor attribution cleanup
+
 ## v2.0.0b28 (2026-04-14)
 
 
