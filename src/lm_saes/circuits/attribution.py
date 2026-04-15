@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import (
@@ -37,6 +38,8 @@ from lm_saes.utils.distributed.ops import maybe_local_map, multi_batch_index, no
 from lm_saes.utils.misc import ensure_tokenized
 from lm_saes.utils.timer import timer
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class NodeRefs:
@@ -55,7 +58,9 @@ class NodeRefs:
             node_infos.append(NodeInfo(key=key, indices=indices))
         if len(node_infos) == 0:
             raise ValueError("Cannot build NodeRefs from empty entries without an explicit device.")
-        return cls(mapping=mapping, dimension=NodeDimension.from_node_infos(node_infos))
+        first_ref = next(iter(mapping.values()))
+        device_mesh = first_ref.device_mesh if isinstance(first_ref, DTensor) else None
+        return cls(mapping=mapping, dimension=NodeDimension.from_node_infos(node_infos, device_mesh=device_mesh))
 
     @property
     def device(self) -> torch.device:
@@ -942,9 +947,10 @@ def compute_qk_tracing(
         - This means if extra steps exist in model forward between Q/K and attention score (e.g. rotary embedding, layernorms, attention score scaling), these steps must be applied and pass the final version to `q_targets` and `k_targets`.
     """
     assert len(q_targets.dimension) == len(k_targets.dimension)
-    device = sources.device
     bwd_batch_size = sources.batch_size // topk
     n_slots_total = len(q_targets.dimension)
+    device_mesh = sources.dimension.device_mesh
+    tp_pair_skipped = False
 
     def vjp_attribution(outputs: torch.Tensor, cotangent: torch.Tensor) -> torch.Tensor:
         return attribution_scores(
@@ -959,12 +965,17 @@ def compute_qk_tracing(
             sources,
         )
 
+    def replicate(t: torch.Tensor) -> torch.Tensor:
+        return t if device_mesh is None or isinstance(t, DTensor) else DimMap({}).from_local(t, device_mesh)
+
     def topk_nonzero(scores: torch.Tensor) -> NodeIndexed[torch.Tensor]:
-        values, indices = scores.topk(topk)
+        # Detach: marginals are stored across the outer loop and must not pin
+        # the `create_graph=True` fans behind `a_Q`/`a_K`.
+        values, indices = scores.detach().topk(topk)
         keep = values != 0.0
         return NodeIndexed(
             value=values[keep],
-            dimensions=(sources.dimension.offsets_to_nodes(indices[keep]),),
+            dimensions=(sources.dimension.offsets_to_nodes(replicate(indices[keep])),),
         )
 
     q_marginal_slots: list[NodeIndexed[torch.Tensor]] = []
@@ -974,12 +985,11 @@ def compute_qk_tracing(
     n_batches = (n_slots_total + bwd_batch_size - 1) // bwd_batch_size
     batch_iter = zip(q_targets.iter_batches(bwd_batch_size), k_targets.iter_batches(bwd_batch_size))
     for q_sub, k_sub in tqdm(batch_iter, total=n_batches, desc="QK Tracing", disable=n_batches <= 1):
-        # Use `topk`-sized slots for computing second-order attributions.
-        # The first-order gradient computation should be replicated for `topk` time
-        # for the same reason of `collect_cache` replicating `batch_size` times
-        # in forward pass.
-        q_stacked = torch.cat(q_sub.values(), dim=1)
-        k_stacked = torch.cat(k_sub.values(), dim=1)
+        # `topk`-sized slots for second-order attributions: first-order grads
+        # are replicated `topk` times for the same reason `collect_cache`
+        # replicates `batch_size` times in forward.
+        q_stacked = full_tensor(torch.cat(q_sub.values(), dim=1))
+        k_stacked = full_tensor(torch.cat(k_sub.values(), dim=1))
         n_slots = q_stacked.shape[1]
         q_vecs = torch.stack([q_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
         k_vecs = torch.stack([k_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
@@ -988,48 +998,80 @@ def compute_qk_tracing(
         a_K = vjp_attribution(k_vecs, q_vecs)
         n_sources = a_Q.shape[1]
 
-        slot_first_rows = torch.arange(n_slots, device=device) * topk
-        merged = torch.cat([a_Q[slot_first_rows].detach(), a_K[slot_first_rows].detach()], dim=-1)
+        slot_first_rows = torch.arange(n_slots, device=a_Q.device) * topk
+        bwd_rows = slot_first_rows.unsqueeze(1) + torch.arange(topk, device=a_Q.device).unsqueeze(0)
+        merged = torch.cat(
+            [full_tensor(a_Q[slot_first_rows].detach()), full_tensor(a_K[slot_first_rows].detach())], dim=-1
+        )
         _, pick_flat = merged.topk(topk, dim=-1)
         is_q_pick = pick_flat < n_sources
         pick_src = torch.where(is_q_pick, pick_flat, pick_flat - n_sources)
 
-        bwd_rows = slot_first_rows.unsqueeze(1) + torch.arange(topk, device=device).unsqueeze(0)
-        second_bwd_values = torch.where(is_q_pick, a_Q[bwd_rows, pick_src], a_K[bwd_rows, pick_src]).reshape(-1)
-        second_attributions = attribution_scores(
-            torch.autograd.grad(
-                second_bwd_values.sum(),
-                sources.refs(),
-                retain_graph=True,
-                materialize_grads=True,
-            ),
-            sources,
-        )
-
-        q_marginal_slots.extend(topk_nonzero(a_Q[s * topk]) for s in range(n_slots))
-        k_marginal_slots.extend(topk_nonzero(a_K[s * topk]) for s in range(n_slots))
-
-        def slot_pair_attribution(s: int) -> NodeIndexed[torch.Tensor]:
-            slot_rows = second_attributions[s * topk : (s + 1) * topk]
-            q_mask = is_q_pick[s]
-            k_mask = ~q_mask
-            q_side = NodeIndexedMatrix.from_data(
-                data=slot_rows[q_mask],
-                dimensions=(
-                    sources.dimension.offsets_to_nodes(pick_src[s][q_mask]),
-                    sources.dimension,
-                ),
+        # Pair extraction requires double-backward through the SAE forward.
+        # DTensor autograd silently drops the `create_graph=True` chain on the
+        # inner backward, so under TP the second `autograd.grad` call returns
+        # None for every source ref. Skip pair extraction under TP with a
+        # one-time warning; first-order outputs (OV, q/k marginals) are
+        # unaffected.
+        if device_mesh is not None:
+            if not tp_pair_skipped:
+                logger.warning(
+                    "compute_qk_tracing: pair extraction is disabled under "
+                    "tensor-parallel execution because DTensor does not "
+                    "support double-backward through SAE forward ops. Q/K "
+                    "marginals remain valid."
+                )
+                tp_pair_skipped = True
+            empty_dim = NodeDimension.empty(device=a_Q.device)
+            pair_slots.extend(
+                NodeIndexed(
+                    value=torch.empty(0, device=a_Q.device, dtype=a_Q.dtype),
+                    dimensions=(empty_dim, empty_dim),
+                )
+                for _ in range(n_slots)
             )
-            k_side = NodeIndexedMatrix.from_data(
-                data=slot_rows[k_mask],
-                dimensions=(
-                    sources.dimension.offsets_to_nodes(pick_src[s][k_mask]),
-                    sources.dimension,
+            a_Q = full_tensor(a_Q.detach())
+            a_K = full_tensor(a_K.detach())
+            q_marginal_slots.extend(topk_nonzero(a_Q[s * topk]) for s in range(n_slots))
+            k_marginal_slots.extend(topk_nonzero(a_K[s * topk]) for s in range(n_slots))
+        else:
+            second_bwd_values = torch.where(is_q_pick, a_Q[bwd_rows, pick_src], a_K[bwd_rows, pick_src]).reshape(-1)
+            second_attributions = attribution_scores(
+                torch.autograd.grad(
+                    second_bwd_values.sum(),
+                    sources.refs(),
+                    retain_graph=True,
+                    materialize_grads=True,
                 ),
-            )
-            return _extract_topk_pairwise_attributions(q_side, k_side, topk=topk)
+                sources,
+            ).detach()
+            a_Q = a_Q.detach()
+            a_K = a_K.detach()
+            q_marginal_slots.extend(topk_nonzero(a_Q[s * topk]) for s in range(n_slots))
+            k_marginal_slots.extend(topk_nonzero(a_K[s * topk]) for s in range(n_slots))
 
-        pair_slots.extend(slot_pair_attribution(s) for s in range(n_slots))
+            def slot_pair_attribution(s: int) -> NodeIndexed[torch.Tensor]:
+                slot_rows = second_attributions[s * topk : (s + 1) * topk]
+                q_mask = is_q_pick[s]
+                k_mask = ~q_mask
+                q_side = NodeIndexedMatrix.from_data(
+                    data=slot_rows[q_mask],
+                    dimensions=(sources.dimension.offsets_to_nodes(pick_src[s][q_mask]), sources.dimension),
+                )
+                k_side = NodeIndexedMatrix.from_data(
+                    data=slot_rows[k_mask],
+                    dimensions=(sources.dimension.offsets_to_nodes(pick_src[s][k_mask]), sources.dimension),
+                )
+                return _extract_topk_pairwise_attributions(q_side, k_side, topk=topk)
+
+            pair_slots.extend(slot_pair_attribution(s) for s in range(n_slots))
+            del second_attributions
+
+        # Free per-batch intermediates so the autograd graph built by
+        # `create_graph=True` in `vjp_attribution` does not pin memory across
+        # the outer loop.
+        del q_stacked, k_stacked, q_vecs, k_vecs, a_Q, a_K, merged, pick_flat, bwd_rows
+        torch.cuda.empty_cache()
 
     outer = (q_targets.dimension,)
     return QKTracingResult(
