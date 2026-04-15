@@ -12,11 +12,11 @@ def get_pos_from_square(fen: str, square: str) -> int:
 
 # 2 fen, piece_type -> bool
 def has_piece_of_type(fen: str, piece_type: str) -> bool:
-    assert piece_type in ['my p', 'my n', 'my b', 'my r', 'my q', 'my k', "opponent's p", "opponent's n", "opponent's b", "opponent's r", "opponent's q", "opponent's k"]
+    assert piece_type in ["own p", "own n", "own b", "own r", "own q", "own k", "opponent p", "opponent n", "opponent b", "opponent r", "opponent q", "opponent k"]
     board = chess.Board(fen)
     side_to_move = board.turn
     owner_str, piece_str = piece_type.split()
-    if owner_str == 'my':
+    if owner_str == "own":
         color = side_to_move
     else:
         color = not side_to_move
@@ -35,25 +35,25 @@ def has_piece_of_type(fen: str, piece_type: str) -> bool:
 # 3 fen, piece_type -> pos list
 def get_piece_type_pos(fen: str, piece_type: str) -> list[int]:
     assert piece_type in [
-        "my p",
-        "my n",
-        "my b",
-        "my r",
-        "my q",
-        "my k",
-        "opponent's p",
-        "opponent's n",
-        "opponent's b",
-        "opponent's r",
-        "opponent's q",
-        "opponent's k",
+        "own p",
+        "own n",
+        "own b",
+        "own r",
+        "own q",
+        "own k",
+        "opponent p",
+        "opponent n",
+        "opponent b",
+        "opponent r",
+        "opponent q",
+        "opponent k",
     ]
     if not has_piece_of_type(fen, piece_type):
         return []
     board = chess.Board(fen)
     side_to_move = board.turn
     owner_str, piece_str = piece_type.split()
-    if owner_str == "my":
+    if owner_str == "own":
         color = side_to_move
     else:
         color = not side_to_move

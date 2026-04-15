@@ -23,18 +23,18 @@ def feature_frequency_with_piece_type(
 ) -> tuple[float, int, int]:
     if piece_type is not None:
         assert piece_type in [
-            "my p",
-            "my n",
-            "my b",
-            "my r",
-            "my q",
-            "my k",
-            "opponent's p",
-            "opponent's n",
-            "opponent's b",
-            "opponent's r",
-            "opponent's q",
-            "opponent's k",
+            "own p",
+            "own n",
+            "own b",
+            "own r",
+            "own q",
+            "own k",
+            "opponent p",
+            "opponent n",
+            "opponent b",
+            "opponent r",
+            "opponent q",
+            "opponent k",
         ]
     assert feature_type in ["transcoder", "lorsa"]
     assert layer in range(model.cfg.n_layers)

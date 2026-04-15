@@ -31,7 +31,6 @@ from lm_saes.lorsa import LowRankSparseAttention
 
 import numpy as np
 import torch
-from einops import einsum
 from tqdm import tqdm
 from transformer_lens.hook_points import HookPoint
 
@@ -144,26 +143,14 @@ class AttributionContext:
 
         def _cache(acts: torch.Tensor, hook: HookPoint, *, index: int) -> torch.Tensor:
             proxy._resid_activations[index] = acts
-            # set retain_grad for non-leaf tensors to check gradient propagation
-            if acts.requires_grad:
-                acts.retain_grad()
-            # print(f"DEBUG: _cache: {acts.shape}, retain_grad set")
             return acts
 
         def _cache_q(acts: torch.Tensor, hook: HookPoint) -> torch.Tensor:
             proxy._policy_q_activations = acts
-            # set retain_grad for q activations
-            if acts.requires_grad:
-                acts.retain_grad()
-            # print(f"DEBUG: _cache_q: {acts.shape}, retain_grad set")
             return acts
 
         def _cache_k(acts: torch.Tensor, hook: HookPoint) -> torch.Tensor:
             proxy._policy_k_activations = acts
-            # set retain_grad for k activations  
-            if acts.requires_grad:
-                acts.retain_grad()
-            # print(f"DEBUG: _cache_k: {acts.shape}, retain_grad set")
             return acts
 
         hooks = []
@@ -194,41 +181,11 @@ class AttributionContext:
         proxy = weakref.proxy(self)
 
         def _hook_fn(grads: torch.Tensor, hook: HookPoint) -> None:
-            # print(f"DEBUG: Hook '{hook_name}' executed")
-            # print(f"DEBUG: grads shape: {grads.shape}")
-            grads_non_zero_row_idx = (grads[0] != 0).any(dim=1).nonzero(as_tuple=True)[0]
-            # print(f"DEBUG: grads[0][6]: {grads[0][6].flatten()[:5].tolist()}")
-            # print(f"DEBUG: grads[0][46]: {grads[0][46].flatten()[:5].tolist()}")
-            # print(f"DEBUG: output_vecs shape: {output_vecs.shape}")
-            # print(f"DEBUG: {output_vecs.flatten()[:10].tolist() = }")
-            # print(f"DEBUG: write_index: {write_index}")
-            # print(f"DEBUG: read_index: {read_index}")
-            
-            # calculate shape information before einsum
-            grads_read = grads.to(output_vecs.dtype)[read_index] #[1, 2240, 768]
-            # print(f"DEBUG: grads[read_index] shape: {grads_read.shape}")
-            # print(f"DEBUG: grads_read.shape = {grads_read.shape}")
-            # print(f"DEBUG: output_vecs.shape = {output_vecs.shape}")
-            # execute einsum calculation
-            result = einsum(
-                grads_read,
-                output_vecs,
-                "batch position d_model, position d_model -> position batch",
-            )
-            # print(f"DEBUG: grads_read.shape = {grads_read.shape}")
-            # print(f"DEBUG: output_vecs.shape = {output_vecs.shape}")
-            # print(f"DEBUG: einsum result shape: {result.shape}")
-            # print(f"DEBUG: einsum result sum: {result.sum().item()}")
-            
-            # write to buffer
-            # print(f"DEBUG: Updated _batch_buffer[{write_index}]")
-            # print(f"DEBUG: _batch_buffer[{write_index}] sum: {proxy._batch_buffer[write_index].sum().item()}")
-            # print(f'{result.shape = }')
-            # print(f'{proxy._batch_buffer[write_index].shape = }')
-            # print("---")
+            grads_read = grads[read_index]
+            if grads_read.dtype != output_vecs.dtype:
+                grads_read = grads_read.to(output_vecs.dtype)
+            result = torch.einsum("bpd,pd->pb", grads_read, output_vecs)
             proxy._batch_buffer[write_index] += result
-            # print(f"DEBUG: Updated _batch_buffer[{write_index}]")
-            # print(f"DEBUG: _batch_buffer[{write_index}] sum: {proxy._batch_buffer[write_index].sum().item()}")
 
 
         return hook_name, _hook_fn
@@ -1772,9 +1729,10 @@ def compute_partial_influences(edge_matrix, logit_p, row_to_node_index,
     influences = torch.zeros(W.shape[1], device=W.device)
     prod = torch.zeros(W.shape[1], device=W.device)
     prod[-len(logit_p):] = logit_p.to(W.device)
+    row_to_node_index = row_to_node_index.to(W.device)
 
     for _ in range(max_iter):
-        prod = prod[row_to_node_index.to(W.device)] @ W
+        prod = prod.index_select(0, row_to_node_index) @ W
         if prod.abs().sum() < 1e-12:
             break
         influences += prod

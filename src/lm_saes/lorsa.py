@@ -1,8 +1,5 @@
 """
-Low Rank Sparse Attention SAE Implementation
-
-This module implements a Low Rank Sparse Attention layer as a Sparse Autoencoder,
-inheriting from AbstractSparseAutoEncoder and supporting head parallelization.
+Low Rank Sparse Attention Implementation
 """
 
 import math
@@ -16,7 +13,7 @@ import torch.nn.functional as F
 from jaxtyping import Float, Int
 from torch._tensor import Tensor
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import DTensor
+from torch.distributed.tensor import DTensor, Partial
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
@@ -25,6 +22,7 @@ from typing_extensions import override
 from .abstract_sae import AbstractSparseAutoEncoder
 from .config import LorsaConfig
 from .utils.distributed import DimMap, mesh_dim_size
+from .utils.distributed.utils import replace_placements
 from .utils.logging import get_distributed_logger
 from .utils.timer import timer
 
@@ -251,40 +249,89 @@ class SmolGenAttention(nn.Module):
             x: Input tensor with shape ``[batch, n_ctx, d_model]`` (dense or DTensor).
         Returns:
             Attention weights tensor with shape ``[batch, n_qk_heads, n_ctx, n_ctx]``.
+            Under model parallelism this returns the local head shard for the current rank.
         """
-        is_dtensor = isinstance(x, DTensor)
-        if is_dtensor and self._dim_maps is not None and "smolgen.compress.weight" in self._dim_maps:
-            x = self._dim_maps["smolgen.compress.weight"].redistribute(x)
+        if self.device_mesh is not None:
+            x_local = x.to_local() if isinstance(x, DTensor) else x
+            batch_size = x_local.shape[0]
 
-        if is_dtensor:
-            batch_size = x.shape[0]
-        else:
-            batch_size, _, _ = x.shape
+            def _to_local_param(param: torch.Tensor | DTensor | None) -> torch.Tensor | None:
+                if param is None:
+                    return None
+                if not isinstance(param, DTensor):
+                    return param
 
+                grad_placements = list(param.placements)
+                mesh_dim_names = param.device_mesh.mesh_dim_names or ()
+                for mesh_dim in ("data", "model"):
+                    if mesh_dim not in mesh_dim_names:
+                        continue
+                    mesh_dim_index = mesh_dim_names.index(mesh_dim)
+                    if grad_placements[mesh_dim_index].is_replicate():
+                        grad_placements[mesh_dim_index] = Partial("sum")
+                return param.to_local(grad_placements=tuple(grad_placements))
+
+            compress_weight = _to_local_param(self.compress.weight)
+            assert compress_weight is not None
+            compressed = F.linear(x_local, compress_weight, None)
+            x_flat = compressed.reshape(batch_size, -1)
+
+            dense1_weight = _to_local_param(self.dense1.weight)
+            dense1_bias = _to_local_param(self.dense1.bias)
+            assert dense1_weight is not None
+            x_local_ff = F.linear(x_flat, dense1_weight, dense1_bias)
+            x_local_ff = F.silu(x_local_ff)
+
+            ln1_weight = _to_local_param(self.ln1.weight)
+            ln1_bias = _to_local_param(self.ln1.bias)
+            x_local_ff = F.layer_norm(
+                x_local_ff,
+                self.ln1.normalized_shape,
+                ln1_weight,
+                ln1_bias,
+                self.ln1.eps,
+            )
+
+            dense2_weight = _to_local_param(self.dense2.weight)
+            dense2_bias = _to_local_param(self.dense2.bias)
+            assert dense2_weight is not None
+            x_local_ff = F.linear(x_local_ff, dense2_weight, dense2_bias)
+            x_local_ff = F.silu(x_local_ff)
+
+            ln2_weight = _to_local_param(self.ln2.weight)
+            ln2_bias = _to_local_param(self.ln2.bias)
+            x_local_ff = F.layer_norm(
+                x_local_ff,
+                self.ln2.normalized_shape,
+                ln2_weight,
+                ln2_bias,
+                self.ln2.eps,
+            )
+            x_local_ff = x_local_ff.reshape(batch_size, self.n_qk_heads, 256)
+
+            head_slice = DimMap({"model": 1}).local_slices(
+                (batch_size, self.n_qk_heads, 256),
+                self.device_mesh,
+            )[1]
+            x_local_ff = x_local_ff[:, head_slice, :]
+            local_n_qk_heads = x_local_ff.shape[1]
+
+            smol_weight = _to_local_param(self.smol_weight_gen.weight)
+            assert smol_weight is not None
+            weights_flat = F.linear(
+                x_local_ff.reshape(batch_size * local_n_qk_heads, 256),
+                smol_weight,
+                None,
+            )
+            return weights_flat.reshape(batch_size, local_n_qk_heads, self.n_ctx, self.n_ctx)
+
+        batch_size, _, _ = x.shape
         compressed = self.compress(x)
         x_flat = compressed.reshape(batch_size, -1)
-
-        if is_dtensor and self._dim_maps is not None and "smolgen.dense1.weight" in self._dim_maps:
-            assert isinstance(x_flat, DTensor), "Expected DTensor after compression when running distributed"
-            x_flat = self._dim_maps["smolgen.dense1.weight"].redistribute(x_flat)
-
         x = self.ln1(F.silu(self.dense1(x_flat)))
-
-        if is_dtensor and self._dim_maps is not None and "smolgen.dense2.weight" in self._dim_maps:
-            assert isinstance(x, DTensor), "Expected DTensor before dense2 when running distributed"
-            x = self._dim_maps["smolgen.dense2.weight"].redistribute(x)
-
         x = self.ln2(F.silu(self.dense2(x)))
         x = x.reshape(batch_size, self.n_qk_heads, 256)
-
-        if is_dtensor and self._dim_maps is not None and "smolgen.smol_weight_gen.weight" in self._dim_maps:
-            x_reshaped = x.reshape(batch_size * self.n_qk_heads, 256)
-            assert isinstance(x_reshaped, DTensor), "Expected DTensor before smol_weight_gen when running distributed"
-            x_reshaped = self._dim_maps["smolgen.smol_weight_gen.weight"].redistribute(x_reshaped)
-            weights_flat = self.smol_weight_gen(x_reshaped)
-        else:
-            weights_flat = self.smol_weight_gen(x.reshape(batch_size * self.n_qk_heads, 256))
-
+        weights_flat = self.smol_weight_gen(x.reshape(batch_size * self.n_qk_heads, 256))
         weights = weights_flat.reshape(batch_size, self.n_qk_heads, self.n_ctx, self.n_ctx)
         return weights
 
@@ -551,7 +598,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             heads_per_rank = self.cfg.n_qk_heads // model_parallel_size
             lorsa_qk_start_idx = model_parallel_rank * heads_per_rank
             lorsa_qk_end_idx = lorsa_qk_start_idx + heads_per_rank
-            print(f'{lorsa_qk_start_idx = }, {lorsa_qk_end_idx = }')
             lorsa_qk_indices = torch.arange(lorsa_qk_start_idx, lorsa_qk_end_idx)
             expanded_indices = (lorsa_qk_indices // qk_exp_factor).to(orig_W_Q.device)
 
@@ -732,24 +778,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 self.smolgen.ln2.weight.copy_(encoder_layer.mha.smolgen.ln2.weight.repeat_interleave(qk_exp_factor, dim=0))
                 self.smolgen.ln2.bias.copy_(encoder_layer.mha.smolgen.ln2.bias.repeat_interleave(qk_exp_factor, dim=0))
                 self.smolgen.smol_weight_gen.weight.copy_(encoder_layer.mha.smolgen.smol_weight_gen.weight) # modified: a shared smol_weight_gen.weight 
-        
-        # orig_W_V = encoder_layer.mha.v_proj.weight
-        # orig_b_V = encoder_layer.mha.v_proj.bias
-        # orig_W_O = encoder_layer.mha.out_proj.weight.T
-        # orig_b_O = encoder_layer.mha.out_proj.bias
-        
-        # self.W_V.copy_(
-        #     orig_W_V.to(self.cfg.dtype) / input_norm_factor
-        # )
-        # self.b_V.copy_(
-        #     orig_b_V.to(self.cfg.dtype)
-        # )
-        # self.W_O.copy_(
-        #     orig_W_O.to(self.cfg.dtype) * output_norm_factor
-        # )
-        # self.b_D.copy_(
-        #     orig_b_O.to(self.cfg.dtype) * output_norm_factor
-        # )
+
 
     @torch.no_grad()
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -766,7 +795,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         n_ov_per_orig_head = self.cfg.n_ov_heads // orig_n_heads
         W_V = encoder_layer.mha.v_proj.weight.view(orig_n_heads, orig_d_head, orig_d_model).permute(0, 2, 1)
         W_O = encoder_layer.mha.out_proj.weight.T.view(orig_n_heads, orig_d_head, orig_d_model)
-        print(f'{W_O.shape = }')
         
         x = self.prepare_input(activation_batch)[0]
         if isinstance(x, DTensor):
@@ -781,7 +809,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         encoder_layer.mha.hook_z.add_hook(capture_hook)
         _ = encoder_layer.forward(x)
-        # print(f'{captured_z.shape = }')
         # W_O.shape = torch.Size([32, 32, 1024])
         # captured_z.shape = torch.Size([256, 32, 64, 32])
         
@@ -972,7 +999,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]
         ):
             z = F.scaled_dot_product_attention(
-                query, key, value, scale=1 / self.attn_scale, is_causal=False, enable_gqa=True
+                query, key, value, scale=1 / self.attn_scale, is_causal=False, enable_gqa=False
             )
         return z.permute(0, 2, 1, 3).reshape(*v.shape)
 
@@ -1049,7 +1076,7 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
         return_hidden_pre: bool = False,
         return_attention_pattern: bool = False,
         return_attention_score: bool = False,
-        **kwargs,
+        **kwargs
     ) -> Union[
         Float[torch.Tensor, "batch seq_len d_sae"],
         Tuple[
@@ -1068,64 +1095,160 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
 
         pattern: Optional[torch.Tensor] = None
         scores: Optional[torch.Tensor] = None
+        attn_mask: Optional[torch.Tensor] = None
+        local_n_qk_heads = q.to_local().shape[2] if isinstance(q, DTensor) else None
 
-
+        # Optional SmolGen additive bias as attention mask: [B, H, S, S]
         if getattr(self.cfg, "use_smolgen", True):
             if hasattr(self, "smolgen"):
                 bias = self.smolgen(x)
-                # Normalize to [B,H,S,S] using repeat_interleave to align head dim to n_qk_heads
                 if bias.dim() == 3:
-                    # [B,S,S] -> [B,H,S,S]
-                    bias = bias.unsqueeze(1).repeat_interleave(self.cfg.n_qk_heads, dim=1)
+                    target_heads = (
+                        local_n_qk_heads if local_n_qk_heads is not None and not isinstance(bias, DTensor)
+                        else self.cfg.n_qk_heads
+                    )
+                    bias = bias.unsqueeze(1).repeat_interleave(target_heads, dim=1)
                 elif bias.dim() == 4:
-                    # [B,1,S,S] or [B,H,S,S]
                     h = bias.shape[1]
                     if h == 1:
-                        bias = bias.repeat_interleave(self.cfg.n_qk_heads, dim=1)
+                        target_heads = (
+                            local_n_qk_heads if local_n_qk_heads is not None and not isinstance(bias, DTensor)
+                            else self.cfg.n_qk_heads
+                        )
+                        bias = bias.repeat_interleave(target_heads, dim=1)
                     elif h == self.cfg.n_qk_heads:
                         pass
+                    elif local_n_qk_heads is not None and not isinstance(bias, DTensor) and h == local_n_qk_heads:
+                        pass
                     else:
-                        # If heads divide evenly, tile by factor
                         if self.cfg.n_qk_heads % h == 0:
-                            factor = self.cfg.n_qk_heads // h
-                            bias = bias.repeat_interleave(factor, dim=1)
+                            bias = bias.repeat_interleave(self.cfg.n_qk_heads // h, dim=1)
+                        elif local_n_qk_heads is not None and not isinstance(bias, DTensor) and local_n_qk_heads % h == 0:
+                            bias = bias.repeat_interleave(local_n_qk_heads // h, dim=1)
                         else:
-                            raise ValueError(f"SmolGen output head dim {h} cannot be expanded to n_qk_heads {self.cfg.n_qk_heads}")
+                            raise ValueError(
+                                f"SmolGen output head dim {h} cannot be aligned with global heads {self.cfg.n_qk_heads}"
+                            )
                 else:
                     raise ValueError("SmolGen output must be [B,S,S] or [B,1,S,S] or [B,H,S,S]")
                 attn_mask = bias.to(q.dtype) * float(self.smolgen_score_scale.item())
             else:
-                print('no SmolGen')
+                print("no SmolGen")
                 attn_mask = None
 
-        # print(f"attn_mask: type={type(attn_mask)}, is_DTENSOR={isinstance(attn_mask, DTensor)}")
+        has_dtensor_attn_mask = attn_mask is not None and any(
+            isinstance(t, DTensor) for t in (q, k, v, attn_mask)
+        )
+        use_fast_sdpa = not (return_attention_pattern or return_attention_score or has_dtensor_attn_mask)
 
-        if not (return_attention_pattern or return_attention_score):
+        if use_fast_sdpa:
             query = q.permute(0, 2, 1, 3)
             key = k.permute(0, 2, 1, 3)
             value = v.reshape(*k.shape[:3], -1).permute(0, 2, 1, 3)
-            # print(f"query: type={type(query)}, is_DTENSOR={isinstance(query, DTensor)}")
-            # print(f"key: type={type(key)}, is_DTENSOR={isinstance(key, DTensor)}")
-            # print(f"value: type={type(value)}, is_DTENSOR={isinstance(value, DTensor)}")
             with sdpa_kernel(
                 backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]
             ):
                 z = F.scaled_dot_product_attention(
-                    query, key, value, scale=1 / self.attn_scale, is_causal=False, enable_gqa=True
+                    query,
+                    key,
+                    value,
+                    attn_mask=attn_mask,
+                    scale=1 / self.attn_scale,
+                    is_causal=False,
+                    enable_gqa=True,
                 )
-            # print(f'{z.shape = }')
             hidden_pre = z.permute(0, 2, 1, 3).reshape(*v.shape)
+        elif has_dtensor_attn_mask:
+            assert self.device_mesh is not None
+            assert isinstance(q, DTensor) and isinstance(k, DTensor) and isinstance(v, DTensor)
+
+            q_local = q.to_local()
+            k_local = k.to_local()
+            v_local = v.to_local()
+
+            attn_mask_local: Optional[torch.Tensor] = None
+            if isinstance(attn_mask, DTensor):
+                attn_mask_local = attn_mask.to_local(
+                    grad_placements=replace_placements(
+                        attn_mask.placements,
+                        attn_mask.device_mesh,
+                        "model",
+                        Partial("sum"),
+                    )
+                )
+            elif attn_mask is not None:
+                attn_mask_local = attn_mask
+
+            local_n_qk_heads = q_local.shape[2]
+            if attn_mask_local is not None and attn_mask_local.shape[1] != local_n_qk_heads:
+                if attn_mask_local.shape[1] % local_n_qk_heads != 0:
+                    raise ValueError(
+                        f"Local smolgen head dim {attn_mask_local.shape[1]} cannot be aligned with local q heads {local_n_qk_heads}"
+                    )
+                head_slice = DimMap({"model": 1}).local_slices(
+                    (1, self.cfg.n_qk_heads, 1, 1),
+                    self.device_mesh,
+                )[1]
+                attn_mask_local = attn_mask_local[:, head_slice, :, :]
+
+            if not (return_attention_pattern or return_attention_score):
+                query_local = q_local.permute(0, 2, 1, 3)
+                key_local = k_local.permute(0, 2, 1, 3)
+                value_local = v_local.reshape(*k_local.shape[:3], -1).permute(0, 2, 1, 3)
+                with sdpa_kernel(
+                    backends=[
+                        SDPBackend.FLASH_ATTENTION,
+                        SDPBackend.CUDNN_ATTENTION,
+                        SDPBackend.EFFICIENT_ATTENTION,
+                        SDPBackend.MATH,
+                    ]
+                ):
+                    z_local = F.scaled_dot_product_attention(
+                        query_local,
+                        key_local,
+                        value_local,
+                        attn_mask=attn_mask_local,
+                        scale=1 / self.attn_scale,
+                        is_causal=False,
+                        enable_gqa=True,
+                    )
+                hidden_pre_local = z_local.permute(0, 2, 1, 3).reshape(*v_local.shape)
+            else:
+                q_local_heads = q_local.permute(2, 0, 1, 3)
+                k_local_heads = k_local.permute(2, 0, 3, 1)
+                scores = torch.einsum("nbqd,nbdk->nbqk", q_local_heads, k_local_heads) / self.attn_scale
+                if attn_mask_local is not None:
+                    scores = scores + attn_mask_local.permute(1, 0, 2, 3).to(scores.dtype)
+                pattern = F.softmax(scores, dim=-1)
+
+                v_local_heads = einops.rearrange(v_local, "b seq h -> b h seq")
+                local_n_ov_heads = v_local_heads.shape[1]
+                if local_n_qk_heads != local_n_ov_heads:
+                    v_local_grouped = v_local_heads.view(
+                        v_local_heads.shape[0],
+                        local_n_qk_heads,
+                        local_n_ov_heads // local_n_qk_heads,
+                        v_local_heads.shape[2],
+                    )
+                    v_local_grouped = v_local_grouped.permute(1, 0, 2, 3)
+                    z_local = torch.einsum("hbqk,hbrk->hbrq", pattern, v_local_grouped)
+                    hidden_pre_local = z_local.permute(1, 0, 2, 3).flatten(start_dim=1, end_dim=2).permute(0, 2, 1)
+                else:
+                    z_local = torch.einsum("hbqk,hbk->hbq", pattern, v_local_heads.permute(1, 0, 2))
+                    hidden_pre_local = z_local.permute(1, 2, 0)
+
+            hidden_pre = DTensor.from_local(
+                hidden_pre_local,
+                device_mesh=self.device_mesh,
+                placements=v.placements,
+            )
         else:
-            # Attention pattern
-            # n_qk_heads batch q_pos k_pos
-            q = q.permute(2, 0, 1, 3)  # (n_qk_heads, batch, seq_len, d_qk_head)
-            k = k.permute(2, 0, 3, 1)  # (n_qk_heads, batch, d_qk_head, seq_len)
+            q = q.permute(2, 0, 1, 3)
+            k = k.permute(2, 0, 3, 1)
             scores = torch.einsum("nbqd,nbdk->nbqk", q, k) / self.attn_scale
-            # scores = self._apply_causal_mask(scores)
+            if attn_mask is not None:
+                scores = scores + attn_mask.permute(1, 0, 2, 3).to(scores.dtype)
             pattern = F.softmax(scores, dim=-1)
-            # print(f'{pattern = }')
-            
-            # Head outputs
             hidden_pre = self._compute_head_outputs(pattern, v)
 
         # Scale feature activations by decoder norm if configured
@@ -1144,7 +1267,9 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             return_values.append(pattern.permute(1, 0, 2, 3))
         if return_attention_score and scores is not None:
             return_values.append(scores.permute(1, 0, 2, 3))
+            
         return tuple(return_values) if len(return_values) > 1 else return_values[0]  # type: ignore[return-value]
+
 
     @torch.no_grad()
     def init_attn_scale_from_encoder(self, encoder_layer: nn.Module):
@@ -1361,6 +1486,39 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             self.smolgen_score_scale.data = self.smolgen_score_scale.data * (input_norm_factor ** 2)
 
 
+    def _decode_dtensor_local(self, feature_acts: DTensor, *, add_bias: bool) -> DTensor:
+        assert self.device_mesh is not None
+        assert isinstance(self.W_O, DTensor)
+
+        out_local = torch.einsum(
+            "bps,sd->bpd",
+            feature_acts.to_local(),
+            self.W_O.to_local(
+                grad_placements=replace_placements(
+                    self.W_O.placements,
+                    self.W_O.device_mesh,
+                    "data",
+                    Partial("sum"),
+                )
+            ),
+        )
+        if add_bias and self.cfg.use_decoder_bias:
+            assert isinstance(self.b_D, DTensor)
+            out_local = out_local + self.b_D.to_local(
+                grad_placements=replace_placements(
+                    self.b_D.placements,
+                    self.b_D.device_mesh,
+                    "data",
+                    Partial("sum"),
+                )
+            )
+
+        return DTensor.from_local(
+            out_local,
+            device_mesh=self.device_mesh,
+            placements=DimMap({"data": 0}).placements(self.device_mesh),
+        )
+
     @override
     def decode(self, feature_acts, **kwargs):
         """Decode head activations to output."""
@@ -1372,20 +1530,14 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 ).to(self.cfg.dtype)
                 + self.b_D
             )
-        # print("before unsqueeze")
-        # print(f'{feature_acts.shape = }, {self.W_O.shape = }')
-        
         if feature_acts.ndim == 2:
             feature_acts = feature_acts.unsqueeze(0)
-            
-        # print("after unsqueeze")
-        # print(f'{feature_acts.shape = }, {self.W_O.shape = }')
-        
-        out = torch.einsum("bps,sd->bpd", feature_acts, self.W_O)
-        if self.cfg.use_decoder_bias:
-            out = out + self.b_D
-        if isinstance(out, DTensor):
-            out = DimMap({"data": 0}).redistribute(out)
+        if self.device_mesh is not None and isinstance(feature_acts, DTensor):
+            out = self._decode_dtensor_local(feature_acts, add_bias=True)
+        else:
+            out = torch.einsum("bps,sd->bpd", feature_acts, self.W_O)
+            if self.cfg.use_decoder_bias:
+                out = out + self.b_D
         if self.cfg.skip_bos:
             out = out[:, 1:]
         return out
@@ -1720,8 +1872,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                 else:
                     self.current_k = min(self.cfg.k_aux, int(self.is_dead.sum().item()))
                 
-                # print(f'{self.current_k = }')
-                
                 if self.current_k > 0:
                     # Scale feature activations by decoder norm if configured
                     if self.cfg.sparsity_include_decoder_norm:
@@ -1732,17 +1882,16 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
                     dead_activation_mask = self.activation_function(dead_sparsity_scores)
                     dead_feature_acts = torch.clamp(hidden_pre * dead_activation_mask * self.is_dead, min=0.0)
                     
-                    # Decode auxiliary feature activations
-                    aux_reconstructed = dead_feature_acts @ self.W_O
-                    if isinstance(aux_reconstructed, DTensor):
-                        aux_reconstructed = DimMap({}).redistribute(aux_reconstructed)
-                    # print(f'{torch.norm(e, dim=-1) = }')
-                    # print(f'{torch.norm(aux_reconstructed, dim=-1) = }')
+                    # Decode auxiliary feature activations without introducing an explicit
+                    # DTensor redistribute op into the backward graph.
+                    if self.device_mesh is not None and isinstance(dead_feature_acts, DTensor):
+                        aux_reconstructed = self._decode_dtensor_local(dead_feature_acts, add_bias=False)
+                    else:
+                        aux_reconstructed = dead_feature_acts @ self.W_O
                     l_aux = (e - aux_reconstructed).pow(2).sum(dim=-1)
                 else:
                     l_aux = torch.zeros_like(l_rec)
                 
-                # print(f'{torch.norm(l_aux,dim = -1) = }')
                 
                 if isinstance(l_aux, DTensor):
                     l_aux = l_aux.full_tensor()
@@ -1806,7 +1955,6 @@ class LowRankSparseAttention(AbstractSparseAutoEncoder):
             "smolgen.smol_weight_gen.bias": DimMap({}),
         }
         if self.cfg.use_auxk and self.cfg.act_fn == "topk":
-            # print("init lorsa map with aux k related configs")
             lorsa_maps["tokens_since_last_activation"] = DimMap({"model": 0})
             lorsa_maps["is_dead"] = DimMap({"model": 0})
             

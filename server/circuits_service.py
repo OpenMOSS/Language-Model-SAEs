@@ -11,6 +11,7 @@ import sys
 import time
 import io
 import contextlib
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 
@@ -30,7 +31,7 @@ sys.path.append(str(project_root))
 
 # Import project modules
 from lm_saes import ReplacementModel, LowRankSparseAttention, SparseAutoEncoder
-from lm_saes.circuit.attribution_qk_for_feature_attribution import attribute
+from lm_saes.circuit.attribution_qk import attribute
 from lm_saes.circuit.graph_lc0 import Graph
 from lm_saes.circuit.utils.create_graph_files import create_graph_files, build_model, create_nodes, create_used_nodes_and_edges, prune_graph
 from lm_saes.circuit.leela_board import LeelaBoard
@@ -66,6 +67,9 @@ class TeeWriter:
 
 
 class LogCapture:
+    _ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+    _PROGRESS_LINE_RE = re.compile(r"^(?P<label>.+?):\s*\d+%?\|")
     
     def __init__(self, log_list: list):
         self.log_list = log_list
@@ -73,18 +77,44 @@ class LogCapture:
         self.original_stderr = sys.stderr
         self.log_buffer = io.StringIO()
         self.log_handlers = []
+        self.progress_log_indices: Dict[str, int] = {}
+        
+    def _normalize_message(self, message: str) -> str:
+        message = self._ANSI_ESCAPE_RE.sub("", message)
+        message = self._CONTROL_CHAR_RE.sub("", message)
+        return message.strip()
+    
+    def _get_progress_key(self, message: str) -> Optional[str]:
+        match = self._PROGRESS_LINE_RE.match(message)
+        if match is None:
+            return None
+        return match.group("label").strip()
         
     def _log_message(self, message: str):
-        if message.strip():
-            self.log_list.append({
-                "timestamp": time.time(),
-                "message": message.strip()
-            })
+        normalized = self._normalize_message(message)
+        if not normalized:
+            return
+
+        timestamp = time.time()
+        progress_key = self._get_progress_key(normalized)
+        if progress_key is not None:
+            entry_idx = self.progress_log_indices.get(progress_key)
+            if entry_idx is not None and entry_idx < len(self.log_list):
+                self.log_list[entry_idx]["timestamp"] = timestamp
+                self.log_list[entry_idx]["message"] = normalized
+                return
+
+            self.progress_log_indices[progress_key] = len(self.log_list)
+
+        self.log_list.append({
+            "timestamp": timestamp,
+            "message": normalized,
+        })
     
     def _write_and_log(self, text: str, original_stream):
         original_stream.write(text)
         if text:
-            for line in text.rstrip('\n').split('\n'):
+            for line in re.split(r'[\r\n]+', text):
                 if line.strip():
                     self._log_message(line)
     
@@ -559,7 +589,7 @@ def create_graph_from_attribution(
             if q_data is None or k_data is None:
                 raise ValueError("No 'q' or 'k' side data found in attribution result, cannot merge in both mode")
             
-            from lm_saes.circuit.attribution_qk_for_feature_attribution import merge_qk_graph
+            from lm_saes.circuit.attribution_qk import merge_qk_graph
             
             logger.info("Merging q and k side data...")
             merged = merge_qk_graph(attribution_result)

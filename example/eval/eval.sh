@@ -1,1 +1,0 @@
-CUDA_VISIBLE_DEVICES=0 torchrun --master_port=30010 --nproc-per-node=1 exp/eval_lc0_tc.py --layer 14
