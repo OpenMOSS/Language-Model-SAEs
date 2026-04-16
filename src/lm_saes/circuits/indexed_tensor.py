@@ -84,7 +84,9 @@ class NodeInfo(PyTree):
         """Whether indices select every element exactly once in natural order."""
         local = self.indices.to_local() if isinstance(self.indices, DTensor) else self.indices
         expected = torch.stack(
-            torch.meshgrid(*[torch.arange(s, device=local.device) for s in local.max(dim=0).values + 1], indexing="ij"),
+            torch.meshgrid(
+                *[torch.arange(int(s), device=local.device) for s in local.max(dim=0).values + 1], indexing="ij"
+            ),
             dim=-1,
         ).reshape(-1, local.shape[1])
         return local.shape == expected.shape and bool(torch.equal(local, expected))
