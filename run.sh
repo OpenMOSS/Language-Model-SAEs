@@ -448,3 +448,38 @@ db.features.deleteMany({
 });
 
 db.analyses.find({"sae_series": "BT4-exp128"})
+
+
+
+
+
+
+
+db.analyses.deleteMany({
+  sae_name: {
+    $in: Array.from({length: 15}, (_, i) => `BT4_lorsa_L${i}A_k30_e128`)
+  },
+  sae_series: "BT4-exp128"
+});
+
+db.features.deleteMany({
+  sae_name: {
+    $in: Array.from({length: 15}, (_, i) => `BT4_lorsa_L${i}A_k30_e128`)
+  },
+  sae_series: "BT4-exp128"
+});
+
+
+db.analyses.deleteMany({
+  sae_name: {
+    $in: Array.from({length: 15}, (_, i) => `BT4_tc_L${i}M_k30_e128`)
+  },
+  sae_series: "BT4-exp128"
+});
+
+db.features.deleteMany({
+  sae_name: {
+    $in: Array.from({length: 15}, (_, i) => `BT4_tc_L${i}M_k30_e128`)
+  },
+  sae_series: "BT4-exp128"
+});

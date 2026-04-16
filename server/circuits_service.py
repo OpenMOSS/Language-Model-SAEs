@@ -897,10 +897,10 @@ def main():
                        help="Model layers")
     
     parser.add_argument("--tc_base_path", type=str, 
-                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/result_BT4/tc/k_128_e_128",
+                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/result_BT4/tc/k_30_e_16",
                        help="TC model base path")
     parser.add_argument("--lorsa_base_path", type=str,
-                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/result_BT4/lorsa/k_128_e_128",
+                       default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/result_BT4/lorsa/k_30_e_16",
                        help="LORSA model base path")
     parser.add_argument("--output_path", type=str,
                        default="/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/rlin_projects/chess-SAEs-N/graphs/fast_tracing",

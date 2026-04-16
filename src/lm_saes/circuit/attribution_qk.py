@@ -24,6 +24,7 @@ import contextlib
 import logging
 import time
 import weakref
+from collections import deque
 from functools import partial
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, TypedDict, Union
 from lm_saes.sae import SparseAutoEncoder
@@ -260,7 +261,6 @@ class AttributionContext:
         _, counts = torch.unique_consecutive(nnz_layers, return_counts=True)
         edges = [0] + counts.cumsum(0).tolist()
         layer_spans = list(zip(edges[:-1], edges[1:]))
-        print(f'in _make_attribution_hooks_lorsa : {layer_spans = }')
         
         
         # Feature nodes
@@ -319,7 +319,6 @@ class AttributionContext:
         _, counts = torch.unique_consecutive(nnz_layers, return_counts=True)
         edges = [0] + counts.cumsum(0).tolist()
         layer_spans = list(zip(edges[:-1], edges[1:]))
-        print(f'in _make_attribution_hooks_tc : {layer_spans = }')
         
 
         # Simple assertion: decoder_vecs should match total active features
@@ -530,9 +529,11 @@ class AttributionContext:
 
         handles = []
 
-        layer_start_inject = torch.stack([
-            inject_values[i, start_pos[i], :] for i in range(k_batch)
-        ]) if k_batch > 0 else torch.empty(0, inject_values.shape[-1], device=device)
+        layer_start_inject = (
+            inject_values[batch_idx, start_pos]
+            if k_batch > 0
+            else torch.empty(0, inject_values.shape[-1], device=device)
+        )
         
 
         if layer_start_inject.shape[0] > 0:  # Only register if there are items
@@ -596,19 +597,19 @@ class AttributionContext:
             castle_tensor = castle_tensor.to(device=device, dtype=torch.bool)
     
         end_pos = move_positions.to(dtype=torch.long, device=device)
+        end_row = torch.div(end_pos, 8, rounding_mode="floor")
+        end_col = end_pos.remainder(8)
         adjusted_end_pos = end_pos.clone()
-        
-        for i in range(k_batch):
-            if castle_tensor[i]:
-                end_row, end_col = end_pos[i] // 8, end_pos[i] % 8
-                if end_col == 6: 
-                    adjusted_end_pos[i] = end_row * 8 + 7
-                    print(f"Detected short castling: end={end_pos[i].item()} -> adjusted K position: {adjusted_end_pos[i].item()}")
-                elif end_col == 2:
-                    adjusted_end_pos[i] = end_row * 8 + 0 
-                    print(f"Detected long castling: end={end_pos[i].item()} -> adjusted K position: {adjusted_end_pos[i].item()}")
-                else:
-                    print(f"Warning: is_castle is True but move does not match castling pattern: end={end_pos[i].item()}")
+        castle_short = castle_tensor & (end_col == 6)
+        castle_long = castle_tensor & (end_col == 2)
+        adjusted_end_pos[castle_short] = end_row[castle_short] * 8 + 7
+        adjusted_end_pos[castle_long] = end_row[castle_long] * 8
+        invalid_castle = castle_tensor & ~(castle_short | castle_long)
+        if invalid_castle.any():
+            logger.warning(
+                "Found %d castle move(s) with non-castling end squares in K tracing",
+                int(invalid_castle.sum().item()),
+            )
 
         batch_size = self._policy_k_activations[0].shape[0]
         # print(f"DEBUG: batch_size = {batch_size}")
@@ -629,9 +630,11 @@ class AttributionContext:
 
             return grads_out.to(grads.dtype)
         handles = []
-        layer_end_inject = torch.stack([
-            inject_values[i, adjusted_end_pos[i], :] for i in range(k_batch)
-        ]) if k_batch > 0 else torch.empty(0, inject_values.shape[-1], device=device)
+        layer_end_inject = (
+            inject_values[batch_idx, adjusted_end_pos]
+            if k_batch > 0
+            else torch.empty(0, inject_values.shape[-1], device=device)
+        )
         
         if layer_end_inject.shape[0] > 0:  # Only register if there are items
             fn = partial(
@@ -1772,6 +1775,13 @@ def partial_influence_queue_config(order_mode: str) -> tuple[str, bool]:
     return "abs", True
 
 
+def _batched_index_queue(indices: torch.Tensor, batch_size: int) -> deque[torch.Tensor]:
+    """Split a 1-D index tensor into FIFO batches."""
+    if indices.numel() == 0:
+        return deque()
+    return deque(indices.split(batch_size))
+
+
 def attribute(
     prompt: Union[str, torch.Tensor, List[int]],
     model: ReplacementModel,
@@ -2268,6 +2278,20 @@ def _run_attribution(
 
     lorsa_feat_layer, lorsa_feat_pos, lorsa_feat_idx = lorsa_activation_matrix.indices()
     tc_feat_layer, tc_feat_pos, tc_feat_idx = tc_activation_matrix.indices()
+    n_lorsa_active = int(lorsa_activation_matrix._nnz())
+
+    lorsa_lookup = {
+        (int(layer), int(pos), int(feature_idx)): gid
+        for gid, (layer, pos, feature_idx) in enumerate(
+            zip(lorsa_feat_layer.tolist(), lorsa_feat_pos.tolist(), lorsa_feat_idx.tolist())
+        )
+    }
+    tc_lookup = {
+        (int(layer), int(pos), int(feature_idx)): n_lorsa_active + gid
+        for gid, (layer, pos, feature_idx) in enumerate(
+            zip(tc_feat_layer.tolist(), tc_feat_pos.tolist(), tc_feat_idx.tolist())
+        )
+    }
 
     def _resolve_feature_trace_spec(spec: FeatureTraceSpec) -> Optional[int]:
         """Resolve the user-provided spec into a global feature gid."""
@@ -2278,27 +2302,18 @@ def _run_attribution(
         if layer is None or position is None or feature_idx is None:
             logger.warning(f"[feature-trace] Invalid spec missing keys: {spec}")
             return None
+        lookup_key = (int(layer), int(position), int(feature_idx))
         if feature_type == "lorsa":
-            mask = (
-                (lorsa_feat_layer == layer)
-                & (lorsa_feat_pos == position)
-                & (lorsa_feat_idx == feature_idx)
-            )
-            matches = mask.nonzero(as_tuple=True)[0]
-            if matches.numel() == 0:
+            gid = lorsa_lookup.get(lookup_key)
+            if gid is None:
                 logger.warning(f"[feature-trace] Lorsa feature not found for spec: {spec}")
                 return None
-            return int(matches[0].item())
-        mask = (
-            (tc_feat_layer == layer)
-            & (tc_feat_pos == position)
-            & (tc_feat_idx == feature_idx)
-        )
-        matches = mask.nonzero(as_tuple=True)[0]
-        if matches.numel() == 0:
+            return gid
+        gid = tc_lookup.get(lookup_key)
+        if gid is None:
             logger.warning(f"[feature-trace] TC feature not found for spec: {spec}")
             return None
-        return int(lorsa_activation_matrix._nnz() + matches[0].item())
+        return gid
 
     resolved_feature_trace_gids: list[int] = []
     if feature_trace_specs:
@@ -2337,79 +2352,75 @@ def _run_attribution(
     # Initially all features are allowed
     allow_mask = torch.ones(total_active_feats, dtype=torch.bool, device='cpu')
 
+    gid_to_layer = torch.cat(
+        [
+            2 * lorsa_feat_layer,
+            2 * tc_feat_layer + 1,
+        ],
+        dim=0,
+    )
+    gid_to_pos = torch.cat([lorsa_feat_pos, tc_feat_pos], dim=0)
+    gid_to_feature_id = torch.cat([lorsa_feat_idx, tc_feat_idx], dim=0)
+
+    encoder_device = lorsa_encoder_rows.device
+    encoder_dtype = lorsa_encoder_rows.dtype
+    gid_to_encoder_rows = torch.cat(
+        [
+            lorsa_encoder_rows,
+            tc_encoder_rows.to(device=encoder_device, dtype=encoder_dtype),
+        ],
+        dim=0,
+    )
+
+    bias_device = lorsa_encoder_bias.device
+    bias_dtype = lorsa_encoder_bias.dtype
+    gid_to_encoder_bias = torch.cat(
+        [
+            lorsa_encoder_bias,
+            tc_encoder_bias.to(device=bias_device, dtype=bias_dtype),
+        ],
+        dim=0,
+    )
+
+    pattern_device = lorsa_attention_patterns.device
+    pattern_dtype = lorsa_attention_patterns.dtype
+    tc_identity_patterns = torch.nn.functional.one_hot(
+        tc_feat_pos.to(device=pattern_device),
+        num_classes=n_pos,
+    ).to(dtype=pattern_dtype)
+    gid_to_pattern = torch.cat(
+        [
+            lorsa_attention_patterns.to(device=pattern_device, dtype=pattern_dtype),
+            tc_identity_patterns,
+        ],
+        dim=0,
+    )
+
     def idx_to_layer(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = idx < len(lorsa_feat_layer)
-        return torch.where(
-            is_lorsa.to(lorsa_feat_layer.device),
-            2 * lorsa_feat_layer[idx * is_lorsa],
-            2 * tc_feat_layer[(idx - len(lorsa_feat_layer)) * ~is_lorsa] + 1
-        )
+        return gid_to_layer.index_select(0, idx)
 
     def idx_to_pos(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = idx < len(lorsa_feat_layer)
-        return torch.where(
-            is_lorsa.to(lorsa_feat_pos.device),
-            lorsa_feat_pos[idx * is_lorsa],
-            tc_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
-        )
+        return gid_to_pos.index_select(0, idx)
 
     def idx_to_feature_id(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = (idx < len(lorsa_feat_layer))
-        l_idx = (idx * is_lorsa).to(torch.long)
-        t_idx = ((idx - len(lorsa_feat_layer)) * (~is_lorsa)).to(torch.long)
-
-        return torch.where(
-            is_lorsa.to(lorsa_feat_layer.device),
-            lorsa_feat_idx[l_idx],
-            tc_feat_idx[t_idx],
-        )
+        return gid_to_feature_id.index_select(0, idx)
 
     def idx_to_encoder_rows(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = idx < len(lorsa_feat_layer)
-        rows = torch.where(
-            is_lorsa.to(lorsa_encoder_rows.device)[:, None],
-            lorsa_encoder_rows[idx * is_lorsa],
-            tc_encoder_rows[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
-        )
-        if encoder_demean:
-            # Apply demean only to TC features
-            layers = torch.where(
-                is_lorsa.to(tc_feat_layer.device),
-                torch.zeros_like(tc_feat_layer[0]),  # dummy for Lorsa
-                tc_feat_layer[(idx - len(lorsa_feat_layer)) * ~is_lorsa]
-            ).to(torch.long)     # [B]
-            means = layer_means.index_select(0, layers)    # [B, d_model]
-            # Only subtract mean for TC features
-            means = torch.where(
-                is_lorsa.to(means.device)[:, None],
-                torch.zeros_like(means),
-                means
-            )
-            rows = rows - means
+        rows = gid_to_encoder_rows.index_select(0, idx)
+        if encoder_demean and idx.numel() > 0:
+            tc_mask = idx >= n_lorsa_active
+            if tc_mask.any():
+                rows = rows.clone()
+                tc_idx = idx[tc_mask] - n_lorsa_active
+                tc_layers = tc_feat_layer.index_select(0, tc_idx)
+                rows[tc_mask] -= layer_means.index_select(0, tc_layers)
         return rows
 
     def idx_to_encoder_bias(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = (idx < len(lorsa_feat_layer))
-        l_idx = (idx * is_lorsa).to(torch.long)
-        t_idx = ((idx - len(lorsa_feat_layer)) * (~is_lorsa)).to(torch.long)
-
-        return torch.where(
-            is_lorsa.to(lorsa_encoder_bias.device),
-            lorsa_encoder_bias[l_idx],
-            tc_encoder_bias[t_idx],
-        )
+        return gid_to_encoder_bias.index_select(0, idx)
 
     def idx_to_pattern(idx: torch.Tensor) -> torch.Tensor:
-        is_lorsa = idx < len(lorsa_feat_layer)
-        res = torch.where(
-            is_lorsa.to(lorsa_attention_patterns.device)[:, None],
-            lorsa_attention_patterns[idx * is_lorsa],
-            torch.nn.functional.one_hot(
-                tc_feat_pos[(idx - len(lorsa_feat_layer)) * ~is_lorsa],
-                num_classes=n_pos
-            )
-        )
-        return res
+        return gid_to_pattern.index_select(0, idx)
 
     def idx_to_activation_values(idx: torch.Tensor) -> torch.Tensor:
         is_lorsa = idx < len(lorsa_feat_layer)
@@ -2436,14 +2447,14 @@ def _run_attribution(
 
             return tc_activation_matrix.values()[local_idx] - bias_val
 
-    print("go into feature attribution loop")
+    logger.info("Entering feature attribution loop")
     
     # Determine which edge_matrix to call based on side
     fa_result = {}
     side_lower = side.lower()
     
     if side_lower in ('q', 'both'):
-        print("Computing feature attributions for Q")
+        logger.info("Computing feature attributions for Q")
         prepare_for_feature_attribution()  # Prepare computation graph, retain activations
         fa_result_q = run_feature_attribution(
             ctx=ctx,
@@ -2472,7 +2483,7 @@ def _run_attribution(
         fa_result['q'] = fa_result_q
     
     if side_lower in ('k', 'both'):
-        print("Computing feature attributions for K")
+        logger.info("Computing feature attributions for K")
         prepare_for_feature_attribution()  # Prepare computation graph, retain activations
         fa_result_k = run_feature_attribution(
             ctx=ctx,
@@ -2500,7 +2511,6 @@ def _run_attribution(
         )
         fa_result['k'] = fa_result_k
 
-    print(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
     logger.info(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
 
     # ========== Phase 5: Packaging (each side) ==========
@@ -3137,11 +3147,14 @@ def run_feature_attribution(
     """
     influence_sign_mode, feature_descending = partial_influence_queue_config(order_mode)
     if order_mode == "negative":
-        print("order_mode=negative: signed partial influence, ascending sort")
+        if logger:
+            logger.info("order_mode=negative: signed partial influence, ascending sort")
     elif order_mode == "positive":
-        print("order_mode=positive: signed partial influence, descending sort")
+        if logger:
+            logger.info("order_mode=positive: signed partial influence, descending sort")
     elif order_mode == "abs":
-        print("order_mode=abs: |edge| partial influence, descending sort")
+        if logger:
+            logger.info("order_mode=abs: |edge| partial influence, descending sort")
 
     if logger:
         logger.info(f"Phase: Computing feature attributions")
@@ -3162,82 +3175,89 @@ def run_feature_attribution(
 
     pbar = tqdm(total=max_feature_nodes, desc="Feature influence computation")
 
-    def _chunk_indices(indices: torch.Tensor) -> list[torch.Tensor]:
-        return [indices[i:i + batch_size] for i in range(0, len(indices), batch_size)]
-
-    manual_queue: list[torch.Tensor] = []
+    manual_queue: deque[torch.Tensor] = deque()
     if initial_queue is not None and initial_queue.numel() > 0:
         unique_manual = torch.unique(initial_queue.cpu())
-        manual_queue = _chunk_indices(unique_manual)
+        manual_queue = _batched_index_queue(unique_manual, batch_size)
 
-    auto_queue: list[torch.Tensor] = []
+    auto_queue: deque[torch.Tensor] = deque()
 
     while n_visited < max_feature_nodes:
-            if manual_queue:
-                idx_batch = manual_queue.pop(0)
-            else:
-                if not auto_queue:
-                    if n_logits == 0:
-                        break  # No logit seed and no manual queue, cannot continue
-                    if max_feature_nodes == total_active_feats:
-                        pending = torch.arange(total_active_feats)
-                    else:
-                        influences = compute_partial_influences(
-                            edge_matrix[:st],
-                            logit_p,
-                            row_to_node_index[:st],
-                            sign_mode=influence_sign_mode,
-                        )
-                        feature_rank = torch.argsort(
-                            influences[:total_active_feats],
-                            descending=feature_descending
-                        ).cpu()
-                        queue_size = min(update_interval * batch_size, max_feature_nodes - n_visited)
-                        pending = feature_rank[~visited[feature_rank]][:queue_size]
-
-                    if pending.numel() == 0:
+        if manual_queue:
+            idx_batch = manual_queue.popleft()
+        else:
+            if not auto_queue:
+                if n_logits == 0:
+                    break  # No logit seed and no manual queue, cannot continue
+                if max_feature_nodes == total_active_feats:
+                    pending = torch.nonzero(~visited, as_tuple=True)[0]
+                else:
+                    influences = compute_partial_influences(
+                        edge_matrix[:st],
+                        logit_p,
+                        row_to_node_index[:st],
+                        sign_mode=influence_sign_mode,
+                    )
+                    queue_size = min(update_interval * batch_size, max_feature_nodes - n_visited)
+                    feature_scores = influences[:total_active_feats]
+                    available = torch.nonzero(~visited, as_tuple=True)[0].to(feature_scores.device)
+                    if available.numel() == 0:
                         break
-                    auto_queue = _chunk_indices(pending)
-                idx_batch = auto_queue.pop(0)
-                if idx_batch.numel() == 0:
-                    continue
+                    if queue_size >= available.numel():
+                        pending = available.cpu()
+                    else:
+                        available_scores = feature_scores.index_select(0, available)
+                        _, top_local = torch.topk(
+                            available_scores,
+                            k=queue_size,
+                            largest=feature_descending,
+                            sorted=True,
+                        )
+                        pending = available.index_select(0, top_local).cpu()
 
-            for idx_batch in [idx_batch]:
-                if idx_batch.numel() == 0:
-                    continue
-                n_visited += len(idx_batch)
-                layers = idx_to_layer(idx_batch)
-                positions = idx_to_pos(idx_batch)
-                inject_values = idx_to_encoder_rows(idx_batch).detach()
-                encoder_bias = idx_to_encoder_bias(idx_batch)
-                attn_patterns = idx_to_pattern(idx_batch)
+                if pending.numel() == 0:
+                    break
+                auto_queue = _batched_index_queue(pending, batch_size)
+            idx_batch = auto_queue.popleft()
+            if idx_batch.numel() == 0:
+                continue
 
-                if isinstance(attn_patterns, torch.Tensor):
-                    attn_patterns = attn_patterns.detach()
+        if idx_batch.numel() == 0:
+            continue
+        n_visited += len(idx_batch)
+        layers = idx_to_layer(idx_batch)
+        positions = idx_to_pos(idx_batch)
+        inject_values = idx_to_encoder_rows(idx_batch).detach()
+        encoder_bias = idx_to_encoder_bias(idx_batch)
+        attn_patterns = idx_to_pattern(idx_batch)
 
-                model.zero_grad(set_to_none=True)
+        if isinstance(attn_patterns, torch.Tensor):
+            attn_patterns = attn_patterns.detach()
 
-                has_more_in_this_phase = (n_visited < max_feature_nodes)
-                rows_feature = ctx.compute_batch(
-                    layers=layers,
-                    positions=positions,
-                    inject_values=inject_values,
-                    attention_patterns=attn_patterns,
-                    retain_graph=has_more_in_this_phase,
-                )
+        model.zero_grad(set_to_none=True)
 
-                _ = bias_attr_now(model) + encoder_bias
+        has_more_in_this_phase = (n_visited < max_feature_nodes)
+        rows_feature = ctx.compute_batch(
+            layers=layers,
+            positions=positions,
+            inject_values=inject_values,
+            attention_patterns=attn_patterns,
+            retain_graph=has_more_in_this_phase,
+        )
 
-                bs = rows_feature.shape[0]
-                end = st + bs
-                edge_matrix[st:end, :logit_offset] = rows_feature.detach().cpu()
-                row_to_node_index[st:end] = idx_batch
-                visited[idx_batch] = True
-                st = end
-                pbar.update(len(idx_batch))
+        _ = bias_attr_now(model) + encoder_bias
+
+        bs = rows_feature.shape[0]
+        end = st + bs
+        edge_matrix[st:end, :logit_offset] = rows_feature.detach().cpu()
+        row_to_node_index[st:end] = idx_batch
+        visited[idx_batch] = True
+        st = end
+        pbar.update(len(idx_batch))
 
     pbar.close()
-    print(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
+    if logger:
+        logger.info(f"Feature attributions completed in {time.time() - phase_start:.2f}s")
 
     return {
         "visited": visited,                     # [total_active_feats] bool

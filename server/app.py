@@ -4828,11 +4828,15 @@ def get_virtual_weight(
             # compute TC global weight
             features_in = tc_virtual_weight_in(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
-                tc_acts, lorsa_acts, k=k, layer_filter=features_in_layer_filter_parsed
+                tc_acts, lorsa_acts, k=k, layer_filter=features_in_layer_filter_parsed,
+                tc_name_template=combo_cfg["tc_sae_name_template"],
+                lorsa_name_template=combo_cfg["lorsa_sae_name_template"],
             )
             features_out = tc_virtual_weight_out(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
-                tc_acts, lorsa_acts, k=k, layer_filter=features_out_layer_filter_parsed
+                tc_acts, lorsa_acts, k=k, layer_filter=features_out_layer_filter_parsed,
+                tc_name_template=combo_cfg["tc_sae_name_template"],
+                lorsa_name_template=combo_cfg["lorsa_sae_name_template"],
             )
         elif feature_type == "lorsa":
             if feature_idx < 0 or feature_idx >= cached_lorsas[layer_idx].cfg.d_sae:
@@ -4844,21 +4848,31 @@ def get_virtual_weight(
             # compute Lorsa global weight
             features_in = lorsa_virtual_weight_in(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
-                tc_acts, lorsa_acts, k=k, layer_filter=features_in_layer_filter_parsed
+                tc_acts, lorsa_acts, k=k, layer_filter=features_in_layer_filter_parsed,
+                tc_name_template=combo_cfg["tc_sae_name_template"],
+                lorsa_name_template=combo_cfg["lorsa_sae_name_template"],
             )
             features_out = lorsa_virtual_weight_out(
                 cached_transcoders, cached_lorsas, layer_idx, feature_idx,
-                tc_acts, lorsa_acts, k=k, layer_filter=features_out_layer_filter_parsed
+                tc_acts, lorsa_acts, k=k, layer_filter=features_out_layer_filter_parsed,
+                tc_name_template=combo_cfg["tc_sae_name_template"],
+                lorsa_name_template=combo_cfg["lorsa_sae_name_template"],
             )
         else:
             raise HTTPException(status_code=400, detail="feature_type must be 'tc' or 'lorsa'")
+
+        feature_name_template = (
+            combo_cfg["lorsa_sae_name_template"]
+            if feature_type == "lorsa"
+            else combo_cfg["tc_sae_name_template"]
+        )
         
         return {
             "feature_type": feature_type,
             "layer_idx": layer_idx,
             "feature_idx": feature_idx,
             "activation_type": activation_type,
-            "feature_name": f"BT4_{feature_type}_L{layer_idx}{'M' if feature_type == 'tc' else 'A'}_k30_e16#{feature_idx}",
+            "feature_name": f"{feature_name_template.format(layer=layer_idx)}#{feature_idx}",
             "features_in": [{"name": name, "weight": weight} for name, weight in features_in],
             "features_out": [{"name": name, "weight": weight} for name, weight in features_out],
         }

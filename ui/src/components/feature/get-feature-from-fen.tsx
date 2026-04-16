@@ -12,6 +12,7 @@ import camelcaseKeys from "camelcase-keys";
 import { FeatureSchema } from "@/types/feature";
 import type { Feature } from "@/types/feature";
 import { FeatureInterpretationCard } from "@/components/feature/interpret";
+import { buildBt4DictionaryName } from "@/utils/bt4Sae";
 import {
   Dialog,
   DialogContent,
@@ -153,13 +154,11 @@ export const GetFeatureFromFen = ({
   }, [fen, layer, position, componentType, modelName, saeComboId]);
 
   const getDictionaryName = useCallback(() => {
-    const lorsaSuffix = componentType === "attn" ? "A" : "M";
-    const baseDict = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${lorsaSuffix}`;
-    if (saeComboId && saeComboId !== "k_128_e_128") {
-      const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, "k$1_e$2");
-      return `${baseDict}_${comboParts}`;
-    }
-    return baseDict;
+    return buildBt4DictionaryName(
+      layer,
+      componentType === "attn" ? "lorsa" : "tc",
+      saeComboId,
+    );
   }, [componentType, layer, saeComboId]);
 
   const parseAnalyzeFen = useCallback((data: AnalyzeFenResponse): FenActivationData => {

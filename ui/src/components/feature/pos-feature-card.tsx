@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Label } from "@/components/ui/label";
 import { GetFeatureFromFen } from "@/components/feature/get-feature-from-fen";
+import { buildBt4DictionaryName } from "@/utils/bt4Sae";
 
 interface PosFeatureCardProps {
   fen: string;
@@ -419,13 +420,11 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
   }, [fen, steeringNodes, backendFeatureType, layer, modelName, saeComboId]);
 
   const getDictionaryName = useCallback(() => {
-    const lorsaSuffix = componentType === "attn" ? "A" : "M";
-    const baseDict = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${lorsaSuffix}`;
-    if (saeComboId && saeComboId !== "k_128_e_128") {
-      const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, "k$1_e$2");
-      return `${baseDict}_${comboParts}`;
-    }
-    return baseDict;
+    return buildBt4DictionaryName(
+      layer,
+      componentType === "attn" ? "lorsa" : "tc",
+      saeComboId,
+    );
   }, [componentType, layer, saeComboId]);
 
   const [fenActivationState, fetchFenActivationForSelectedFeature] = useAsyncFn(async () => {
@@ -545,14 +544,11 @@ const parsePositionsInput = useCallback((positionsInput: number[] | string): num
     async (featureIndex: number, isLorsa: boolean) => {
       setLoadingTopActivations(true);
       try {
-        const lorsaSuffix = componentType === "attn" ? "A" : "M";
-        const dictionary = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${lorsaSuffix}`;
-
-        let fullDictionary = dictionary;
-        if (saeComboId && saeComboId !== "k_128_e_128") {
-          const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, "k$1_e$2");
-          fullDictionary = `${dictionary}_${comboParts}`;
-        }
+        const fullDictionary = buildBt4DictionaryName(
+          layer,
+          componentType === "attn" ? "lorsa" : "tc",
+          saeComboId,
+        );
 
         console.log("Get Top Activation data:", {
           layer,

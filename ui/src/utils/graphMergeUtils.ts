@@ -4,13 +4,14 @@
  */
 
 import { transformCircuitData, CircuitJsonData } from "@/components/circuits/link-graph/utils";
+import { buildBt4AnalysisName, DEFAULT_BT4_SAE_COMBO_ID } from "./bt4Sae";
 import { mixHexColorsVivid } from "./colorUtils";
 
 export const UNIQUE_GRAPH_COLORS = ["#2E86DE", "#E67E22", "#27AE60", "#C0392B"]; // Blue, Orange, Green, Red
 export const POSITION_MAPPING_HIGHLIGHT_COLOR = "#8E44AD"; // Purple: position mapping highlight
 
-const DEFAULT_LORSA_ANALYSIS_NAME = "BT4_lorsa_k30_e16";
-const DEFAULT_TC_ANALYSIS_NAME = "BT4_tc_k30_e16";
+const DEFAULT_LORSA_ANALYSIS_NAME = buildBt4AnalysisName("lorsa", DEFAULT_BT4_SAE_COMBO_ID);
+const DEFAULT_TC_ANALYSIS_NAME = buildBt4AnalysisName("tc", DEFAULT_BT4_SAE_COMBO_ID);
 
 /**
  * Get subset color for partially shared nodes

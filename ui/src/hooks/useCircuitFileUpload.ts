@@ -7,19 +7,7 @@ import { useCallback } from "react";
 import { CircuitJsonData } from "@/components/circuits/link-graph/utils";
 import { transformCircuitData } from "@/components/circuits/link-graph/utils";
 import { mergeCircuitGraphs } from "@/utils/graphMergeUtils";
-
-const KNOWN_ANALYSIS_NAMES = [
-  "BT4_tc_k30_e16",
-  "BT4_lorsa_k30_e16",
-  "BT4_tc_k64_e32",
-  "BT4_lorsa_k64_e32",
-  "BT4_tc_k128_e64",
-  "BT4_lorsa_k128_e64",
-  "BT4_tc_k256_e128",
-  "BT4_lorsa_k256_e128",
-  "BT4_tc",  // k128_e128 (default combo, no suffix)
-  "BT4_lorsa",  // k128_e128 (default combo, no suffix)
-];
+import { isValidBt4AnalysisName } from "@/utils/bt4Sae";
 
 interface CheckAnalysisNamesResult {
   isValid: boolean;
@@ -35,17 +23,17 @@ const checkAnalysisNames = (metadata: any): CheckAnalysisNamesResult => {
   const tcAnalysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
   
   if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
-    if (!KNOWN_ANALYSIS_NAMES.includes(lorsaAnalysisName)) {
+    if (!isValidBt4AnalysisName(lorsaAnalysisName)) {
       warnings.push(
-        `⚠️ Lorsa analysis_name "${lorsaAnalysisName}" is not in known combinations, will use default combo k128_e128 (BT4_lorsa)`
+        `⚠️ Lorsa analysis_name "${lorsaAnalysisName}" is not a recognized BT4 combo name.`
       );
     }
   }
   
   if (tcAnalysisName && typeof tcAnalysisName === 'string') {
-    if (!KNOWN_ANALYSIS_NAMES.includes(tcAnalysisName)) {
+    if (!isValidBt4AnalysisName(tcAnalysisName)) {
       warnings.push(
-        `⚠️ TC analysis_name "${tcAnalysisName}" is not in known combinations, will use default combo k128_e128 (BT4_tc)`
+        `⚠️ TC analysis_name "${tcAnalysisName}" is not a recognized BT4 combo name.`
       );
     }
   }
@@ -88,7 +76,7 @@ export const useCircuitFileUpload = ({
       const { isValid, warnings } = checkAnalysisNames(metadata);
       
       if (!isValid && warnings.length > 0) {
-        const warningMessage = warnings.join('\n') + '\n\nWill use default combo k128_e128 for feature analysis.';
+        const warningMessage = warnings.join('\n');
         console.warn('⚠️ Circuit file analysis_name check:', warnings);
         alert(warningMessage);
       }
@@ -150,7 +138,7 @@ export const useCircuitFileUpload = ({
       });
       
       if (allWarnings.length > 0) {
-        const warningMessage = allWarnings.join('\n') + '\n\nWill use default combo k128_e128 for feature analysis.';
+        const warningMessage = allWarnings.join('\n');
         console.warn('⚠️ Circuit file analysis_name check:', allWarnings);
         alert(warningMessage);
       }

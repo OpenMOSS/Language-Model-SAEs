@@ -1,4 +1,5 @@
 import { Feature } from "@/types/feature";
+import { buildBt4DictionaryFromAnalysisName } from "@/utils/bt4Sae";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 
@@ -42,35 +43,17 @@ export const fetchFeature = async (
 
 /**
  * Get dictionary name from circuit JSON metadata.
- * Uses lorsa_analysis_name / tc_analysis_name to build full name (e.g. BT4_lorsa_L4A_k30_e16).
+ * Uses lorsa_analysis_name / tc_analysis_name to build full dictionary names.
  */
 export const getDictionaryName = (metadata: any, layer: number, isLorsa: boolean): string => {
   if (isLorsa) {
-    const analysisName = metadata?.lorsa_analysis_name;
-    if (analysisName && typeof analysisName === 'string') {
-      if (analysisName === 'BT4_lorsa') {
-        return `BT4_lorsa_L${layer}A`;
-      }
-      if (analysisName.startsWith('BT4_lorsa_')) {
-        const suffix = analysisName.replace('BT4_lorsa_', '');
-        return `BT4_lorsa_L${layer}A_${suffix}`;
-      }
-      return analysisName.replace('{}', layer.toString());
-    }
-    return `BT4_lorsa_L${layer}A_k30_e16`;
+    return buildBt4DictionaryFromAnalysisName(metadata?.lorsa_analysis_name, layer, "lorsa");
   } else {
-    const analysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
-    if (analysisName && typeof analysisName === 'string') {
-      if (analysisName === 'BT4_tc') {
-        return `BT4_tc_L${layer}M`;
-      }
-      if (analysisName.startsWith('BT4_tc_')) {
-        const suffix = analysisName.replace('BT4_tc_', '');
-        return `BT4_tc_L${layer}M_${suffix}`;
-      }
-      return analysisName.replace('{}', layer.toString());
-    }
-    return `BT4_tc_L${layer}M_k30_e16`;
+    return buildBt4DictionaryFromAnalysisName(
+      metadata?.tc_analysis_name || metadata?.clt_analysis_name,
+      layer,
+      "tc",
+    );
   }
 };
 

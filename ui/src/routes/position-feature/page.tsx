@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { ChessBoard } from "@/components/chess/chess-board";
+import { buildBt4DictionaryName } from "@/utils/bt4Sae";
 
 const LOCAL_STORAGE_KEY = "bt4_sae_combo_id";
 
@@ -99,13 +100,11 @@ export const PositionFeaturePage = () => {
   };
 
   const getDictionaryName = useCallback((): string => {
-    const suffix = componentType === "attn" ? "A" : "M";
-    const baseDict = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${suffix}`;
-    if (saeComboId && saeComboId !== "k_128_e_128") {
-      const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, "k$1_e$2");
-      return `${baseDict}_${comboParts}`;
-    }
-    return baseDict;
+    return buildBt4DictionaryName(
+      layer,
+      componentType === "attn" ? "lorsa" : "tc",
+      saeComboId,
+    );
   }, [componentType, layer, saeComboId]);
 
   const fetchAllPositionsForFeature = useCallback(

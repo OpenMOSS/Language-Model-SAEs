@@ -3,19 +3,12 @@
  */
 
 import { useCallback } from "react";
-
-const KNOWN_ANALYSIS_NAMES = [
-  "BT4_tc_k30_e16",
-  "BT4_lorsa_k30_e16",
-  "BT4_tc_k64_e32",
-  "BT4_lorsa_k64_e32",
-  "BT4_tc_k128_e64",
-  "BT4_lorsa_k128_e64",
-  "BT4_tc_k256_e128",
-  "BT4_lorsa_k256_e128",
-  "BT4_tc",  // k128_e128 (default combo, no suffix)
-  "BT4_lorsa",  // k128_e128 (default combo, no suffix)
-];
+import {
+  buildBt4DictionaryFromAnalysisName,
+  buildBt4DictionaryName,
+  buildBt4FeatureName,
+  isValidBt4AnalysisName,
+} from "@/utils/bt4Sae";
 
 interface UseDictionaryNameOptions {
   linkGraphData: any;
@@ -29,29 +22,18 @@ export const getSaeNameTemplate = (
   isLorsa: boolean,
   metadata: any
 ): string => {
-  if (isLorsa) {
-    const lorsaAnalysisName = metadata?.lorsa_analysis_name;
-    if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
-      if (lorsaAnalysisName === "BT4_lorsa") {
-        return "BT4_lorsa_L{}A";
-      } else {
-        const suffix = lorsaAnalysisName.replace("BT4_lorsa_", "");
-        return `BT4_lorsa_L{}A_${suffix}`;
-      }
-    }
-    return "BT4_lorsa_L{}A"; // Default
-  } else {
-    const tcAnalysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
-    if (tcAnalysisName && typeof tcAnalysisName === 'string') {
-      if (tcAnalysisName === "BT4_tc") {
-        return "BT4_tc_L{}M";
-      } else {
-        const suffix = tcAnalysisName.replace("BT4_tc_", "");
-        return `BT4_tc_L{}M_${suffix}`;
-      }
-    }
-    return "BT4_tc_L{}M"; // Default
+  const analysisName = isLorsa
+    ? metadata?.lorsa_analysis_name
+    : metadata?.tc_analysis_name || metadata?.clt_analysis_name;
+  if (typeof analysisName === "string" && analysisName.includes("{}")) {
+    return analysisName;
   }
+
+  return buildBt4DictionaryFromAnalysisName(
+    analysisName,
+    0,
+    isLorsa ? "lorsa" : "tc",
+  ).replace("L0", "L{}");
 };
 
 export const useDictionaryName = ({ linkGraphData }: UseDictionaryNameOptions) => {
@@ -60,57 +42,22 @@ export const useDictionaryName = ({ linkGraphData }: UseDictionaryNameOptions) =
    */
   const getDictionaryName = useCallback((layerIdx: number, isLorsa: boolean): string => {
     const metadata = linkGraphData?.metadata || {};
-    let dictionary: string;
-    let usingDefault = false;
+    const analysisName = isLorsa
+      ? metadata?.lorsa_analysis_name
+      : metadata?.tc_analysis_name || metadata?.clt_analysis_name;
     if (isLorsa) {
-      const lorsaAnalysisName = metadata?.lorsa_analysis_name;
-      if (lorsaAnalysisName && typeof lorsaAnalysisName === 'string') {
-        const isKnown = KNOWN_ANALYSIS_NAMES.includes(lorsaAnalysisName);
-        
-        if (isKnown) {
-          if (lorsaAnalysisName === "BT4_lorsa") {
-            dictionary = `BT4_lorsa_L${layerIdx}A`;
-          } else {
-            const suffix = lorsaAnalysisName.replace("BT4_lorsa_", "");
-            dictionary = `BT4_lorsa_L${layerIdx}A_${suffix}`;
-          }
-        } else {
-          console.warn(`⚠️ Lorsa analysis_name "${lorsaAnalysisName}" is not in known combinations, using default combo k128_e128`);
-          dictionary = `BT4_lorsa_L${layerIdx}A`;
-          usingDefault = true;
-        }
-      } else {
-        dictionary = `BT4_lorsa_L${layerIdx}A`;
-        usingDefault = true;
+      if (typeof analysisName === "string" && !isValidBt4AnalysisName(analysisName) && !analysisName.includes("{}")) {
+        console.warn(`⚠️ Unexpected Lorsa analysis_name "${analysisName}", falling back to default BT4 combo.`);
       }
-    } else {
-      const tcAnalysisName = metadata?.tc_analysis_name || metadata?.clt_analysis_name;
-      if (tcAnalysisName && typeof tcAnalysisName === 'string') {
-        const isKnown = KNOWN_ANALYSIS_NAMES.includes(tcAnalysisName);
-        
-        if (isKnown) {
-          if (tcAnalysisName === "BT4_tc") {
-            dictionary = `BT4_tc_L${layerIdx}M`;
-          } else {
-            const suffix = tcAnalysisName.replace("BT4_tc_", "");
-            dictionary = `BT4_tc_L${layerIdx}M_${suffix}`;
-          }
-        } else {
-          console.warn(`⚠️ TC analysis_name "${tcAnalysisName}" is not in known combinations, using default combo k128_e128`);
-          dictionary = `BT4_tc_L${layerIdx}M`;
-          usingDefault = true;
-        }
-      } else {
-        dictionary = `BT4_tc_L${layerIdx}M`;
-        usingDefault = true;
-      }
+    } else if (typeof analysisName === "string" && !isValidBt4AnalysisName(analysisName) && !analysisName.includes("{}")) {
+      console.warn(`⚠️ Unexpected TC analysis_name "${analysisName}", falling back to default BT4 combo.`);
     }
-    
-    if (usingDefault) {
-      console.warn(`⚠️ Using default combo k128_e128 dictionary name: ${dictionary}`);
-    }
-    
-    return dictionary;
+
+    return buildBt4DictionaryFromAnalysisName(
+      analysisName,
+      layerIdx,
+      isLorsa ? "lorsa" : "tc",
+    );
   }, [linkGraphData]);
 
   /**
@@ -120,11 +67,13 @@ export const useDictionaryName = ({ linkGraphData }: UseDictionaryNameOptions) =
     try {
       const metadata = linkGraphData?.metadata || {};
       const template = getSaeNameTemplate(layer, isLorsa, metadata);
-      const result = template.replace('{}', layer.toString());
-      return result;
+      if (template.includes("{}")) {
+        return template.replace("{}", layer.toString());
+      }
+      return buildBt4FeatureName(layer, 0, isLorsa ? "lorsa" : "tc").replace(/#0$/, "");
     } catch (error) {
       console.error('[CircuitVisualization] Error in getSaeNameForCircuit:', error);
-      return isLorsa ? `BT4_lorsa_L${layer}A` : `BT4_tc_L${layer}M`;
+      return buildBt4DictionaryName(layer, isLorsa ? "lorsa" : "tc");
     }
   }, [linkGraphData]);
 

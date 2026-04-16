@@ -34,6 +34,7 @@ import {
   addFeatureToCircuit,
   removeFeatureFromCircuit,
 } from '@/utils/api';
+import { buildBt4DictionaryName, buildBt4FeatureName } from '@/utils/bt4Sae';
 
 interface GlobalWeightData {
   feature_type: string;
@@ -577,20 +578,7 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
   // Helper function to build feature name
   const buildFeatureName = useCallback((featureType: string, layer: number, featureIndex: number): string => {
-    const typePrefix = featureType === 'lorsa' ? 'BT4_lorsa' : 'BT4_tc';
-    const layerSuffix = featureType === 'lorsa' ? 'A' : 'M';
-    // For k_30_e_16, add suffix
-    if (saeComboId === 'k_30_e_16') {
-      return `${typePrefix}_L${layer}${layerSuffix}_k30_e16#${featureIndex}`;
-    } else if (saeComboId === 'k_64_e_32') {
-      return `${typePrefix}_L${layer}${layerSuffix}_k64_e32#${featureIndex}`;
-    } else if (saeComboId === 'k_128_e_64') {
-      return `${typePrefix}_L${layer}${layerSuffix}_k128_e64#${featureIndex}`;
-    } else if (saeComboId === 'k_256_e_128') {
-      return `${typePrefix}_L${layer}${layerSuffix}_k256_e128#${featureIndex}`;
-    } else {
-      return `${typePrefix}_L${layer}${layerSuffix}#${featureIndex}`;
-    }
+    return buildBt4FeatureName(layer, featureIndex, featureType === 'lorsa' ? 'lorsa' : 'tc', saeComboId);
   }, [saeComboId]);
 
   // Helper function to find feature rank in a list
@@ -1077,32 +1065,11 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
       
       // If not found in the circuit, generate based on sae_combo_id
       if (!foundDictionary) {
-        const isLorsa = featureType === 'lorsa';
-        // Generate the correct dictionary name based on sae_combo_id
-        // For k_30_e_16: BT4_tc_L{layer}M_k30_e16 or BT4_lorsa_L{layer}A_k30_e16
-        // For k_128_e_128 (default): BT4_tc_L{layer}M or BT4_lorsa_L{layer}A
-        if (saeComboId === 'k_30_e_16') {
-          foundDictionary = isLorsa 
-            ? `BT4_lorsa_L${layer}A_k30_e16`
-            : `BT4_tc_L${layer}M_k30_e16`;
-        } else if (saeComboId === 'k_64_e_32') {
-          foundDictionary = isLorsa 
-            ? `BT4_lorsa_L${layer}A_k64_e32`
-            : `BT4_tc_L${layer}M_k64_e32`;
-        } else if (saeComboId === 'k_128_e_64') {
-          foundDictionary = isLorsa 
-            ? `BT4_lorsa_L${layer}A_k128_e64`
-            : `BT4_tc_L${layer}M_k128_e64`;
-        } else if (saeComboId === 'k_256_e_128') {
-          foundDictionary = isLorsa 
-            ? `BT4_lorsa_L${layer}A_k256_e128`
-            : `BT4_tc_L${layer}M_k256_e128`;
-        } else {
-          // Default combo k_128_e_128
-          foundDictionary = isLorsa 
-            ? `BT4_lorsa_L${layer}A`
-            : `BT4_tc_L${layer}M`;
-        }
+        foundDictionary = buildBt4DictionaryName(
+          layer,
+          featureType === 'lorsa' ? 'lorsa' : 'tc',
+          saeComboId,
+        );
       }
       
       dictionary = foundDictionary;
@@ -1413,15 +1380,11 @@ export const FunctionalMicrocircuitVisualization: React.FC = () => {
 
   // Helper function to build dictionary name
   const buildDictionaryName = useCallback((layer: number, featureType: string): string => {
-    const isLorsa = featureType === 'lorsa';
-    const lorsaSuffix = isLorsa ? 'A' : 'M';
-    const baseDict = `BT4_${isLorsa ? 'lorsa' : 'tc'}_L${layer}${lorsaSuffix}`;
-    
-    if (saeComboId && saeComboId !== 'k_128_e_128') {
-      const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, 'k$1_e$2');
-      return `${baseDict}_${comboParts}`;
-    }
-    return baseDict;
+    return buildBt4DictionaryName(
+      layer,
+      featureType === 'lorsa' ? 'lorsa' : 'tc',
+      saeComboId,
+    );
   }, [saeComboId]);
 
   // Handle adding feature to circuit

@@ -3,6 +3,7 @@ import * as d3 from "d3";
 import { Link } from "react-router-dom";
 import { ChessBoard } from "@/components/chess/chess-board";
 import { FeatureSchema } from "@/types/feature";
+import { buildBt4DictionaryName } from "@/utils/bt4Sae";
 
 interface RawAtlasNodeNew {
   node_id: string;
@@ -52,7 +53,7 @@ interface TopActivationSample {
   fen: string;
   activationStrength: number;
   activations?: number[];
-  zPatternIndices?: number[];
+  zPatternIndices?: number[][];
   zPatternValues?: number[];
   contextId?: number;
   sampleIndex?: number;
@@ -67,20 +68,6 @@ const parseNodeId = (nodeId: string): ParsedNodeId | null => {
   const type = match[2] === "A" ? "lorsa" : "plt";
   const feature = Number.parseInt(match[3], 10);
   return { layer, type, feature };
-};
-
-const generateIframeUrl = (
-  layer: number,
-  type: "lorsa" | "plt",
-  feature: number,
-): string => {
-  // This helper is no longer used to build an iframe URL.
-  // Kept for backward compatibility; actual feature details are fetched
-  // via the dictionaries backend API instead of embedding a separate page.
-  const saeType = type === "lorsa" ? "lorsa" : "plt";
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
-  return `${origin}/embed/dictionaries/qwen3-1.7b-${saeType}-32x-topk128-layer${layer}/features/${feature}`;
 };
 
 export const AtlasVisualization: React.FC = () => {
@@ -105,16 +92,9 @@ export const AtlasVisualization: React.FC = () => {
   const [refreshingInterpretations, setRefreshingInterpretations] = useState<boolean>(false);
 
   const buildDictionaryName = (layerIdx: number, isLorsa: boolean): string => {
-    const LORSA_ANALYSIS_NAME = "BT4_lorsa_k30_e16";
-    const TC_ANALYSIS_NAME = "BT4_tc_k30_e16";
-
-    if (isLorsa) {
-      const suffix = LORSA_ANALYSIS_NAME.replace("BT4_lorsa", "").replace(/^_/, "");
-      return suffix ? `BT4_lorsa_L${layerIdx}A_${suffix}` : `BT4_lorsa_L${layerIdx}A`;
-    }
-
-    const suffix = TC_ANALYSIS_NAME.replace("BT4_tc", "").replace(/^_/, "");
-    return suffix ? `BT4_tc_L${layerIdx}M_${suffix}` : `BT4_tc_L${layerIdx}M`;
+    const comboId =
+      typeof window !== "undefined" ? window.localStorage.getItem("bt4_sae_combo_id") || undefined : undefined;
+    return buildBt4DictionaryName(layerIdx, isLorsa ? "lorsa" : "tc", comboId);
   };
 
   const fetchTopActivations = useCallback(

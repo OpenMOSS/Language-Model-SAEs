@@ -1,0 +1,889 @@
+import { useCallback, useMemo, useRef, useState } from "react";
+import type React from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
+import { ChessBoard } from "@/components/chess/chess-board";
+import { FeatureSchema, type Feature } from "@/types/feature";
+import { FeatureInterpretationCard } from "@/components/feature/interpret";
+import camelcaseKeys from "camelcase-keys";
+import { decode } from "@msgpack/msgpack";
+
+interface ActivatedFeature {
+  feature_index: number;
+  activation_value: number;
+}
+
+interface FeatureActivationData {
+  attn_features?: ActivatedFeature[];
+  mlp_features?: ActivatedFeature[];
+}
+
+interface TopActivationSample {
+  fen: string;
+  activationStrength: number;
+  activations?: number[];
+  zPatternIndices?: number[][];
+  zPatternValues?: number[];
+  contextId?: number;
+  sampleIndex?: number;
+}
+
+const CANVAS_SIZE = 480;
+const PADDING = 32;
+const PLOT_WIDTH = CANVAS_SIZE - PADDING * 2;
+const PLOT_HEIGHT = CANVAS_SIZE - PADDING * 2;
+
+/** Convert client (screen) coordinates to SVG viewBox coordinates. Handles non-square SVG and scaling correctly. */
+function clientToSvgViewBox(svg: SVGSVGElement, clientX: number, clientY: number): { x: number; y: number } {
+  const pt = svg.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return { x: 0, y: 0 };
+  const svgPt = pt.matrixTransform(ctm.inverse());
+  return { x: svgPt.x, y: svgPt.y };
+}
+
+type ViewRect = { x1: number; y1: number; x2: number; y2: number };
+
+/** Map point from zoom rect (full viewBox) to display coordinates (fill canvas). */
+function zoomRectToDisplay(
+  zoomRect: ViewRect,
+  fullX: number,
+  fullY: number
+): { dx: number; dy: number } {
+  const w = zoomRect.x2 - zoomRect.x1 || 1;
+  const h = zoomRect.y2 - zoomRect.y1 || 1;
+  const dx = PADDING + ((fullX - zoomRect.x1) / w) * PLOT_WIDTH;
+  const dy = PADDING + ((fullY - zoomRect.y1) / h) * PLOT_HEIGHT;
+  return { dx, dy };
+}
+
+/** Map display coordinates (0–480) to full viewBox when zoomed. */
+function displayToZoomRect(zoomRect: ViewRect, displayX: number, displayY: number): { x: number; y: number } {
+  const w = zoomRect.x2 - zoomRect.x1 || 1;
+  const h = zoomRect.y2 - zoomRect.y1 || 1;
+  const x = zoomRect.x1 + ((displayX - PADDING) / PLOT_WIDTH) * w;
+  const y = zoomRect.y1 + ((displayY - PADDING) / PLOT_HEIGHT) * h;
+  return { x, y };
+}
+
+interface DecoderWeightsUmapResponse {
+  embedding: number[][];
+  feature_ids: number[];
+}
+
+interface UmapPoint {
+  featureIndex: number;
+  x: number;
+  y: number;
+  activationValue?: number;
+  isActive: boolean;
+}
+
+interface FenActivationData {
+  fen: string;
+  activations?: number[];
+  zPatternIndices?: number[][];
+  zPatternValues?: number[];
+}
+
+interface PositionFeatureUmapCardProps {
+  fen: string;
+  layer: number;
+  componentType: "attn" | "mlp";
+  position: number;
+  modelName?: string;
+  saeComboId?: string;
+}
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+
+const parseTopActivationData = (camelData: any): TopActivationSample[] => {
+  const sampleGroups = camelData?.sampleGroups || camelData?.sample_groups || [];
+  const allSamples: any[] = [];
+
+  for (const group of sampleGroups) {
+    if (group.samples && Array.isArray(group.samples)) {
+      allSamples.push(...group.samples);
+    }
+  }
+
+  const chessSamples: TopActivationSample[] = [];
+
+  for (const sample of allSamples) {
+    if (sample.text) {
+      const lines = sample.text.split("\n");
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        if (trimmed.includes("/")) {
+          const parts = trimmed.split(/\s+/);
+
+          if (parts.length >= 6) {
+            const [boardPart, activeColor] = parts;
+            const boardRows = boardPart.split("/");
+
+            if (boardRows.length === 8 && /^[wb]$/.test(activeColor)) {
+              let isValidBoard = true;
+              let totalSquares = 0;
+
+              for (const row of boardRows) {
+                if (!/^[rnbqkpRNBQKP1-8]+$/.test(row)) {
+                  isValidBoard = false;
+                  break;
+                }
+
+                let rowSquares = 0;
+                for (const char of row) {
+                  if (/\d/.test(char)) {
+                    rowSquares += parseInt(char);
+                  } else {
+                    rowSquares += 1;
+                  }
+                }
+                totalSquares += rowSquares;
+              }
+
+              if (isValidBoard && totalSquares === 64) {
+                let activationsArray: number[] | undefined = undefined;
+                let maxActivation = 0;
+
+                if (
+                  sample.featureActsIndices &&
+                  sample.featureActsValues &&
+                  Array.isArray(sample.featureActsIndices) &&
+                  Array.isArray(sample.featureActsValues)
+                ) {
+                  activationsArray = new Array(64).fill(0);
+
+                  for (let i = 0; i < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length); i++) {
+                    const index = sample.featureActsIndices[i];
+                    const value = sample.featureActsValues[i];
+
+                    if (index >= 0 && index < 64) {
+                      activationsArray[index] = value;
+                      if (Math.abs(value) > Math.abs(maxActivation)) {
+                        maxActivation = value;
+                      }
+                    }
+                  }
+                }
+
+                chessSamples.push({
+                  fen: trimmed,
+                  activationStrength: maxActivation,
+                  activations: activationsArray,
+                  zPatternIndices: sample.zPatternIndices,
+                  zPatternValues: sample.zPatternValues,
+                  contextId: sample.contextIdx || sample.context_idx,
+                  sampleIndex: sample.sampleIndex || 0,
+                });
+
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return chessSamples.sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength));
+};
+
+export const PositionFeatureUmapCard = ({
+  fen,
+  layer,
+  componentType,
+  position,
+  modelName = "lc0/BT4-1024x15x32h",
+  saeComboId,
+}: PositionFeatureUmapCardProps) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [umapPoints, setUmapPoints] = useState<UmapPoint[]>([]);
+  const [selectedPoint, setSelectedPoint] = useState<UmapPoint | null>(null);
+  const [detailFeature, setDetailFeature] = useState<Feature | null>(null);
+  const [topActivation, setTopActivation] = useState<TopActivationSample | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [currentFenActivation, setCurrentFenActivation] = useState<FenActivationData | null>(null);
+  const [showOnlyActive, setShowOnlyActive] = useState(false);
+  const [zoomRect, setZoomRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [brushRect, setBrushRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [isBrushing, setIsBrushing] = useState(false);
+  const didBrushThisGesture = useRef(false);
+
+  const getDictionaryName = useCallback((): string => {
+    const suffix = componentType === "attn" ? "A" : "M";
+    const baseDict = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${suffix}`;
+    if (saeComboId && saeComboId !== "k_128_e_128") {
+      const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, "k$1_e$2");
+      return `${baseDict}_${comboParts}`;
+    }
+    return baseDict;
+  }, [componentType, layer, saeComboId]);
+
+  const loadUmapAndFeatures = useCallback(async () => {
+    if (!fen?.trim()) {
+      setError("FEN must not be empty");
+      return;
+    }
+    if (position < 0 || position > 63) {
+      setError("Position must be between 0 and 63");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setSelectedPoint(null);
+    setDetailFeature(null);
+    setTopActivation(null);
+    setCurrentFenActivation(null);
+    setZoomRect(null);
+    setBrushRect(null);
+
+    try {
+      const dictionary = getDictionaryName();
+
+      const [umapRes, featuresRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/dictionaries/${encodeURIComponent(dictionary)}/decoder-weights-umap`, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        }),
+        fetch(`${BACKEND_URL}/activation/get_features_at_position`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            fen: fen.trim(),
+            layer,
+            pos: position,
+            component_type: componentType,
+            model_name: modelName,
+            sae_combo_id: saeComboId,
+          }),
+        }),
+      ]);
+
+      if (!umapRes.ok) {
+        throw new Error(await umapRes.text());
+      }
+      if (!featuresRes.ok) {
+        throw new Error(await featuresRes.text());
+      }
+
+      const umapData = (await umapRes.json()) as DecoderWeightsUmapResponse;
+      const featureData = (await featuresRes.json()) as FeatureActivationData;
+
+      const activeFeatures: ActivatedFeature[] =
+        componentType === "attn" ? featureData.attn_features ?? [] : featureData.mlp_features ?? [];
+
+      const activationMap = new Map<number, number>();
+      for (const f of activeFeatures) {
+        activationMap.set(f.feature_index, f.activation_value);
+      }
+
+      const { embedding, feature_ids } = umapData;
+      if (!Array.isArray(embedding) || !Array.isArray(feature_ids) || embedding.length !== feature_ids.length) {
+        throw new Error("Invalid UMAP data returned from backend");
+      }
+
+      const points: UmapPoint[] = embedding.map((coord, idx) => {
+        const featureIndex = feature_ids[idx];
+        const activationValue = activationMap.get(featureIndex);
+        return {
+          featureIndex,
+          x: coord[0] ?? 0,
+          y: coord[1] ?? 0,
+          activationValue,
+          isActive: activationValue !== undefined,
+        };
+      });
+
+      setUmapPoints(points);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setUmapPoints([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [fen, layer, position, componentType, modelName, saeComboId, getDictionaryName]);
+
+  const loadFeatureDetail = useCallback(
+    async (featureIndex: number) => {
+      setLoadingDetail(true);
+      setDetailFeature(null);
+      setTopActivation(null);
+      setCurrentFenActivation(null);
+      try {
+        const dictionary = getDictionaryName();
+        const [featureRes, fenRes] = await Promise.all([
+          fetch(`${BACKEND_URL}/dictionaries/${encodeURIComponent(dictionary)}/features/${featureIndex}`, {
+            method: "GET",
+            headers: {
+              Accept: "application/x-msgpack",
+            },
+          }),
+          fetch(
+            `${BACKEND_URL}/dictionaries/${encodeURIComponent(dictionary)}/features/${featureIndex}/analyze_fen`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({ fen: fen.trim() }),
+            }
+          ),
+        ]);
+
+        if (!featureRes.ok) {
+          throw new Error(await featureRes.text());
+        }
+        if (!fenRes.ok) {
+          throw new Error(await fenRes.text());
+        }
+
+        const arrayBuffer = await featureRes.arrayBuffer();
+        const decoded = decode(new Uint8Array(arrayBuffer)) as Record<string, unknown>;
+        const camel = camelcaseKeys(decoded, {
+          deep: true,
+          stopPaths: ["sample_groups.samples.context"],
+        });
+
+        const feature = FeatureSchema.parse(camel) as Feature;
+        setDetailFeature(feature);
+
+        const chessSamples = parseTopActivationData(camel);
+        setTopActivation(chessSamples.length > 0 ? chessSamples[0] : null);
+
+        const fenData = await fenRes.json();
+
+        let activations: number[] | undefined = undefined;
+        if (fenData.feature_acts_indices && fenData.feature_acts_values) {
+          activations = new Array(64).fill(0);
+          const indices: number[] = fenData.feature_acts_indices;
+          const values: number[] = fenData.feature_acts_values;
+          for (let i = 0; i < Math.min(indices.length, values.length); i++) {
+            const index = indices[i];
+            const value = values[i];
+            if (index >= 0 && index < 64) {
+              activations[index] = value;
+            }
+          }
+        }
+
+        let zPatternIndices: number[][] | undefined = undefined;
+        let zPatternValues: number[] | undefined = undefined;
+        if (fenData.z_pattern_indices && fenData.z_pattern_values) {
+          const zpIdxRaw = fenData.z_pattern_indices;
+          zPatternIndices = Array.isArray(zpIdxRaw) && Array.isArray(zpIdxRaw[0]) ? zpIdxRaw : [zpIdxRaw];
+          zPatternValues = fenData.z_pattern_values;
+        }
+
+        setCurrentFenActivation({
+          fen: fen.trim(),
+          activations,
+          zPatternIndices,
+          zPatternValues,
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setDetailFeature(null);
+        setTopActivation(null);
+        setCurrentFenActivation(null);
+      } finally {
+        setLoadingDetail(false);
+      }
+    },
+    [fen, getDictionaryName]
+  );
+
+  const { scaledPoints } = useMemo(() => {
+    if (umapPoints.length === 0) {
+      return {
+        scaledPoints: [] as (UmapPoint & { sx: number; sy: number })[],
+      };
+    }
+
+    let localMinX = Number.POSITIVE_INFINITY;
+    let localMaxX = Number.NEGATIVE_INFINITY;
+    let localMinY = Number.POSITIVE_INFINITY;
+    let localMaxY = Number.NEGATIVE_INFINITY;
+
+    for (const p of umapPoints) {
+      if (p.x < localMinX) localMinX = p.x;
+      if (p.x > localMaxX) localMaxX = p.x;
+      if (p.y < localMinY) localMinY = p.y;
+      if (p.y > localMaxY) localMaxY = p.y;
+    }
+
+    const padding = PADDING;
+    const width = CANVAS_SIZE - padding * 2;
+    const height = CANVAS_SIZE - padding * 2;
+    const dx = localMaxX - localMinX || 1;
+    const dy = localMaxY - localMinY || 1;
+
+    const orderedPoints = [...umapPoints].sort((a, b) => {
+      if (a.isActive === b.isActive) return 0;
+      return a.isActive ? 1 : -1;
+    });
+
+    const sp = orderedPoints.map((p) => ({
+      ...p,
+      sx: padding + ((p.x - localMinX) / dx) * width,
+      sy: padding + ((localMaxY - p.y) / dy) * height,
+    }));
+
+    return {
+      scaledPoints: sp,
+    };
+  }, [umapPoints]);
+
+  const visiblePoints = useMemo(() => {
+    if (scaledPoints.length === 0) return [];
+
+    return scaledPoints.filter((p) => {
+      if (showOnlyActive && !p.isActive) {
+        return false;
+      }
+      if (!zoomRect) {
+        return true;
+      }
+      const xMin = Math.min(zoomRect.x1, zoomRect.x2);
+      const xMax = Math.max(zoomRect.x1, zoomRect.x2);
+      const yMin = Math.min(zoomRect.y1, zoomRect.y2);
+      const yMax = Math.max(zoomRect.y1, zoomRect.y2);
+      return p.sx >= xMin && p.sx <= xMax && p.sy >= yMin && p.sy <= yMax;
+    });
+  }, [scaledPoints, showOnlyActive, zoomRect]);
+
+  const displayPoints = useMemo(() => {
+    if (zoomRect) {
+      return visiblePoints.map((p) => {
+        const { dx, dy } = zoomRectToDisplay(zoomRect, p.sx, p.sy);
+        return { ...p, dx, dy };
+      });
+    }
+    return visiblePoints.map((p) => ({ ...p, dx: p.sx, dy: p.sy }));
+  }, [visiblePoints, zoomRect]);
+
+  const activeCount = useMemo(
+    () => visiblePoints.filter((p) => p.isActive).length,
+    [visiblePoints]
+  );
+
+  const handleSvgMouseDown = (event: React.MouseEvent<SVGSVGElement>) => {
+    didBrushThisGesture.current = false;
+    const svg = event.currentTarget;
+    const { x: rawX, y: rawY } = clientToSvgViewBox(svg, event.clientX, event.clientY);
+    let x: number;
+    let y: number;
+    if (zoomRect) {
+      const full = displayToZoomRect(zoomRect, rawX, rawY);
+      x = Math.min(Math.max(full.x, zoomRect.x1), zoomRect.x2);
+      y = Math.min(Math.max(full.y, zoomRect.y1), zoomRect.y2);
+    } else {
+      x = Math.min(Math.max(rawX, 0), CANVAS_SIZE);
+      y = Math.min(Math.max(rawY, 0), CANVAS_SIZE);
+    }
+    setIsBrushing(true);
+    setBrushRect({ x1: x, y1: y, x2: x, y2: y });
+  };
+
+  const handleSvgMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
+    if (!isBrushing || !brushRect) return;
+    const svg = event.currentTarget;
+    const { x: rawX, y: rawY } = clientToSvgViewBox(svg, event.clientX, event.clientY);
+    let x: number;
+    let y: number;
+    if (zoomRect) {
+      const full = displayToZoomRect(zoomRect, rawX, rawY);
+      x = Math.min(Math.max(full.x, zoomRect.x1), zoomRect.x2);
+      y = Math.min(Math.max(full.y, zoomRect.y1), zoomRect.y2);
+    } else {
+      x = Math.min(Math.max(rawX, 0), CANVAS_SIZE);
+      y = Math.min(Math.max(rawY, 0), CANVAS_SIZE);
+    }
+    setBrushRect((prev) => (prev ? { ...prev, x2: x, y2: y } : prev));
+  };
+
+  const finalizeBrush = () => {
+    if (!isBrushing || !brushRect) {
+      setIsBrushing(false);
+      setBrushRect(null);
+      return;
+    }
+    const { x1, y1, x2, y2 } = brushRect;
+    if (Math.abs(x2 - x1) < 4 || Math.abs(y2 - y1) < 4) {
+      setIsBrushing(false);
+      setBrushRect(null);
+      return;
+    }
+    didBrushThisGesture.current = true;
+    setZoomRect({
+      x1: Math.min(x1, x2),
+      y1: Math.min(y1, y2),
+      x2: Math.max(x1, x2),
+      y2: Math.max(y1, y2),
+    });
+    setIsBrushing(false);
+    setBrushRect(null);
+  };
+
+  const handleSvgMouseUp = () => {
+    finalizeBrush();
+  };
+
+  const handleSvgMouseLeave = () => {
+    if (isBrushing) {
+      finalizeBrush();
+    }
+  };
+
+  const handleZoomIn = () => {
+    if (!zoomRect) return;
+    const w = zoomRect.x2 - zoomRect.x1;
+    const h = zoomRect.y2 - zoomRect.y1;
+    const cx = (zoomRect.x1 + zoomRect.x2) / 2;
+    const cy = (zoomRect.y1 + zoomRect.y2) / 2;
+    const factor = 0.75;
+    setZoomRect({
+      x1: cx - (w * factor) / 2,
+      y1: cy - (h * factor) / 2,
+      x2: cx + (w * factor) / 2,
+      y2: cy + (h * factor) / 2,
+    });
+  };
+
+  const handleZoomOut = () => {
+    if (!zoomRect) return;
+    const w = zoomRect.x2 - zoomRect.x1;
+    const h = zoomRect.y2 - zoomRect.y1;
+    const cx = (zoomRect.x1 + zoomRect.x2) / 2;
+    const cy = (zoomRect.y1 + zoomRect.y2) / 2;
+    const factor = 1.33;
+    const newW = w * factor;
+    const newH = h * factor;
+    if (newW >= CANVAS_SIZE - PADDING * 2 && newH >= CANVAS_SIZE - PADDING * 2) {
+      setZoomRect(null);
+      return;
+    }
+    setZoomRect({
+      x1: Math.max(0, cx - newW / 2),
+      y1: Math.max(0, cy - newH / 2),
+      x2: Math.min(CANVAS_SIZE, cx + newW / 2),
+      y2: Math.min(CANVAS_SIZE, cy + newH / 2),
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          Feature UMAP for Position
+          <div className="text-sm font-normal mt-2 text-gray-600">
+            FEN: <code className="bg-gray-100 px-2 py-1 rounded text-xs break-all">{fen}</code>
+            <br />
+            Layer: {layer} | Component: {componentType === "attn" ? "Attention (Lorsa)" : "MLP (Transcoder)"} | Position:{" "}
+            {position}
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={loadUmapAndFeatures} disabled={loading || !fen.trim()}>
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Loading UMAP...
+                </>
+              ) : (
+                "Load Umap"
+              )}
+            </Button>
+            <Button
+              variant={showOnlyActive ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowOnlyActive((prev) => !prev)}
+              disabled={umapPoints.length === 0}
+            >
+              {showOnlyActive ? "Visualize all features" : "Only visualize activated features"}
+            </Button>
+            {zoomRect && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleZoomIn}
+                  disabled={umapPoints.length === 0}
+                  title="Zoom in on current view"
+                >
+                  Zoom in
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleZoomOut}
+                  disabled={umapPoints.length === 0}
+                  title="Zoom out or reset to full view"
+                >
+                  Zoom out
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setZoomRect(null)}
+                  disabled={umapPoints.length === 0}
+                >
+                  Reset zoom region
+                </Button>
+              </>
+            )}
+            {umapPoints.length > 0 && (
+              <div className="text-sm text-gray-600">
+                Total features: {umapPoints.length},{" "}
+                activated at position {position} in view: {activeCount}
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <div className="text-red-500 font-bold text-sm bg-red-50 border border-red-200 rounded px-3 py-2 max-w-xl">
+              {error}
+            </div>
+          )}
+
+          {umapPoints.length === 0 && !loading && !error && (
+            <div className="text-sm text-gray-500">
+              Click <span className="font-semibold">Load Umap</span> to compute the decoder-weights UMAP for the current
+              dictionary and highlight features activated at position {position}.
+            </div>
+          )}
+
+          {umapPoints.length > 0 && (
+            <div className="space-y-6">
+              <div>
+                <div className="mb-2 text-sm text-gray-600">
+                  UMAP over all SAE decoder features (blue dots are features activated at position {position}, gray are
+                  inactive). Click a dot to inspect its top activation and interpretation. Drag a rectangle to zoom in on that area.
+                </div>
+                <svg
+                  viewBox="0 0 480 480"
+                  className="w-full h-96 border rounded bg-white"
+                  role="img"
+                  aria-label="UMAP embedding of features"
+                  onMouseDown={handleSvgMouseDown}
+                  onMouseMove={handleSvgMouseMove}
+                  onMouseUp={handleSvgMouseUp}
+                  onMouseLeave={handleSvgMouseLeave}
+                >
+                  <rect x={0} y={0} width={480} height={480} fill="#ffffff" />
+                  {zoomRect && (
+                    <rect
+                      x={PADDING}
+                      y={PADDING}
+                      width={PLOT_WIDTH}
+                      height={PLOT_HEIGHT}
+                      fill="none"
+                      stroke="#9CA3AF"
+                      strokeWidth={1}
+                      strokeDasharray="4 4"
+                    />
+                  )}
+                  {brushRect && isBrushing && (() => {
+                    const x1 = zoomRect
+                      ? zoomRectToDisplay(zoomRect, brushRect.x1, brushRect.y1).dx
+                      : brushRect.x1;
+                    const y1 = zoomRect
+                      ? zoomRectToDisplay(zoomRect, brushRect.x1, brushRect.y1).dy
+                      : brushRect.y1;
+                    const x2 = zoomRect
+                      ? zoomRectToDisplay(zoomRect, brushRect.x2, brushRect.y2).dx
+                      : brushRect.x2;
+                    const y2 = zoomRect
+                      ? zoomRectToDisplay(zoomRect, brushRect.x2, brushRect.y2).dy
+                      : brushRect.y2;
+                    return (
+                      <rect
+                        x={Math.min(x1, x2)}
+                        y={Math.min(y1, y2)}
+                        width={Math.abs(x2 - x1)}
+                        height={Math.abs(y2 - y1)}
+                        fill="rgba(37, 99, 235, 0.08)"
+                        stroke="#2563EB"
+                        strokeWidth={1}
+                        strokeDasharray="4 4"
+                      />
+                    );
+                  })()}
+                  {displayPoints.map((p) => {
+                    const isSelected = selectedPoint?.featureIndex === p.featureIndex;
+                    const fill = p.isActive ? "#2563EB" : "rgba(148, 163, 184, 0.35)";
+                    const radius = p.isActive ? 1.2 : 0.9;
+                    const stroke = isSelected ? "#F97316" : p.isActive ? "#1D4ED8" : "rgba(148, 163, 184, 0.8)";
+                    const strokeWidth = isSelected ? 1.2 : p.isActive ? 0.8 : 0.5;
+                    return (
+                      <circle
+                        key={p.featureIndex}
+                        cx={p.dx}
+                        cy={p.dy}
+                        r={radius}
+                        fill={fill}
+                        stroke={stroke}
+                        strokeWidth={strokeWidth}
+                        className="cursor-pointer"
+                        onClick={() => {
+                          if (didBrushThisGesture.current) return;
+                          setSelectedPoint(p);
+                          void loadFeatureDetail(p.featureIndex);
+                        }}
+                      >
+                        <title>
+                          {`Feature #${p.featureIndex}${
+                            p.activationValue !== undefined ? ` | act=${p.activationValue.toFixed(4)}` : ""
+                          }`}
+                        </title>
+                      </circle>
+                    );
+                  })}
+                </svg>
+                <div className="mt-2 text-xs text-gray-500">
+                  X/Y axes are arbitrary UMAP dimensions over decoder weights; nearby points tend to have similar decoder
+                  directions.
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-base mb-2">Selected feature details</h3>
+                  {selectedPoint ? (
+                    <div className="text-sm text-gray-700">
+                      <div>
+                        Feature <span className="font-mono font-semibold">#{selectedPoint.featureIndex}</span>
+                      </div>
+                      <div>
+                        Activation at position {position}:{" "}
+                        {selectedPoint.activationValue !== undefined ? (
+                          <span
+                            className={
+                              selectedPoint.activationValue > 0 ? "text-green-600 font-medium" : "text-red-600 font-medium"
+                            }
+                          >
+                            {selectedPoint.activationValue > 0 ? "+" : ""}
+                            {selectedPoint.activationValue.toFixed(6)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-500">inactive at this position</span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        Dictionary: <code className="bg-gray-100 px-1 py-0.5 rounded text-[10px]">{getDictionaryName()}</code>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500">
+                      Click any point in the UMAP above to view its top activation and interpretation here.
+                    </div>
+                  )}
+                </div>
+
+                {loadingDetail && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading top activation and interpretation...
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+                  <div>
+                    {topActivation && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-sm">
+                            Top activation sample — Feature #{selectedPoint?.featureIndex}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-xs text-gray-600 mb-2">
+                            Maximum activation value: {topActivation.activationStrength.toFixed(3)}
+                          </div>
+                          <div className="flex justify-center">
+                            <div className="origin-center" style={{ transform: "scale(0.8)" }}>
+                              <ChessBoard
+                                fen={topActivation.fen}
+                                size="small"
+                                showCoordinates={true}
+                                activations={topActivation.activations}
+                                zPatternIndices={topActivation.zPatternIndices}
+                                zPatternValues={topActivation.zPatternValues}
+                                sampleIndex={topActivation.sampleIndex}
+                                analysisName={
+                                  topActivation.contextId != null ? `Context ${topActivation.contextId}` : undefined
+                                }
+                                flip_activation={topActivation.fen.includes(" b ")}
+                                autoFlipWhenBlack={true}
+                              />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+
+                  <div>
+                    {currentFenActivation && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-sm">
+                            Current FEN — Feature #{selectedPoint?.featureIndex} (64 positions activated)
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-xs text-gray-600 mb-2">
+                            FEN:{" "}
+                            <code className="bg-gray-100 px-2 py-1 rounded break-all">
+                              {currentFenActivation.fen}
+                            </code>
+                          </div>
+                          <div className="flex justify-center">
+                            <div className="origin-center" style={{ transform: "scale(0.8)" }}>
+                              <ChessBoard
+                                fen={currentFenActivation.fen}
+                                size="small"
+                                showCoordinates={true}
+                                activations={currentFenActivation.activations}
+                                zPatternIndices={currentFenActivation.zPatternIndices}
+                                zPatternValues={currentFenActivation.zPatternValues}
+                                autoFlipWhenBlack={true}
+                                flip_activation={currentFenActivation.fen.includes(" b ")}
+                                showSelfPlay={true}
+                                analysisName={`Current FEN | pos ${position}`}
+                              />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+
+                  <div>
+                    {detailFeature && <FeatureInterpretationCard feature={detailFeature} title="Interpretation" />}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};

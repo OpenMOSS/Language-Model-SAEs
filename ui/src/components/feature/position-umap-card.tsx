@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { ChessBoard } from "@/components/chess/chess-board";
 import { FeatureSchema, type Feature } from "@/types/feature";
 import { FeatureInterpretationCard } from "@/components/feature/interpret";
+import { buildBt4DictionaryName } from "@/utils/bt4Sae";
 import camelcaseKeys from "camelcase-keys";
 import { decode } from "@msgpack/msgpack";
 
@@ -217,13 +218,11 @@ export const PositionFeatureUmapCard = ({
   const didBrushThisGesture = useRef(false);
 
   const getDictionaryName = useCallback((): string => {
-    const suffix = componentType === "attn" ? "A" : "M";
-    const baseDict = `BT4_${componentType === "attn" ? "lorsa" : "tc"}_L${layer}${suffix}`;
-    if (saeComboId && saeComboId !== "k_128_e_128") {
-      const comboParts = saeComboId.replace(/k_(\d+)_e_(\d+)/, "k$1_e$2");
-      return `${baseDict}_${comboParts}`;
-    }
-    return baseDict;
+    return buildBt4DictionaryName(
+      layer,
+      componentType === "attn" ? "lorsa" : "tc",
+      saeComboId,
+    );
   }, [componentType, layer, saeComboId]);
 
   const loadUmapAndFeatures = useCallback(async () => {

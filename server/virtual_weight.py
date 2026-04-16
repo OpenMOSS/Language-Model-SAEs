@@ -140,6 +140,10 @@ def construct_name(virtual_weights: torch.Tensor, prefix: str, k: int) -> List[T
     return construct_topk(feature_list, k)
 
 
+def _feature_name_prefix(template: str, layer_idx: int) -> str:
+    return f"{template.format(layer=layer_idx)}#{{}}"
+
+
 def tc_virtual_weight_in(
     transcoders: Dict[int, SparseAutoEncoder],
     lorsas: List[LowRankSparseAttention],
@@ -149,6 +153,8 @@ def tc_virtual_weight_in(
     lorsa_activations: torch.Tensor,
     k: int = 100,
     layer_filter: List[int] | None = None,
+    tc_name_template: str = "BT4_tc_L{layer}M_k30_e16",
+    lorsa_name_template: str = "BT4_lorsa_L{layer}A_k30_e16",
 ) -> List[Tuple[str, float]]:
     """calculate the input virtual weight of a TC feature"""
     if layer_filter is not None:
@@ -167,7 +173,7 @@ def tc_virtual_weight_in(
         # get decoder matrix (with activations weight)
         f_dec = transcoders[i].W_D * tc_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
-        feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
+        feature_list_tc.extend(construct_name(V, _feature_name_prefix(tc_name_template, i), k=k))
 
     feature_list_lorsa = []
     # Lorsa 0 to layer_idx
@@ -180,7 +186,7 @@ def tc_virtual_weight_in(
         # get decoder matrix (with activations weight)
         f_dec = lorsas[i].W_O * lorsa_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
-        feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
+        feature_list_lorsa.extend(construct_name(V, _feature_name_prefix(lorsa_name_template, i), k=k))
 
     feature_list_tc = construct_topk(feature_list_tc, k)
     feature_list_lorsa = construct_topk(feature_list_lorsa, k)
@@ -196,6 +202,8 @@ def lorsa_virtual_weight_in(
     lorsa_activations: torch.Tensor,
     k: int = 100,
     layer_filter: List[int] | None = None,
+    tc_name_template: str = "BT4_tc_L{layer}M_k30_e16",
+    lorsa_name_template: str = "BT4_lorsa_L{layer}A_k30_e16",
 ) -> List[Tuple[str, float]]:
     """calculate the input virtual weight of a Lorsa feature"""
     if layer_filter is not None:
@@ -213,7 +221,7 @@ def lorsa_virtual_weight_in(
             print(f"lorsa_virtual_weight_in: process TC layer {i} (filter: {layer_filter})")
         f_dec = transcoders[i].W_D * tc_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
-        feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
+        feature_list_tc.extend(construct_name(V, _feature_name_prefix(tc_name_template, i), k=k))
 
     feature_list_lorsa = []
     # Lorsa 0 to layer_idx-1
@@ -225,7 +233,7 @@ def lorsa_virtual_weight_in(
             print(f"lorsa_virtual_weight_in: process Lorsa layer {i} (filter: {layer_filter})")
         f_dec = lorsas[i].W_O * lorsa_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_enc, f_dec, "d_model, d_sae d_model -> d_sae")  # [d_sae]
-        feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
+        feature_list_lorsa.extend(construct_name(V, _feature_name_prefix(lorsa_name_template, i), k=k))
 
     feature_list_tc = construct_topk(feature_list_tc, k)
     feature_list_lorsa = construct_topk(feature_list_lorsa, k)
@@ -241,6 +249,8 @@ def tc_virtual_weight_out(
     lorsa_activations: torch.Tensor,
     k: int = 100,
     layer_filter: List[int] | None = None,
+    tc_name_template: str = "BT4_tc_L{layer}M_k30_e16",
+    lorsa_name_template: str = "BT4_lorsa_L{layer}A_k30_e16",
 ) -> List[Tuple[str, float]]:
     """calculate the output virtual weight of a TC feature"""
     if layer_filter is not None:
@@ -257,7 +267,7 @@ def tc_virtual_weight_out(
             print(f"tc_virtual_weight_out: process TC layer {i} (filter: {layer_filter})")
         f_enc = transcoders[i].W_D * tc_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
-        feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
+        feature_list_tc.extend(construct_name(V, _feature_name_prefix(tc_name_template, i), k=k))
 
     feature_list_lorsa = []
     for i in range(layer_idx + 1, len(transcoders)):
@@ -268,7 +278,7 @@ def tc_virtual_weight_out(
             print(f"tc_virtual_weight_out: process Lorsa layer {i} (filter: {layer_filter})")
         f_enc = lorsas[i].W_V  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
-        feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
+        feature_list_lorsa.extend(construct_name(V, _feature_name_prefix(lorsa_name_template, i), k=k))
 
     feature_list_tc = construct_topk(feature_list_tc, k)
     feature_list_lorsa = construct_topk(feature_list_lorsa, k)
@@ -284,6 +294,8 @@ def lorsa_virtual_weight_out(
     lorsa_activations: torch.Tensor,
     k: int = 100,
     layer_filter: List[int] | None = None,
+    tc_name_template: str = "BT4_tc_L{layer}M_k30_e16",
+    lorsa_name_template: str = "BT4_lorsa_L{layer}A_k30_e16",
 ) -> List[Tuple[str, float]]:
     """calculate the output virtual weight of a Lorsa feature"""
     if layer_filter is not None:
@@ -301,7 +313,7 @@ def lorsa_virtual_weight_out(
             print(f"lorsa_virtual_weight_out: process TC layer {i} (filter: {layer_filter})")
         f_enc = transcoders[i].W_D * tc_activations[i, :, None]  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
-        feature_list_tc.extend(construct_name(V, f"BT4_tc_L{i}M_k30_e16#{{}}", k=k))
+        feature_list_tc.extend(construct_name(V, _feature_name_prefix(tc_name_template, i), k=k))
 
     feature_list_lorsa = []
     # Lorsa layer_idx+1 to n_layers-1
@@ -313,12 +325,11 @@ def lorsa_virtual_weight_out(
             print(f"lorsa_virtual_weight_out: process Lorsa layer {i} (filter: {layer_filter})")
         f_enc = lorsas[i].W_V  # [d_sae, d_model]
         V = einops.einsum(f_dec, f_enc, "d_model, d_sae d_model -> d_sae")  # [d_sae]
-        feature_list_lorsa.extend(construct_name(V, f"BT4_lorsa_L{i}A_k30_e16#{{}}", k=k))
+        feature_list_lorsa.extend(construct_name(V, _feature_name_prefix(lorsa_name_template, i), k=k))
 
     feature_list_tc = construct_topk(feature_list_tc, k)
     feature_list_lorsa = construct_topk(feature_list_lorsa, k)
     return feature_list_tc + feature_list_lorsa
-
 
 
 

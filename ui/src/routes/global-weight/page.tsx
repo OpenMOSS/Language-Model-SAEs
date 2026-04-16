@@ -11,6 +11,12 @@ import { SaeComboLoader } from '@/components/common/SaeComboLoader';
 import { ChessBoard } from '@/components/chess/chess-board';
 import { CircuitInterpretationCard } from '@/components/circuits/circuit-interpretation-card';
 import { AtlasVisualization } from '@/components/atlas/visualize-atlas';
+import {
+  buildBt4AnalysisName,
+  buildBt4DictionaryName,
+  buildBt4FeatureName,
+  parseBt4FeatureName,
+} from '@/utils/bt4Sae';
 
 interface VirtualWeightFeature {
   name: string;
@@ -268,28 +274,20 @@ export const GlobalWeightPage: React.FC = () => {
     featureIdx: number;
     featureType: 'tc' | 'lorsa';
   } | null => {
-    const match = featureName.match(/BT4_(tc|lorsa)_L(\d+)(M|A)_k30_e16#(\d+)/);
-    if (match) {
-      const [, type, layer, , idx] = match;
-      return {
-        layerIdx: parseInt(layer),
-        featureIdx: parseInt(idx),
-        featureType: type as 'tc' | 'lorsa',
-      };
-    }
-    return null;
+    const parsed = parseBt4FeatureName(featureName);
+    return parsed
+      ? {
+          layerIdx: parsed.layerIdx,
+          featureIdx: parsed.featureIdx,
+          featureType: parsed.featureType,
+        }
+      : null;
   }, []);
 
   // Get dictionary name (based on layer and type)
   const getDictionaryName = useCallback((layerIdx: number, isLorsa: boolean): string => {
-    // Build dictionary name based on combination ID
-    // Format: BT4_lorsa_L{layer}A_k30_e16 or BT4_tc_L{layer}M_k30_e16
-    if (isLorsa) {
-      return `BT4_lorsa_L${layerIdx}A_k30_e16`;
-    } else {
-      return `BT4_tc_L${layerIdx}M_k30_e16`;
-    }
-  }, []);
+    return buildBt4DictionaryName(layerIdx, isLorsa ? 'lorsa' : 'tc', saeComboId);
+  }, [saeComboId]);
 
   // Get SAE name (for Circuit Interpretation)
   const getSaeNameForCircuit = useCallback((layer: number, isLorsa: boolean): string => {
@@ -656,7 +654,7 @@ export const GlobalWeightPage: React.FC = () => {
               },
               body: JSON.stringify({
                 nodes: lorsaNodes,
-                lorsa_analysis_name: 'BT4_lorsa_k30_e16',
+                lorsa_analysis_name: buildBt4AnalysisName('lorsa', saeComboId),
               })
             }
           );
@@ -692,7 +690,7 @@ export const GlobalWeightPage: React.FC = () => {
               },
               body: JSON.stringify({
                 nodes: tcNodes,
-                tc_analysis_name: 'BT4_tc_k30_e16',
+                tc_analysis_name: buildBt4AnalysisName('tc', saeComboId),
               })
             }
           );
@@ -773,7 +771,7 @@ export const GlobalWeightPage: React.FC = () => {
     setSyncingClerp(true);
     try {
       // Build analysis_name
-      const analysisName = isLorsa ? 'BT4_lorsa_k30_e16' : 'BT4_tc_k30_e16';
+      const analysisName = buildBt4AnalysisName(isLorsa ? 'lorsa' : 'tc', saeComboId);
       
       // Build node data
       const node = {
@@ -834,7 +832,7 @@ export const GlobalWeightPage: React.FC = () => {
     
     try {
       // Build analysis_name
-      const analysisName = isLorsa ? 'BT4_lorsa_k30_e16' : 'BT4_tc_k30_e16';
+      const analysisName = buildBt4AnalysisName(isLorsa ? 'lorsa' : 'tc', saeComboId);
       
       // Build node data
       const node = {
@@ -895,7 +893,7 @@ export const GlobalWeightPage: React.FC = () => {
   const saveClerp = useCallback(async (layerIdx: number, featureIdx: number, isLorsa: boolean, clerpText: string) => {
     setIsSavingClerp(true);
     try {
-      const analysisName = isLorsa ? 'BT4_lorsa_k30_e16' : 'BT4_tc_k30_e16';
+      const analysisName = buildBt4AnalysisName(isLorsa ? 'lorsa' : 'tc', saeComboId);
       
       const node = {
         node_id: `${layerIdx * 2}_${featureIdx}_0`,
@@ -971,7 +969,7 @@ export const GlobalWeightPage: React.FC = () => {
     }
     
     try {
-      const analysisName = isLorsa ? 'BT4_lorsa_k30_e16' : 'BT4_tc_k30_e16';
+      const analysisName = buildBt4AnalysisName(isLorsa ? 'lorsa' : 'tc', saeComboId);
       
       const node = {
         node_id: `${layerIdx * 2}_${featureIdx}_0`,
@@ -1089,9 +1087,12 @@ export const GlobalWeightPage: React.FC = () => {
     }
 
     // Build feature name
-    const featureTypePrefix = searchFeatureType === 'lorsa' ? 'BT4_lorsa' : 'BT4_tc';
-    const layerSuffix = searchFeatureType === 'lorsa' ? 'A' : 'M';
-    const featureName = `${featureTypePrefix}_L${searchLayerIdx}${layerSuffix}_k30_e16#${searchFeatureIdx}`;
+    const featureName = buildBt4FeatureName(
+      searchLayerIdx,
+      searchFeatureIdx,
+      searchFeatureType,
+      saeComboId,
+    );
 
     // Search in Features In
     const featuresInMatch = result.features_in.find(f => f.name === featureName);

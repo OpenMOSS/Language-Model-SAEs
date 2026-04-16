@@ -5,7 +5,7 @@ from typing import Dict, TypedDict
 class SaeComboConfig(TypedDict):
     """Configuration for a single SAE combo."""
 
-    id: str  # ID, e.g. "k_64_e_32"
+    id: str  # ID, e.g. "k_30_e_16"
     label: str  # frontend display text
     tc_base_path: str  # Transcoder SAE base path
     lorsa_base_path: str  # Lorsa SAE base path
@@ -20,88 +20,37 @@ BT4_MODEL_NAME: str = "lc0/BT4-1024x15x32h"
 
 # ===== Available BT4 SAE combos (from exp/38mongoanalyses/combos.txt) =====
 
+def _make_bt4_sae_combo(k: int, e: int) -> SaeComboConfig:
+    combo_id = f"k_{k}_e_{e}"
+    suffix = f"k{k}_e{e}"
+    return {
+        "id": combo_id,
+        "label": combo_id,
+        "tc_base_path": (
+            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
+            f"rlin_projects/chess-SAEs-N/result_BT4/tc/{combo_id}"
+        ),
+        "lorsa_base_path": (
+            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
+            f"rlin_projects/chess-SAEs-N/result_BT4/lorsa/{combo_id}"
+        ),
+        "tc_sae_name_template": f"BT4_tc_L{{layer}}M_{suffix}",
+        "lorsa_sae_name_template": f"BT4_lorsa_L{{layer}}A_{suffix}",
+        "tc_analysis_name": f"BT4_tc_{suffix}",
+        "lorsa_analysis_name": f"BT4_lorsa_{suffix}",
+    }
+
+
 BT4_SAE_COMBOS: Dict[str, SaeComboConfig] = {
-    "k_30_e_16": {
-        "id": "k_30_e_16",
-        "label": "k_30_e_16 (small capacity)",
-        "tc_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/tc/k_30_e_16"
-        ),
-        "lorsa_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/lorsa/k_30_e_16"
-        ),
-        "tc_sae_name_template": "BT4_tc_L{layer}M_k30_e16",
-        "lorsa_sae_name_template": "BT4_lorsa_L{layer}A_k30_e16",
-        "tc_analysis_name": "BT4_tc_k30_e16",
-        "lorsa_analysis_name": "BT4_lorsa_k30_e16",
-    },
-    "k_64_e_32": {
-        "id": "k_64_e_32",
-        "label": "k_64_e_32 (default medium capacity)",
-        "tc_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/tc/k_64_e_32"
-        ),
-        "lorsa_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/lorsa/k_64_e_32"
-        ),
-        "tc_sae_name_template": "BT4_tc_L{layer}M_k64_e32",
-        "lorsa_sae_name_template": "BT4_lorsa_L{layer}A_k64_e32",
-        "tc_analysis_name": "BT4_tc_k64_e32",
-        "lorsa_analysis_name": "BT4_lorsa_k64_e32",
-    },
-    "k_128_e_64": {
-        "id": "k_128_e_64",
-        "label": "k_128_e_64 (larger capacity)",
-        "tc_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/tc/k_128_e_64"
-        ),
-        "lorsa_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/lorsa/k_128_e_64"
-        ),
-        "tc_sae_name_template": "BT4_tc_L{layer}M_k128_e64",
-        "lorsa_sae_name_template": "BT4_lorsa_L{layer}A_k128_e64",
-        "tc_analysis_name": "BT4_tc_k128_e64",
-        "lorsa_analysis_name": "BT4_lorsa_k128_e64",
-    },
-    "k_256_e_128": {
-        "id": "k_256_e_128",
-        "label": "k_256_e_128 (largest capacity)",
-        "tc_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/tc/k_256_e_128"
-        ),
-        "lorsa_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/lorsa/k_256_e_128"
-        ),
-        "tc_sae_name_template": "BT4_tc_L{layer}M_k256_e128",
-        "lorsa_sae_name_template": "BT4_lorsa_L{layer}A_k256_e128",
-        "tc_analysis_name": "BT4_tc_k256_e128",
-        "lorsa_analysis_name": "BT4_lorsa_k256_e128",
-    },
-    "k_128_e_128": {
-        "id": "k_128_e_128",
-        "label": "k_128_e_128 (original default combo)",
-        "tc_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/tc/k_128_e_128"
-        ),
-        "lorsa_base_path": (
-            "/inspire/hdd/global_user/hezhengfu-240208120186/rlin_projects/"
-            "rlin_projects/chess-SAEs-N/result_BT4/lorsa/k_128_e_128"
-        ),
-        # Under this combo, SAE names are consistent with the old version, without k/e suffix
-        "tc_sae_name_template": "BT4_tc_L{layer}M",
-        "lorsa_sae_name_template": "BT4_lorsa_L{layer}A",
-        "tc_analysis_name": "BT4_tc",
-        "lorsa_analysis_name": "BT4_lorsa",
-    },
+    combo["id"]: combo
+    for combo in (
+        _make_bt4_sae_combo(30, 16),
+        _make_bt4_sae_combo(30, 32),
+        _make_bt4_sae_combo(60, 16),
+        _make_bt4_sae_combo(60, 32),
+        _make_bt4_sae_combo(90, 16),
+        _make_bt4_sae_combo(90, 32),
+    )
 }
 
 # Default SAE combo used as initial frontend option
