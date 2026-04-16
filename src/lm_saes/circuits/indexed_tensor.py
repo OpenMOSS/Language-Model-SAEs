@@ -79,6 +79,18 @@ class NodeInfo(PyTree):
     indices: torch.Tensor
     """Indices of elements in the node's data. Should be of shape `(n_elements, d_index)`."""
 
+    @functools.cached_property
+    def is_identity(self) -> bool:
+        """Whether indices select every element exactly once in natural order."""
+        local = self.indices.to_local() if isinstance(self.indices, DTensor) else self.indices
+        expected = torch.stack(
+            torch.meshgrid(
+                *[torch.arange(int(s), device=local.device) for s in local.max(dim=0).values + 1], indexing="ij"
+            ),
+            dim=-1,
+        ).reshape(-1, local.shape[1])
+        return local.shape == expected.shape and bool(torch.equal(local, expected))
+
     def __len__(self) -> int:
         return self.indices.shape[0]
 
@@ -604,20 +616,21 @@ class NodeIndexedTensor(PyTree):
             assert all(isinstance(placement, Replicate) for placement in self.data.placements), (
                 "Only support replicate placements for now"
             )
-            assert all(isinstance(placement, Replicate) for placement in cast(DTensor, value).placements), (
-                "Only support replicate placements for now"
-            )
+            if isinstance(value, DTensor):
+                assert all(isinstance(placement, Replicate) for placement in value.placements), (
+                    "Only support replicate placements for now"
+                )
+                local_value: Tensor | Number = value.to_local()
+            else:
+                local_value = value
             assert all(
                 isinstance(placement, Replicate)
                 for indexer in indexers
                 for placement in cast(DTensor, indexer).placements
             ), "Only support replicate placements for now"
-            self.data = DimMap({}).from_local(
-                self.data.to_local().index_put(
-                    tuple(cast(DTensor, indexer).to_local() for indexer in indexers), cast(DTensor, value).to_local()
-                ),
-                device_mesh=self.data.device_mesh,
-            )
+            local_data = self.data.to_local().clone()
+            local_data[tuple(cast(DTensor, indexer).to_local() for indexer in indexers)] = local_value
+            self.data = DimMap({}).from_local(local_data, device_mesh=self.data.device_mesh)
         return self
 
     def __add__(self, other: Self):
@@ -741,16 +754,27 @@ class NodeIndexedMatrix(NodeIndexedTensor):
         column node of each picked entry.
         """
         k = min(k, self.data.numel())
-        flat = self.data.reshape(-1)
-        top_values, top_indices = torch.topk(flat, k)
+        if k == 0:
+            # torch.topk(empty, 0) hangs on DTensor.
+            empty_offsets = torch.empty(0, device=self.data.device, dtype=torch.long)
+            empty_value = torch.empty(0, device=self.data.device, dtype=self.data.dtype)
+            if isinstance(self.data, DTensor):
+                empty_offsets = DimMap({}).from_local(empty_offsets, self.data.device_mesh)
+                empty_value = DimMap({}).from_local(empty_value, self.data.device_mesh)
+            return NodeIndexed(
+                value=empty_value,
+                dimensions=(
+                    self.dimensions[0].offsets_to_nodes(empty_offsets),
+                    self.dimensions[1].offsets_to_nodes(empty_offsets),
+                ),
+            )
+        top_values, top_indices = torch.topk(self.data.reshape(-1), k)
         n_cols = self.data.shape[1]
-        row_offsets = top_indices // n_cols
-        col_offsets = top_indices % n_cols
         return NodeIndexed(
             value=top_values,
             dimensions=(
-                self.dimensions[0].offsets_to_nodes(row_offsets),
-                self.dimensions[1].offsets_to_nodes(col_offsets),
+                self.dimensions[0].offsets_to_nodes(top_indices // n_cols),
+                self.dimensions[1].offsets_to_nodes(top_indices % n_cols),
             ),
         )
 

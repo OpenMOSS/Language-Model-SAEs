@@ -15,6 +15,28 @@ from torch.types import Number
 from lm_saes.utils.distributed.utils import all_gather_dict
 from lm_saes.utils.timer import timer
 
+_mbi_shape_meta_cache: dict[tuple[tuple[int, ...], int, tuple, int, int, torch.device], tuple[Tensor, Tensor]] = {}
+
+
+def _mbi_shape_meta(
+    x_shape: torch.Size,
+    device_mesh: DeviceMesh,
+    placements: tuple,
+    n_batch_dims: int,
+    n_indexing_dims: int,
+    device: torch.device,
+) -> tuple[Tensor, Tensor]:
+    key = (tuple(x_shape), id(device_mesh), placements, n_batch_dims, n_indexing_dims, device)
+    cached = _mbi_shape_meta_cache.get(key)
+    if cached is not None:
+        return cached
+    sizes_tuple, offsets_tuple = compute_local_shape_and_global_offset(x_shape, device_mesh, placements)
+    indexing_slice = slice(n_batch_dims, n_indexing_dims + n_batch_dims)
+    sizes = torch.tensor(sizes_tuple[indexing_slice], device=device, dtype=torch.long)
+    offsets = torch.tensor(offsets_tuple[indexing_slice], device=device, dtype=torch.long)
+    _mbi_shape_meta_cache[key] = (sizes, offsets)
+    return sizes, offsets
+
 
 @timer.time("full_tensor")
 def full_tensor(x: Tensor) -> Tensor:
@@ -475,13 +497,9 @@ def multi_batch_index(
         )
 
         with timer.time("prepare_local_indices"):
-            sizes_tuple, offsets_tuple = compute_local_shape_and_global_offset(
-                x_shape,
-                device_mesh,
-                placements,
+            sizes, offsets = _mbi_shape_meta(
+                x_shape, device_mesh, placements, n_batch_dims, n_indexing_dims, xs[0].device
             )
-            sizes = torch.tensor(sizes_tuple, device=xs[0].device, dtype=torch.long)[indexing_dims]
-            offsets = torch.tensor(offsets_tuple, device=xs[0].device, dtype=torch.long)[indexing_dims]
 
             local_outputs = []
             local_index_masks = []

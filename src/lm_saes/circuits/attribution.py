@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import (
@@ -37,6 +38,8 @@ from lm_saes.utils.distributed.ops import maybe_local_map, multi_batch_index, no
 from lm_saes.utils.misc import ensure_tokenized
 from lm_saes.utils.timer import timer
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class NodeRefs:
@@ -55,7 +58,9 @@ class NodeRefs:
             node_infos.append(NodeInfo(key=key, indices=indices))
         if len(node_infos) == 0:
             raise ValueError("Cannot build NodeRefs from empty entries without an explicit device.")
-        return cls(mapping=mapping, dimension=NodeDimension.from_node_infos(node_infos))
+        first_ref = next(iter(mapping.values()))
+        device_mesh = first_ref.device_mesh if isinstance(first_ref, DTensor) else None
+        return cls(mapping=mapping, dimension=NodeDimension.from_node_infos(node_infos, device_mesh=device_mesh))
 
     @property
     def device(self) -> torch.device:
@@ -78,10 +83,29 @@ class NodeRefs:
         """Unique ref tensors in insertion order (for ``torch.autograd.grad``)."""
         return list(self.mapping.values())
 
+    @functools.cached_property
+    def _entries(self) -> list[tuple[str, torch.Tensor, torch.Tensor]]:
+        return [(ni.key, ni.indices, self.mapping[ni.key]) for ni in self.dimension.node_infos]
+
+    @functools.cached_property
     @timer.time("values")
-    def values(self) -> list[torch.Tensor]:
+    def values(self) -> list[torch.Tensor]:  # type: ignore[override]
         """Index each ref by its node indices: ``mapping[key][:, *indices]``."""
         return multi_batch_index([(ref, indices) for _, indices, ref in self], n_batch_dims=1)
+
+    @functools.cached_property
+    def _source_split(self) -> tuple[dict[tuple[int, ...], list[int]], list[int], list[torch.Tensor]]:
+        values = self.values
+        full_groups: dict[tuple[int, ...], list[int]] = {}
+        sparse_slots: list[int] = []
+        sparse_indices: list[torch.Tensor] = []
+        for i, (ni, (_, idx, _), v) in enumerate(zip(self.dimension.node_infos, self._entries, values)):
+            if ni.is_identity:
+                full_groups.setdefault(tuple(v.shape[1:]), []).append(i)
+            else:
+                sparse_slots.append(i)
+                sparse_indices.append(idx)
+        return full_groups, sparse_slots, sparse_indices
 
     def iter_batches(self, batch_size: int) -> Iterator[NodeRefs]:
         """Yield sub-:class:`NodeRefs` of at most `batch_size` elements."""
@@ -114,8 +138,7 @@ class NodeRefs:
         )
 
     def __iter__(self) -> Iterator[tuple[str, torch.Tensor, torch.Tensor]]:
-        for ni in self.dimension.node_infos:
-            yield (ni.key, ni.indices, self.mapping[ni.key])
+        return iter(self._entries)
 
 
 @dataclass
@@ -203,26 +226,55 @@ def compute_intermediates_attribution(
     return influence
 
 
+@timer.time("batch_full_attribution")
+def _batch_full_attribution(
+    values: list[torch.Tensor],
+    grad_refs: Sequence[torch.Tensor | None],
+    slots: list[int],
+) -> torch.Tensor:
+    """Batched input×gradient for identity-indexed sources (value.shape == ref.shape)."""
+    grads = [grad_refs[s] if grad_refs[s] is not None else torch.zeros_like(values[s]) for s in slots]
+    stacked_v = torch.stack([values[s].detach() for s in slots], dim=1)
+    stacked_g = torch.stack([cast(torch.Tensor, g) for g in grads], dim=1)
+    product = einops.reduce(stacked_v * stacked_g, "batch sources n ... -> batch sources n", "sum")
+    return product.flatten(start_dim=1)
+
+
+@timer.time("sparse_attribution")
+def _sparse_attribution(
+    values: list[torch.Tensor],
+    grad_refs: Sequence[torch.Tensor | None],
+    slots: list[int],
+    indices: list[torch.Tensor],
+) -> torch.Tensor:
+    """Per-source input×gradient for sparse-indexed sources (need multi_batch_index)."""
+    nonzero = [(cast(torch.Tensor, grad_refs[s]), idx) for s, idx in zip(slots, indices) if grad_refs[s] is not None]
+    indexed = multi_batch_index(nonzero, n_batch_dims=1) if nonzero else []
+    grad_iter = iter(indexed)
+    parts = [
+        einops.reduce(values[s].detach() * next(grad_iter), "batch n ... -> batch n", "sum")
+        if grad_refs[s] is not None
+        else values[s].detach().new_zeros(values[s].shape[:2])
+        for s in slots
+    ]
+    return (
+        torch.cat(parts, dim=1)
+        if parts
+        else torch.empty(values[0].shape[0], 0, device=values[0].device, dtype=values[0].dtype)
+    )
+
+
+@timer.time("attribution_scores")
 def attribution_scores(
     grad_refs: Sequence[torch.Tensor | None],
     sources: NodeRefs,
 ) -> torch.Tensor:
     """Input×gradient attribution scores of shape ``(fwd_batch, n_sources)``."""
-    indexed = multi_batch_index(
-        [(g if g is not None else torch.zeros_like(ref), indices) for g, (_, indices, ref) in zip(grad_refs, sources)],
-        n_batch_dims=1,
-    )
-    return torch.cat(
-        [
-            einops.einsum(
-                value.detach(),
-                grad,
-                "batch n_elements ..., batch n_elements ... -> batch n_elements",
-            )
-            for value, grad in zip(sources.values(), indexed)
-        ],
-        dim=1,
-    )
+    values = sources.values
+    full_groups, sparse_slots, sparse_indices = sources._source_split  # pyright: ignore[reportPrivateUsage]
+    blocks = [_batch_full_attribution(values, grad_refs, slots) for _, slots in full_groups.items()]
+    blocks.append(_sparse_attribution(values, grad_refs, sparse_slots, sparse_indices))
+    return torch.cat(blocks, dim=1)
 
 
 @timer.time("greedily_collect_attribution")
@@ -249,7 +301,7 @@ def greedily_collect_attribution(
 
     @timer.time("per_target_attribution")
     def per_target_attribution(targets: NodeRefs) -> torch.Tensor:
-        root = maybe_local_map(torch.diag)(torch.cat(targets.values(), dim=1))
+        root = maybe_local_map(torch.diag)(torch.cat(targets.values, dim=1))
         grad_refs = torch.autograd.grad(
             root.sum(),
             all_sources.refs(),
@@ -841,7 +893,7 @@ def compute_hessian_matrix(
     per_slot_results: list[NodeIndexed[torch.Tensor]] = []
 
     for target_batch in targets.iter_batches(bwd_batch_size):
-        stacked = torch.cat(target_batch.values(), dim=1)  # (fwd_batch, n_slots)
+        stacked = torch.cat(target_batch.values, dim=1)  # (fwd_batch, n_slots)
         bwd_scores = torch.stack(
             [stacked[i * topk : (i + 1) * topk, i] for i in range(stacked.shape[1])],
             dim=0,
@@ -898,6 +950,7 @@ def compute_hessian_matrix(
     return NodeIndexed(value=per_slot_results, dimensions=(targets.dimension,))
 
 
+@timer.time("_extract_topk_pairwise_attributions")
 def _extract_topk_pairwise_attributions(
     q_side: NodeIndexedMatrix,  # (q_picks, sources)
     k_side: NodeIndexedMatrix,  # (k_picks, sources)
@@ -928,6 +981,7 @@ def _extract_topk_pairwise_attributions(
     )
 
 
+@timer.time("compute_qk_tracing")
 def compute_qk_tracing(
     q_targets: NodeRefs,
     k_targets: NodeRefs,
@@ -942,29 +996,33 @@ def compute_qk_tracing(
         - This means if extra steps exist in model forward between Q/K and attention score (e.g. rotary embedding, layernorms, attention score scaling), these steps must be applied and pass the final version to `q_targets` and `k_targets`.
     """
     assert len(q_targets.dimension) == len(k_targets.dimension)
-    device = sources.device
     bwd_batch_size = sources.batch_size // topk
     n_slots_total = len(q_targets.dimension)
+    device_mesh = sources.dimension.device_mesh
+    tp_pair_skipped = False
 
+    @timer.time("vjp_attribution")
     def vjp_attribution(outputs: torch.Tensor, cotangent: torch.Tensor) -> torch.Tensor:
-        return attribution_scores(
-            torch.autograd.grad(
+        with timer.time("vjp_grad"):
+            grads = torch.autograd.grad(
                 outputs,
                 sources.refs(),
                 grad_outputs=cotangent,
                 create_graph=True,
                 retain_graph=True,
                 allow_unused=True,
-            ),
-            sources,
-        )
+            )
+        return attribution_scores(grads, sources)
+
+    def replicate(t: torch.Tensor) -> torch.Tensor:
+        return t if device_mesh is None or isinstance(t, DTensor) else DimMap({}).from_local(t, device_mesh)
 
     def topk_nonzero(scores: torch.Tensor) -> NodeIndexed[torch.Tensor]:
-        values, indices = scores.topk(topk)
+        values, indices = scores.detach().topk(topk)
         keep = values != 0.0
         return NodeIndexed(
             value=values[keep],
-            dimensions=(sources.dimension.offsets_to_nodes(indices[keep]),),
+            dimensions=(sources.dimension.offsets_to_nodes(replicate(indices[keep])),),
         )
 
     q_marginal_slots: list[NodeIndexed[torch.Tensor]] = []
@@ -974,62 +1032,89 @@ def compute_qk_tracing(
     n_batches = (n_slots_total + bwd_batch_size - 1) // bwd_batch_size
     batch_iter = zip(q_targets.iter_batches(bwd_batch_size), k_targets.iter_batches(bwd_batch_size))
     for q_sub, k_sub in tqdm(batch_iter, total=n_batches, desc="QK Tracing", disable=n_batches <= 1):
-        # Use `topk`-sized slots for computing second-order attributions.
-        # The first-order gradient computation should be replicated for `topk` time
-        # for the same reason of `collect_cache` replicating `batch_size` times
-        # in forward pass.
-        q_stacked = torch.cat(q_sub.values(), dim=1)
-        k_stacked = torch.cat(k_sub.values(), dim=1)
-        n_slots = q_stacked.shape[1]
-        q_vecs = torch.stack([q_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
-        k_vecs = torch.stack([k_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
+        # `topk`-sized slots for second-order attributions: first-order grads
+        # are replicated `topk` times for the same reason `collect_cache`
+        # replicates `batch_size` times in forward.
+        with timer.time("qk_prep"):
+            q_stacked = full_tensor(torch.cat(q_sub.values, dim=1))
+            k_stacked = full_tensor(torch.cat(k_sub.values, dim=1))
+            n_slots = q_stacked.shape[1]
+            q_vecs = torch.stack([q_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
+            k_vecs = torch.stack([k_stacked[s * topk : (s + 1) * topk, s] for s in range(n_slots)], dim=0)
 
         a_Q = vjp_attribution(q_vecs, k_vecs)
         a_K = vjp_attribution(k_vecs, q_vecs)
         n_sources = a_Q.shape[1]
 
-        slot_first_rows = torch.arange(n_slots, device=device) * topk
-        merged = torch.cat([a_Q[slot_first_rows].detach(), a_K[slot_first_rows].detach()], dim=-1)
-        _, pick_flat = merged.topk(topk, dim=-1)
-        is_q_pick = pick_flat < n_sources
-        pick_src = torch.where(is_q_pick, pick_flat, pick_flat - n_sources)
-
-        bwd_rows = slot_first_rows.unsqueeze(1) + torch.arange(topk, device=device).unsqueeze(0)
-        second_bwd_values = torch.where(is_q_pick, a_Q[bwd_rows, pick_src], a_K[bwd_rows, pick_src]).reshape(-1)
-        second_attributions = attribution_scores(
-            torch.autograd.grad(
-                second_bwd_values.sum(),
-                sources.refs(),
-                retain_graph=True,
-                materialize_grads=True,
-            ),
-            sources,
-        )
-
-        q_marginal_slots.extend(topk_nonzero(a_Q[s * topk]) for s in range(n_slots))
-        k_marginal_slots.extend(topk_nonzero(a_K[s * topk]) for s in range(n_slots))
-
-        def slot_pair_attribution(s: int) -> NodeIndexed[torch.Tensor]:
-            slot_rows = second_attributions[s * topk : (s + 1) * topk]
-            q_mask = is_q_pick[s]
-            k_mask = ~q_mask
-            q_side = NodeIndexedMatrix.from_data(
-                data=slot_rows[q_mask],
-                dimensions=(
-                    sources.dimension.offsets_to_nodes(pick_src[s][q_mask]),
-                    sources.dimension,
-                ),
+        with timer.time("qk_pick"):
+            slot_first_rows = torch.arange(n_slots, device=a_Q.device) * topk
+            bwd_rows = slot_first_rows.unsqueeze(1) + torch.arange(topk, device=a_Q.device).unsqueeze(0)
+            merged = torch.cat(
+                [full_tensor(a_Q[slot_first_rows].detach()), full_tensor(a_K[slot_first_rows].detach())], dim=-1
             )
-            k_side = NodeIndexedMatrix.from_data(
-                data=slot_rows[k_mask],
-                dimensions=(
-                    sources.dimension.offsets_to_nodes(pick_src[s][k_mask]),
-                    sources.dimension,
-                ),
-            )
-            return _extract_topk_pairwise_attributions(q_side, k_side, topk=topk)
+            _, pick_flat = merged.topk(topk, dim=-1)
+            is_q_pick = pick_flat < n_sources
+            pick_src = torch.where(is_q_pick, pick_flat, pick_flat - n_sources)
 
-        pair_slots.extend(slot_pair_attribution(s) for s in range(n_slots))
+        # Pair extraction requires double-backward through the SAE forward.
+        # DTensor autograd doesn't support `create_graph=True`.
+
+        if device_mesh is not None:
+            if not tp_pair_skipped:
+                logger.warning(
+                    "compute_qk_tracing: pair extraction is disabled under "
+                    "tensor-parallel execution because DTensor does not "
+                    "support double-backward through SAE forward ops. Q/K "
+                    "marginals remain valid."
+                )
+                tp_pair_skipped = True
+            empty_dim = NodeDimension.empty(device=a_Q.device)
+            pair_slots.extend(
+                NodeIndexed(
+                    value=torch.empty(0, device=a_Q.device, dtype=a_Q.dtype),
+                    dimensions=(empty_dim, empty_dim),
+                )
+                for _ in range(n_slots)
+            )
+            a_Q = full_tensor(a_Q.detach())
+            a_K = full_tensor(a_K.detach())
+            q_marginal_slots.extend(topk_nonzero(a_Q[s * topk]) for s in range(n_slots))
+            k_marginal_slots.extend(topk_nonzero(a_K[s * topk]) for s in range(n_slots))
+        else:
+            with timer.time("second_grad"):
+                second_bwd_values = torch.where(is_q_pick, a_Q[bwd_rows, pick_src], a_K[bwd_rows, pick_src]).reshape(-1)
+                with timer.time("grad"):
+                    grads = torch.autograd.grad(
+                        second_bwd_values.sum(),
+                        sources.refs(),
+                        retain_graph=True,
+                        materialize_grads=True,
+                    )
+                second_attributions = attribution_scores(grads, sources).detach()
+            a_Q = a_Q.detach()
+            a_K = a_K.detach()
+            q_marginal_slots.extend(topk_nonzero(a_Q[s * topk]) for s in range(n_slots))
+            k_marginal_slots.extend(topk_nonzero(a_K[s * topk]) for s in range(n_slots))
+
+            def slot_pair_attribution(s: int) -> NodeIndexed[torch.Tensor]:
+                slot_rows = second_attributions[s * topk : (s + 1) * topk]
+                q_mask = is_q_pick[s]
+                k_mask = ~q_mask
+                q_side = NodeIndexedMatrix.from_data(
+                    data=slot_rows[q_mask],
+                    dimensions=(sources.dimension.offsets_to_nodes(pick_src[s][q_mask]), sources.dimension),
+                )
+                k_side = NodeIndexedMatrix.from_data(
+                    data=slot_rows[k_mask],
+                    dimensions=(sources.dimension.offsets_to_nodes(pick_src[s][k_mask]), sources.dimension),
+                )
+                return _extract_topk_pairwise_attributions(q_side, k_side, topk=topk)
+
+            pair_slots.extend(slot_pair_attribution(s) for s in range(n_slots))
+            del second_attributions
+
+        del q_stacked, k_stacked, q_vecs, k_vecs, a_Q, a_K, merged, pick_flat, bwd_rows
+        torch.cuda.empty_cache()
 
     outer = (q_targets.dimension,)
     return QKTracingResult(
