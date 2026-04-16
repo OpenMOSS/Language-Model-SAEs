@@ -1,3 +1,14 @@
+## v2.0.0b30 (2026-04-16)
+
+
+- Merge pull request #215 from OpenMOSS/dev
+- Release: TP support in QK tracing & perf attribution
+- fix(circuits): basedpyright type error in NodeInfo.is_identity
+- fix(circuits): use NodeInfo.is_identity for source split correctness
+- perf(circuits): batch identity-indexed sources in attribution_scores
+- perf(circuits): memoize NodeRefs.values and cache multi_batch_index shape meta
+- fix(circuits): TP-aware QK tracing and DTensor invariants
+
 ## v2.0.0b29 (2026-04-15)
 
 
