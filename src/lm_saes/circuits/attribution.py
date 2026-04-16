@@ -99,8 +99,8 @@ class NodeRefs:
         full_groups: dict[tuple[int, ...], list[int]] = {}
         sparse_slots: list[int] = []
         sparse_indices: list[torch.Tensor] = []
-        for i, ((_, idx, ref), v) in enumerate(zip(self._entries, values)):
-            if v.shape == ref.shape:
+        for i, (ni, (_, idx, _), v) in enumerate(zip(self.dimension.node_infos, self._entries, values)):
+            if ni.is_identity:
                 full_groups.setdefault(tuple(v.shape[1:]), []).append(i)
             else:
                 sparse_slots.append(i)
@@ -233,19 +233,11 @@ def _batch_full_attribution(
     slots: list[int],
 ) -> torch.Tensor:
     """Batched input×gradient for identity-indexed sources (value.shape == ref.shape)."""
-    live = [(i, values[s].detach(), grad_refs[s]) for i, s in enumerate(slots) if grad_refs[s] is not None]
-    if not live:
-        v0 = values[slots[0]]
-        return v0.detach().new_zeros(v0.shape[0], len(slots) * v0.shape[1])
-    stacked_v = torch.stack([v for _, v, _ in live], dim=1)
-    stacked_g = torch.stack([cast(torch.Tensor, g) for _, _, g in live], dim=1)
+    grads = [grad_refs[s] if grad_refs[s] is not None else torch.zeros_like(values[s]) for s in slots]
+    stacked_v = torch.stack([values[s].detach() for s in slots], dim=1)
+    stacked_g = torch.stack([cast(torch.Tensor, g) for g in grads], dim=1)
     product = einops.reduce(stacked_v * stacked_g, "batch sources n ... -> batch sources n", "sum")
-    if len(live) == len(slots):
-        return product.flatten(start_dim=1)
-    out = product.new_zeros((product.shape[0], len(slots), product.shape[2]))
-    for j, (pos, _, _) in enumerate(live):
-        out[:, pos] = product[:, j]
-    return out.flatten(start_dim=1)
+    return product.flatten(start_dim=1)
 
 
 @timer.time("sparse_attribution")
@@ -256,19 +248,19 @@ def _sparse_attribution(
     indices: list[torch.Tensor],
 ) -> torch.Tensor:
     """Per-source input×gradient for sparse-indexed sources (need multi_batch_index)."""
-    if not slots:
-        return torch.empty(values[0].shape[0], 0, device=values[0].device, dtype=values[0].dtype)
     nonzero = [(cast(torch.Tensor, grad_refs[s]), idx) for s, idx in zip(slots, indices) if grad_refs[s] is not None]
     indexed = multi_batch_index(nonzero, n_batch_dims=1) if nonzero else []
     grad_iter = iter(indexed)
-    return torch.cat(
-        [
-            einops.reduce(values[s].detach() * next(grad_iter), "batch n ... -> batch n", "sum")
-            if grad_refs[s] is not None
-            else values[s].detach().new_zeros(values[s].shape[:2])
-            for s in slots
-        ],
-        dim=1,
+    parts = [
+        einops.reduce(values[s].detach() * next(grad_iter), "batch n ... -> batch n", "sum")
+        if grad_refs[s] is not None
+        else values[s].detach().new_zeros(values[s].shape[:2])
+        for s in slots
+    ]
+    return (
+        torch.cat(parts, dim=1)
+        if parts
+        else torch.empty(values[0].shape[0], 0, device=values[0].device, dtype=values[0].dtype)
     )
 
 
