@@ -54,7 +54,7 @@ def preview(request: PreviewRequest, device_mesh: DeviceMesh | None = None):
     sae_names = sae_set.sae_names
     model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
     model = get_model(name=model_name, device_mesh=device_mesh)
-    assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+    assert isinstance(model, TransformerLensLanguageModel), (
         f"Preview only supports TransformerLens backend, got {type(model)}"
     )
 
@@ -398,7 +398,7 @@ def run_circuit_attribution(
 
             model_name = client.get_sae_model_name(sae_names[0], sae_set.sae_series)
             model = get_model(name=model_name, device_mesh=device_mesh)
-            assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+            assert isinstance(model, TransformerLensLanguageModel), (
                 "Circuit tracing only supports exact model of TransformerLens backend"
             )
 

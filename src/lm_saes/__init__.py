@@ -19,6 +19,7 @@ from .backend.language_model import (
     HuggingFaceLanguageModel,
     LanguageModel,
     LanguageModelConfig,
+    TokenizerOnlyLanguageModel,
     TransformerLensLanguageModel,
 )
 from .circuits import (

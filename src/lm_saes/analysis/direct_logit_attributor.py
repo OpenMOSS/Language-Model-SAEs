@@ -4,8 +4,7 @@ import einops
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.backend import LanguageModel
-from lm_saes.backend.language_model import TransformerLensLanguageModel
+from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
 from lm_saes.config import BaseConfig
 from lm_saes.models.clt import CrossLayerTranscoder
 from lm_saes.models.crosscoder import Crosscoder
@@ -124,15 +123,13 @@ class DirectLogitAttributor:
         assert isinstance(model, TransformerLensLanguageModel), (
             "DirectLogitAttributor only supports TransformerLensLanguageModel as the model backend"
         )
-        hooked_model: HookedTransformer | None = model.model
-        assert hooked_model is not None, "Model ckpt must be loaded for direct logit attribution"
 
         # Use singledispatch to compute logits and d_sae based on SAE type
-        logits, d_sae = compute_logits_and_d_sae(sae, hooked_model, layer_idx)
+        logits, d_sae = compute_logits_and_d_sae(sae, model, layer_idx)
 
         # Select the top k tokens
         top_k_logits, top_k_indices = torch.topk(logits, self.cfg.top_k, dim=-1)
-        top_k_tokens = [hooked_model.to_str_tokens(top_k_indices[i]) for i in range(d_sae)]
+        top_k_tokens = [model.to_str_tokens(top_k_indices[i]) for i in range(d_sae)]
 
         assert top_k_logits.shape == top_k_indices.shape == (d_sae, self.cfg.top_k), (
             f"Top k logits and indices should have shape (d_sae, top_k), but got {top_k_logits.shape} and {top_k_indices.shape}"
@@ -143,7 +140,7 @@ class DirectLogitAttributor:
 
         # Select the bottom k tokens
         bottom_k_logits, bottom_k_indices = torch.topk(logits, self.cfg.top_k, dim=-1, largest=False)
-        bottom_k_tokens = [hooked_model.to_str_tokens(bottom_k_indices[i]) for i in range(d_sae)]
+        bottom_k_tokens = [model.to_str_tokens(bottom_k_indices[i]) for i in range(d_sae)]
 
         assert bottom_k_logits.shape == bottom_k_indices.shape == (d_sae, self.cfg.top_k), (
             f"Bottom k logits and indices should have shape (d_sae, top_k), but got {bottom_k_logits.shape} and {bottom_k_indices.shape}"

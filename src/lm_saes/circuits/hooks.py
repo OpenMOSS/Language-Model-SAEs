@@ -3,7 +3,10 @@ from typing import Callable, NamedTuple, cast
 
 import torch
 import torch.nn as nn
-from transformer_lens.hook_points import HookedRootModule, HookPoint
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor, Replicate
+from transformer_lens import HookedTransformer
+from transformer_lens.hook_points import HookPoint
 
 from lm_saes.backend.language_model import TransformerLensLanguageModel
 from lm_saes.backend.tl_addons import mount_hooked_modules
@@ -61,9 +64,7 @@ def apply_saes(model: TransformerLensLanguageModel, saes: list[SparseDictionary]
         fwd_hooks.extend(hooks)
         hook_errors.append((sae.cfg.hook_point_out, "error", hook_error))
 
-    assert model.model is not None, "model must be initialized"
-
-    with mount_hooked_modules(model.model, [(sae.cfg.hook_point_out, "sae", sae) for sae in saes] + hook_errors):
+    with mount_hooked_modules(model, [(sae.cfg.hook_point_out, "sae", sae) for sae in saes] + hook_errors):
         with model.hooks(fwd_hooks):
             yield model
 
@@ -91,10 +92,8 @@ def detach_at(
         (hook_point, hook) for hook_point, (_, _, hook) in hooks.items()
     ]
 
-    assert model.model is not None, "model must be initialized"
-
     with mount_hooked_modules(
-        model.model,
+        model,
         [(hook_point, "pre", hook) for hook_point, (hook, _, _) in hooks.items()]
         + [(hook_point, "post", hook) for hook_point, (_, hook, _) in hooks.items()],
     ):
@@ -102,10 +101,22 @@ def detach_at(
             yield model
 
 
-def _make_bias_leaf(bias_data: torch.Tensor, batch_size: int, seq_len: int) -> torch.Tensor:
-    """Expand a bias tensor to ``(batch_size, seq_len, *bias_shape)`` as a detached leaf."""
-    leaf = bias_data.detach().unsqueeze(0).unsqueeze(0)  # (1, 1, *bias_shape)
+def _make_bias_leaf(
+    bias_data: torch.Tensor,
+    batch_size: int,
+    seq_len: int,
+    device_mesh: DeviceMesh | None = None,
+) -> torch.Tensor:
+    """Expand a bias tensor to ``(batch_size, seq_len, *bias_shape)`` as a detached leaf.
+
+    When ``device_mesh`` is provided and ``bias_data`` is a plain tensor (e.g. a
+    non-sharded model bias like ``b_O``), the leaf is promoted to a replicated
+    ``DTensor`` so it composes with DTensor activations inside hooks.
+    """
+    leaf = bias_data.detach().unsqueeze(0).unsqueeze(0)
     leaf = leaf.expand(batch_size, seq_len, *bias_data.shape).clone()
+    if device_mesh is not None and not isinstance(leaf, DTensor):
+        leaf = DTensor.from_local(leaf, device_mesh=device_mesh, placements=[Replicate()] * device_mesh.ndim)
     return leaf.requires_grad_(True)
 
 
@@ -123,12 +134,13 @@ def _make_bias_replacer(
     intercept: str,
     batch_size: int,
     seq_len: int,
+    device_mesh: DeviceMesh | None = None,
 ) -> _BiasReplacer | None:
     param = getattr(parent, bias_attr, None)
     if param is None:
         return None
     original = param.data.clone()
-    leaf = _make_bias_leaf(param.data, batch_size, seq_len)
+    leaf = _make_bias_leaf(param.data, batch_size, seq_len, device_mesh=device_mesh)
     param.data.zero_()
 
     bias_hook = HookPoint()
@@ -142,7 +154,7 @@ def _make_bias_replacer(
 
 
 @contextmanager
-def _bias_phase(model: HookedRootModule, replacers: list[_BiasReplacer | None]):
+def _bias_phase(model: HookedTransformer, replacers: list[_BiasReplacer | None]):
     active = [r for r in replacers if r is not None]
     if not active:
         yield []
@@ -158,9 +170,10 @@ def _bias_phase(model: HookedRootModule, replacers: list[_BiasReplacer | None]):
 
 @contextmanager
 def replace_model_biases_with_leaves(
-    model: HookedRootModule,
+    model: HookedTransformer,
     batch_size: int,
     seq_len: int,
+    device_mesh: DeviceMesh | None = None,
 ):
     """Zero ``attn.b_O`` / ``mlp.b_out`` and expose each as a HookPoint mounted
     on its parent module, with a fwd_hook at ``hook_attn_out`` / ``hook_mlp_out``
@@ -179,23 +192,25 @@ def replace_model_biases_with_leaves(
         if hasattr(block, "attn"):
             replacers.append(
                 _make_bias_replacer(
-                    block.attn,
+                    cast(nn.Module, block.attn),
                     f"blocks.{i}.attn",
                     "b_O",
                     f"blocks.{i}.hook_attn_out",
                     batch_size,
                     seq_len,
+                    device_mesh=device_mesh,
                 )
             )
         if hasattr(block, "mlp"):
             replacers.append(
                 _make_bias_replacer(
-                    block.mlp,
+                    cast(nn.Module, block.mlp),
                     f"blocks.{i}.mlp",
                     "b_out",
                     f"blocks.{i}.hook_mlp_out",
                     batch_size,
                     seq_len,
+                    device_mesh=device_mesh,
                 )
             )
     with _bias_phase(model, replacers) as names:
@@ -204,10 +219,11 @@ def replace_model_biases_with_leaves(
 
 @contextmanager
 def replace_sae_biases_with_leaves(
-    model: HookedRootModule,
+    model: HookedTransformer,
     saes: list[SparseDictionary],
     batch_size: int,
     seq_len: int,
+    device_mesh: DeviceMesh | None = None,
 ):
     """Zero SAE / Lorsa biases (``b_D`` / ``b_Q`` / ``b_K``) and expose each as
     a HookPoint mounted on the SAE module, with a fwd_hook at the SAE's own
@@ -235,6 +251,7 @@ def replace_sae_biases_with_leaves(
                     f"{sae_path}.hook_q",
                     batch_size,
                     seq_len,
+                    device_mesh=device_mesh,
                 )
             )
             replacers.append(
@@ -245,6 +262,7 @@ def replace_sae_biases_with_leaves(
                     f"{sae_path}.hook_k",
                     batch_size,
                     seq_len,
+                    device_mesh=device_mesh,
                 )
             )
         if sae.cfg.use_decoder_bias:
@@ -256,6 +274,7 @@ def replace_sae_biases_with_leaves(
                     f"{sae_path}.hook_reconstructed",
                     batch_size,
                     seq_len,
+                    device_mesh=device_mesh,
                 )
             )
     with _bias_phase(model, replacers) as names:

@@ -61,7 +61,7 @@ def _extract_samples(
     def _load_model(model_name: str) -> LanguageModel:
         cfg = client.get_model_cfg(name=model_name)
         assert cfg is not None, f"Model {model_name} not found"
-        cfg.tokenizer_only = True
+        cfg.backend = "tokenizer_only"
         return load_model(cfg)
 
     @lru_cache(maxsize=8)

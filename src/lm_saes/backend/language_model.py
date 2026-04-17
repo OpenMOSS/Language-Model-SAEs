@@ -128,19 +128,14 @@ class LanguageModelConfig(BaseModelConfig):
     """ The name of the model to use. """
     model_from_pretrained_path: str | None = None
     """ The path to the pretrained model. If `None`, will use the model from HuggingFace. """
-    use_flash_attn: bool = False
-    """ Whether to use Flash Attention. """
     cache_dir: str | None = None
     """ The directory of the HuggingFace cache. Should have the same effect as `HF_HOME`. """
     local_files_only: bool = False
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
     max_length: int = 2048
     """ The maximum length of the input. """
-    backend: Literal["huggingface", "transformer_lens", "auto"] = "auto"
-    """ The backend to use for the language model. """
-    load_ckpt: bool = True
-    tokenizer_only: bool = False
-    """ Whether to only load the tokenizer. """
+    backend: Literal["huggingface", "transformer_lens", "tokenizer_only", "auto"] = "auto"
+    """ The backend to use for the language model. ``"tokenizer_only"`` loads only the tokenizer without model weights. """
     prepend_bos: bool = True
     """ Whether to prepend the BOS token to the input. """
     bos_token_id: int | None = None
@@ -247,9 +242,26 @@ class LanguageModel(ABC):
         pass
 
 
-class TransformerLensLanguageModel(LanguageModel):
+class TransformerLensLanguageModel(HookedTransformer, LanguageModel):
+    """HookedTransformer subclass with distributed (DTensor) support and the LanguageModel interface.
+
+    Use the standard constructor or the convenience class methods:
+
+        # From LanguageModelConfig (loads HF weights internally)
+        model = TransformerLensLanguageModel(cfg, device_mesh=mesh)
+
+        # Upgrade an existing HookedTransformer (zero-copy)
+        model = TransformerLensLanguageModel.from_hooked_transformer(ht)
+    """
+
+    lm_cfg: LanguageModelConfig
+    device_mesh: DeviceMesh | None
+    device: torch.device
+
     def __init__(self, cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None):
-        self.cfg = cfg
+        from transformer_lens import loading
+
+        self.lm_cfg = cfg
         self.device_mesh = device_mesh
         if cfg.device == "cuda":
             self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
@@ -258,65 +270,91 @@ class TransformerLensLanguageModel(LanguageModel):
         else:
             self.device = torch.device(cfg.device)
 
-        hf_model = (
-            AutoModelForCausalLM.from_pretrained(
-                (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
-                cache_dir=cfg.cache_dir,
-                local_files_only=cfg.local_files_only,
-                dtype=cfg.dtype,
-                trust_remote_code=True,
-            )
-            if cfg.load_ckpt and not cfg.tokenizer_only
-            else None
+        pretrained_path = (
+            cfg.model_from_pretrained_path if cfg.model_from_pretrained_path is not None else cfg.model_name
+        )
+
+        hf_model = AutoModelForCausalLM.from_pretrained(
+            pretrained_path,
+            cache_dir=cfg.cache_dir,
+            local_files_only=cfg.local_files_only,
+            dtype=cfg.dtype,
+            trust_remote_code=True,
         )
         hf_tokenizer = AutoTokenizer.from_pretrained(
-            (cfg.model_name if cfg.model_from_pretrained_path is None else cfg.model_from_pretrained_path),
+            pretrained_path,
             cache_dir=cfg.cache_dir,
             trust_remote_code=True,
             use_fast=True,
             add_bos_token=True,
             local_files_only=cfg.local_files_only,
         )
-        self.tokenizer = set_tokens(
-            hf_tokenizer,
-            cfg.bos_token_id,
-            cfg.eos_token_id,
-            cfg.pad_token_id,
+
+        tl_cfg = loading.get_pretrained_model_config(
+            cfg.model_name,
+            hf_cfg=hf_model.config.to_dict(),
+            device=self.device,
+            dtype=cfg.dtype,
         )
-        self.model = (
-            HookedTransformer.from_pretrained_no_processing(
-                cfg.model_name,
-                use_flash_attn=cfg.use_flash_attn,
-                device=self.device,
-                cache_dir=cfg.cache_dir,
-                hf_model=hf_model,
-                hf_config=hf_model.config,
-                tokenizer=hf_tokenizer,
-                dtype=cfg.dtype,  # type: ignore ; issue with transformer_lens
-            )
-            if hf_model and not cfg.tokenizer_only
-            else None
+        state_dict = loading.get_pretrained_state_dict(cfg.model_name, tl_cfg, hf_model, dtype=cfg.dtype)
+        HookedTransformer.__init__(self, tl_cfg, hf_tokenizer, move_to_device=False)
+        self.load_and_process_state_dict(state_dict)
+        self.move_model_modules_to_device()
+
+        self.tokenizer = set_tokens(hf_tokenizer, cfg.bos_token_id, cfg.eos_token_id, cfg.pad_token_id)
+
+    @classmethod
+    def from_hooked_transformer(
+        cls,
+        model: HookedTransformer,
+        device_mesh: DeviceMesh | None = None,
+        **overrides: Any,
+    ) -> TransformerLensLanguageModel:
+        """Upgrade an existing HookedTransformer in-place (zero-copy ``__class__`` swap).
+
+        A ``LanguageModelConfig`` is inferred from the model's
+        ``HookedTransformerConfig`` and tokenizer.  Pass keyword *overrides*
+        (e.g. ``prepend_bos=False``, ``max_length=512``) for fields that
+        cannot be reliably inferred from the architecture.
+        """
+        model.__class__ = cls
+        model = cast(TransformerLensLanguageModel, model)
+        tl_cfg = model.cfg
+        inferred: dict[str, Any] = dict(
+            model_name=tl_cfg.model_name or "unknown",
+            max_length=tl_cfg.n_ctx,
+            prepend_bos=tl_cfg.default_prepend_bos if tl_cfg.default_prepend_bos is not None else True,
+            dtype=tl_cfg.dtype,
+            device=str(next(model.parameters()).device),
+            bos_token_id=cast(int | None, model.tokenizer.bos_token_id) if model.tokenizer is not None else None,
+            eos_token_id=cast(int | None, model.tokenizer.eos_token_id) if model.tokenizer is not None else None,
+            pad_token_id=cast(int | None, model.tokenizer.pad_token_id) if model.tokenizer is not None else None,
         )
+        model.lm_cfg = LanguageModelConfig(**(inferred | overrides))
+        model.device_mesh = device_mesh
+        model.device = next(model.parameters()).device
+        return model
 
     def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
                 "Tracing with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
             )
+        assert self.tokenizer is not None
         encoding = self.tokenizer(
             raw["text"],
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=self.cfg.max_length,
+            max_length=self.lm_cfg.max_length,
             return_offsets_mapping=True,
         )
-        offsets = encoding["offset_mapping"].tolist()
-        tokens = encoding["input_ids"]
+        offsets = encoding["offset_mapping"].tolist()  # type: ignore[reportAttributeAccessIssue]
+        tokens = encoding["input_ids"]  # type: ignore[reportIndexIssue]
         has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
-        if self.cfg.prepend_bos and not has_bos_prepended:
+        if self.lm_cfg.prepend_bos and not has_bos_prepended:
             offsets = [[None] + offset_ for offset_ in offsets]
-        elif not self.cfg.prepend_bos and has_bos_prepended:
+        elif not self.lm_cfg.prepend_bos and has_bos_prepended:
             offsets = [offset_[1:] for offset_ in offsets]
         if n_context is not None:
             offsets = [offset_[:n_context] for offset_ in offsets]
@@ -330,7 +368,6 @@ class TransformerLensLanguageModel(LanguageModel):
     def to_activations(
         self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
     ) -> dict[str, torch.Tensor]:
-        assert self.model is not None
         if any(key in ["images", "videos"] for key in raw):
             warnings.warn(
                 "Activations with modalities other than text is not implemented for TransformerLensLanguageModel. Only text fields will be used."
@@ -338,9 +375,9 @@ class TransformerLensLanguageModel(LanguageModel):
         tokens = to_tokens(
             self.tokenizer,
             raw["text"],
-            max_length=self.cfg.max_length,
-            device=self.cfg.device,
-            prepend_bos=self.cfg.prepend_bos,
+            max_length=self.lm_cfg.max_length,
+            device=self.lm_cfg.device,
+            prepend_bos=self.lm_cfg.prepend_bos,
         )
         if self.device_mesh is not None and n_context is None:
             num_token_list = [None for _ in range(dist.get_world_size(group=self.device_mesh.get_group("data")))]
@@ -355,7 +392,6 @@ class TransformerLensLanguageModel(LanguageModel):
 
         _, activations = self.run_with_cache_until(tokens, names_filter=hook_points, until=hook_points[-1])
 
-        # we do not want to filter out eos. It might be end of chats and include useful information
         assert self.pad_token_id is not None and self.bos_token_id is not None, "Pad and BOS token IDs must be set"
         mask = torch.logical_and(tokens.ne(self.pad_token_id), tokens.ne(self.bos_token_id)).int()
         attention_mask = torch.logical_and(tokens.ne(self.pad_token_id), tokens.ne(self.bos_token_id)).int()
@@ -371,48 +407,53 @@ class TransformerLensLanguageModel(LanguageModel):
 
     @property
     def eos_token_id(self) -> int | None:
-        return self.tokenizer.eos_token_id
+        assert self.tokenizer is not None
+        return cast(int | None, self.tokenizer.eos_token_id)
 
     @property
     def bos_token_id(self) -> int | None:
-        return self.tokenizer.bos_token_id
+        assert self.tokenizer is not None
+        return cast(int | None, self.tokenizer.bos_token_id)
 
     @property
     def pad_token_id(self) -> int | None:
-        return self.tokenizer.pad_token_id
+        assert self.tokenizer is not None
+        return cast(int | None, self.tokenizer.pad_token_id)
+
+    # -- device helpers ----------------------------------------------------
+
+    def to(self, device_or_dtype, print_details: bool = True):  # type: ignore[override]
+        result = super().to(device_or_dtype, print_details)
+        if isinstance(device_or_dtype, (torch.device, str)):
+            self.device = torch.device(device_or_dtype)
+        return result
+
+    # -- DTensor overrides ------------------------------------------------
 
     def forward(self, *args, **kwargs):
-        assert self.model is not None, "model must be initialized"
         if self.device_mesh is not None:
             return local_map(
-                self.model.forward,
+                super().forward,
                 out_placements=DimMap({"data": 0}).placements(self.device_mesh),
-            )(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)  # type: ignore
-        else:
-            return self.model.forward(*args, prepend_bos=self.cfg.prepend_bos, **kwargs)
-
-    def __call__(self, *args, **kwargs):
-        return self.forward(*args, **kwargs)
+            )(*args, prepend_bos=self.lm_cfg.prepend_bos, **kwargs)  # type: ignore
+        return super().forward(*args, prepend_bos=self.lm_cfg.prepend_bos, **kwargs)
 
     @timer.time("to_tensor")
     def _to_tensor(self, input: torch.Tensor) -> torch.Tensor:
         if isinstance(input, DTensor):
             assert input.placements == tuple(DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)))
             return input.to_local()
-        else:
-            return input
+        return input
 
     @timer.time("to_dtensor")
     def _to_dtensor(self, input: torch.Tensor) -> torch.Tensor:
-        return (
-            DTensor.from_local(
+        if isinstance(input, torch.Tensor) and not isinstance(input, DTensor):
+            return DTensor.from_local(
                 input,
                 device_mesh=self.device_mesh,
                 placements=DimMap({"data": 0}).placements(cast(DeviceMesh, self.device_mesh)),
             )
-            if isinstance(input, torch.Tensor) and not isinstance(input, DTensor)
-            else input
-        )
+        return input
 
     def _wrap_hook_for_local(self, hook_fn):
         def wrapped_hook_fn(*args, **kwargs):
@@ -420,50 +461,30 @@ class TransformerLensLanguageModel(LanguageModel):
                 lambda x: isinstance(x, DTensor), kwargs
             ):
                 return hook_fn(*args, **kwargs)
-            else:
-                args = pytree.tree_map(self._to_dtensor, args)
-                kwargs = pytree.tree_map(self._to_dtensor, kwargs)
-                return pytree.tree_map(self._to_tensor, hook_fn(*args, **kwargs))
+            args = pytree.tree_map(self._to_dtensor, args)
+            kwargs = pytree.tree_map(self._to_dtensor, kwargs)
+            return pytree.tree_map(self._to_tensor, hook_fn(*args, **kwargs))
 
         return wrapped_hook_fn
 
-    def run_with_hooks(
-        self,
-        *args,
-        fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
-        bwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
-        **kwargs,
-    ) -> Any:
-        assert self.model is not None, "model must be initialized"
-
-        if self.device_mesh is None:
-            return self.model.run_with_hooks(*args, fwd_hooks=fwd_hooks, bwd_hooks=bwd_hooks, **kwargs)
-
-        wrapped_fwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
-        wrapped_bwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
-
-        return self.model.run_with_hooks(*args, fwd_hooks=wrapped_fwd_hooks, bwd_hooks=wrapped_bwd_hooks, **kwargs)
-
     def run_with_cache(self, *args, **kwargs) -> Any:
-        assert self.model is not None, "model must be initialized"
         if self.device_mesh is None:
-            return self.model.run_with_cache(*args, **kwargs)
+            return super().run_with_cache(*args, **kwargs)
 
         args = pytree.tree_map(self._to_tensor, args)
         kwargs = pytree.tree_map(self._to_tensor, kwargs)
-        return pytree.tree_map(self._to_dtensor, self.model.run_with_cache(*args, **kwargs))
+        return pytree.tree_map(self._to_dtensor, super().run_with_cache(*args, **kwargs))
 
     def run_with_cache_until(self, *args, **kwargs) -> Any:
         """Run with activation caching, stopping at a given hook for efficiency."""
-        assert self.model is not None, "model must be initialized"
         if self.device_mesh is None:
-            return run_with_cache_until(self.model, *args, **kwargs)
+            return run_with_cache_until(self, *args, **kwargs)
 
         args = pytree.tree_map(self._to_tensor, args)
         kwargs = pytree.tree_map(self._to_tensor, kwargs)
-        return pytree.tree_map(self._to_dtensor, run_with_cache_until(self.model, *args, **kwargs))
+        return pytree.tree_map(self._to_dtensor, run_with_cache_until(self, *args, **kwargs))
 
-    @contextmanager
+    @contextmanager  # type: ignore[reportIncompatibleMethodOverride]
     def hooks(
         self,
         fwd_hooks: list[tuple[Union[str, Callable], Callable]] = [],
@@ -471,14 +492,13 @@ class TransformerLensLanguageModel(LanguageModel):
         reset_hooks_end: bool = True,
         clear_contexts: bool = False,
     ):
-        assert self.model is not None, "model must be initialized"
         wrapped_fwd_hooks = fwd_hooks
         wrapped_bwd_hooks = bwd_hooks
         if self.device_mesh is not None:
             wrapped_fwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in fwd_hooks]
             wrapped_bwd_hooks = [(name, self._wrap_hook_for_local(hook)) for name, hook in bwd_hooks]
 
-        with self.model.hooks(
+        with super().hooks(
             fwd_hooks=wrapped_fwd_hooks,
             bwd_hooks=wrapped_bwd_hooks,
             reset_hooks_end=reset_hooks_end,
@@ -486,11 +506,18 @@ class TransformerLensLanguageModel(LanguageModel):
         ):
             yield self
 
+    def run_with_ref_cache(self, *args, **kwargs) -> Any:
+        if self.device_mesh is None:
+            return run_with_ref_cache(self, *args, **kwargs)
+
+        args = pytree.tree_map(self._to_tensor, args)
+        kwargs = pytree.tree_map(self._to_tensor, kwargs)
+        return pytree.tree_map(self._to_dtensor, run_with_ref_cache(self, *args, **kwargs))
+
     @contextmanager
     def apply_saes(self, saes: list[SparseDictionary]):
         from lm_saes.circuits.hooks import apply_saes as _apply_saes
 
-        assert self.model is not None, "model must be initialized"
         with _apply_saes(self, saes):
             yield self
 
@@ -498,18 +525,8 @@ class TransformerLensLanguageModel(LanguageModel):
     def detach_at(self, hook_points: list[str]):
         from lm_saes.circuits.hooks import detach_at as _detach_at
 
-        assert self.model is not None, "model must be initialized"
         with _detach_at(self, hook_points):
             yield self
-
-    def run_with_ref_cache(self, *args, **kwargs) -> Any:
-        assert self.model is not None, "model must be initialized"
-        if self.device_mesh is None:
-            return run_with_ref_cache(self.model, *args, **kwargs)
-
-        args = pytree.tree_map(self._to_tensor, args)
-        kwargs = pytree.tree_map(self._to_tensor, kwargs)
-        return pytree.tree_map(self._to_dtensor, run_with_ref_cache(self.model, *args, **kwargs))
 
     def attribute(
         self,
@@ -556,6 +573,70 @@ class TransformerLensLanguageModel(LanguageModel):
             topk,
             batch_size,
         )
+
+
+class TokenizerOnlyLanguageModel(LanguageModel):
+    """Lightweight backend that loads only the tokenizer — no model weights.
+
+    Useful for visualization servers and CLI tools that only need tokenization
+    and token-origin tracing.
+    """
+
+    def __init__(self, cfg: LanguageModelConfig):
+        self.cfg = cfg
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            cfg.model_from_pretrained_path or cfg.model_name,
+            cache_dir=cfg.cache_dir,
+            trust_remote_code=True,
+            use_fast=True,
+            add_bos_token=True,
+            local_files_only=cfg.local_files_only,
+        )
+        self.tokenizer = set_tokens(self.tokenizer, cfg.bos_token_id, cfg.eos_token_id, cfg.pad_token_id)
+
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
+        encoding = self.tokenizer(
+            raw["text"],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.cfg.max_length,
+            return_offsets_mapping=True,
+        )
+        offsets = encoding["offset_mapping"].tolist()  # type: ignore[reportAttributeAccessIssue]
+        tokens = encoding["input_ids"]  # type: ignore[reportIndexIssue]
+        has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
+        if self.cfg.prepend_bos and not has_bos_prepended:
+            offsets = [[None] + offset_ for offset_ in offsets]
+        elif not self.cfg.prepend_bos and has_bos_prepended:
+            offsets = [offset_[1:] for offset_ in offsets]
+        if n_context is not None:
+            offsets = [offset_[:n_context] for offset_ in offsets]
+            offsets = [offset_ + [None] * (n_context - len(offset_)) for offset_ in offsets]
+        return [
+            [{"key": "text", "range": offset} if offset is not None else None for offset in offset_]
+            for offset_ in offsets
+        ]
+
+    def to_activations(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> dict[str, torch.Tensor]:
+        raise NotImplementedError("TokenizerOnlyLanguageModel does not support activation generation")
+
+    def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
+        return raw
+
+    @property
+    def eos_token_id(self) -> int | None:
+        return cast(int | None, self.tokenizer.eos_token_id)
+
+    @property
+    def bos_token_id(self) -> int | None:
+        return cast(int | None, self.tokenizer.bos_token_id)
+
+    @property
+    def pad_token_id(self) -> int | None:
+        return cast(int | None, self.tokenizer.pad_token_id)
 
 
 class HuggingFaceLanguageModel(LanguageModel):
@@ -652,7 +733,6 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
             dtype=cfg.dtype,
-            attn_implementation="flash_attention_2" if cfg.use_flash_attn else None,
         ).to(self.device)  # type: ignore
 
         self.processor = AutoProcessor.from_pretrained(
