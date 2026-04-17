@@ -1,3 +1,10 @@
+## v2.0.0b31 (2026-04-17)
+
+
+- Merge pull request #216 from OpenMOSS/dev
+- Release: fix misalignment in QK tracing
+- fix(circuits): preserve source-order columns in attribution_scores
+
 ## v2.0.0b30 (2026-04-16)
 
 
