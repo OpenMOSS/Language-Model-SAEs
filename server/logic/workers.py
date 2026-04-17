@@ -194,9 +194,14 @@ def distributed(fn: Callable) -> Callable:
             raise RuntimeError("Workers not initialized. Call init_workers(num_workers) first.")
 
         if DistributedWorkerRegistry._num_workers == 0:
-            # Host-execution mode: run directly in the current process with no device mesh.
+            # Host-execution mode: run in the current process with no device mesh.
+            # Sync functions go through asyncio.to_thread so long-running torch
+            # work (circuit attribution, model forward) doesn't block the event
+            # loop and stall other HTTP requests (progress polling, etc.).
             call_kwargs = {**kwargs, "device_mesh": None} if accepts_device_mesh else kwargs
-            result = fn(*args, **call_kwargs)
+            if asyncio.iscoroutinefunction(fn):
+                return await fn(*args, **call_kwargs)
+            result = await asyncio.to_thread(fn, *args, **call_kwargs)
             if inspect.isawaitable(result):
                 result = await result
             return result
