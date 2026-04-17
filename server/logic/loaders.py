@@ -32,7 +32,8 @@ def get_model(*, name: str, device_mesh: DeviceMesh | None = None) -> LanguageMo
     cfg = client.get_model_cfg(name)
     if cfg is None:
         raise ValueError(f"Model {name} not found")
-    cfg.tokenizer_only = tokenizer_only
+    if tokenizer_only:
+        cfg.backend = "tokenizer_only"
     cfg.device = device
     cfg.dtype = torch.bfloat16
     return load_model(cfg, device_mesh=device_mesh)

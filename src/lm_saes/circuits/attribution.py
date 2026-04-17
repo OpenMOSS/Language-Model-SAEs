@@ -340,10 +340,9 @@ def greedily_collect_attribution(
     return attribution, collected
 
 
-def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
-    assert models.model is not None, "model must be initialized"
+def ln_detach_hooks(model: TransformerLensLanguageModel) -> list[str]:
     detach_hooks = []
-    for i, block in enumerate(models.model.blocks):
+    for i, block in enumerate(model.blocks):
         for module_name in ["ln1", "ln2", "ln1_post", "ln2_post"]:
             if hasattr(block, module_name) and isinstance(getattr(block, module_name), torch.nn.Module):
                 detach_hooks.append(f"blocks.{i}.{module_name}.hook_scale")
@@ -352,13 +351,12 @@ def ln_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
     return detach_hooks
 
 
-def attn_detach_hooks(models: TransformerLensLanguageModel) -> list[str]:
-    assert models.model is not None, "model must be initialized"
+def attn_detach_hooks(model: TransformerLensLanguageModel) -> list[str]:
     detach_hooks = []
-    for i, block in enumerate(models.model.blocks):
+    for i, block in enumerate(model.blocks):
         if hasattr(block, "attn") and isinstance(block.attn, torch.nn.Module):
             detach_hooks.append(f"blocks.{i}.attn.hook_pattern")
-            if models.model.cfg.use_qk_norm:
+            if model.cfg.use_qk_norm:
                 detach_hooks.append(f"blocks.{i}.attn.q_norm.hook_scale")
                 detach_hooks.append(f"blocks.{i}.attn.k_norm.hook_scale")
     return detach_hooks
@@ -453,19 +451,21 @@ def collect_cache(
 
     This function internally replaces model/SAE bias with batched leaves, for batch-simulation of Jacobian computation. It also uses `run_with_ref_cache` to directly collect the tensors that are in the computational graph, instead of cloning them in normal `run_with_cache`."""
 
-    assert model.model is not None, "model must be initialized"
     tokens = ensure_tokenized(inputs, model.tokenizer, device=model.device)
     batch_size, seq_len = tokens.shape[0], tokens.shape[1]
 
     model_bias_ctx = (
-        replace_model_biases_with_leaves(model.model, batch_size, seq_len) if with_bias_leaves else nullcontext([])
+        replace_model_biases_with_leaves(model, batch_size, seq_len, device_mesh=model.device_mesh)
+        if with_bias_leaves
+        else nullcontext([])
     )
     sae_bias_ctx = (
         replace_sae_biases_with_leaves(
-            model.model,
+            model,
             cast(list[SparseDictionary], replacement_modules),
             batch_size,
             seq_len,
+            device_mesh=model.device_mesh,
         )
         if with_bias_leaves
         else nullcontext([])
@@ -688,11 +688,8 @@ def attribute(
                 },
             )
 
-            assert model.model is not None
             bias_keys = [
-                f"blocks.{i}.{kind}"
-                for i in range(len(model.model.blocks))
-                for kind in ("attn.hook_b_O", "mlp.hook_b_out")
+                f"blocks.{i}.{kind}" for i in range(len(model.blocks)) for kind in ("attn.hook_b_O", "mlp.hook_b_out")
             ] + [
                 rm.cfg.hook_point_out + suffix
                 for rm in replacement_modules
@@ -732,9 +729,9 @@ def attribute(
         logits=batch_logits[:, -1, top_idx].detach(),
         probs=top_p,
         prompt_token_ids=prompt_token_ids,
-        prompt_tokens=[model.tokenizer.decode([token_id]) for token_id in prompt_token_ids],
+        prompt_tokens=[cast(Any, model.tokenizer).decode([token_id]) for token_id in prompt_token_ids],
         logit_token_ids=logit_token_ids,
-        logit_tokens=[model.tokenizer.decode([token_id]) for token_id in logit_token_ids],
+        logit_tokens=[cast(Any, model.tokenizer).decode([token_id]) for token_id in logit_token_ids],
         qk_trace_results=qk_trace_results,
     )
 
@@ -822,7 +819,6 @@ def qk_trace(
         with_bias_leaves=True,
     )
 
-    assert model.model is not None
     seq_len = cache["hook_embed.post"].shape[1]
     pos_indices = torch.arange(seq_len, device=model.device).unsqueeze(-1)
 
@@ -841,7 +837,7 @@ def qk_trace(
             )
         )
     bias_keys = [
-        f"blocks.{i}.{kind}" for i in range(len(model.model.blocks)) for kind in ("attn.hook_b_O", "mlp.hook_b_out")
+        f"blocks.{i}.{kind}" for i in range(len(model.blocks)) for kind in ("attn.hook_b_O", "mlp.hook_b_out")
     ] + [
         rm.cfg.hook_point_out + suffix
         for rm in replacement_modules_cast

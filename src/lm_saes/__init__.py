@@ -19,6 +19,7 @@ from .backend.language_model import (
     HuggingFaceLanguageModel,
     LanguageModel,
     LanguageModelConfig,
+    TokenizerOnlyLanguageModel,
     TransformerLensLanguageModel,
 )
 from .circuits import (
@@ -114,6 +115,7 @@ __all__ = [
     "LanguageModel",
     "LanguageModelConfig",
     "HuggingFaceLanguageModel",
+    "TokenizerOnlyLanguageModel",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",
     "ActivationFactoryDatasetSource",

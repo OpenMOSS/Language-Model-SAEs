@@ -3,7 +3,6 @@ from typing import Dict, Iterable, List, Literal, cast
 import torch
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
-from transformer_lens import HookedTransformer
 from transformer_lens.components import Attention, GroupedQueryAttention, TransformerBlock
 from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
@@ -200,23 +199,20 @@ class Initializer:
             assert sae.cfg.norm_activation == "dataset-wise", (
                 "Norm activation must be dataset-wise for Lorsa if use initialize_lorsa_with_mhsa"
             )
-            assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+            assert isinstance(model, TransformerLensLanguageModel), (
                 "Only support TransformerLens backend for initializing Lorsa with Original Multi Head Sparse Attention"
             )
             assert self.cfg.model_layer is not None, (
                 "Model layer must be provided for initializing Lorsa with Original Multi Head Sparse Attention"
             )
-            assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
-            assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
-                "Block must be a TransformerBlock"
-            )
-            assert isinstance(model.model.blocks[self.cfg.model_layer].attn, Attention | GroupedQueryAttention), (
+            assert isinstance(model.blocks[self.cfg.model_layer], TransformerBlock), "Block must be a TransformerBlock"
+            assert isinstance(model.blocks[self.cfg.model_layer].attn, Attention | GroupedQueryAttention), (
                 "Attention must be an Attention or GroupedQueryAttention"
             )
             sae.init_lorsa_with_mhsa(
                 cast(
                     Attention | GroupedQueryAttention,
-                    model.model.blocks[self.cfg.model_layer].attn,
+                    model.blocks[self.cfg.model_layer].attn,
                 )
             )
 
@@ -230,16 +226,13 @@ class Initializer:
         ):
             batch = sae.normalize_activations(activation_batch)
             assert sae.cfg.norm_activation == "dataset-wise"
-            assert isinstance(model, TransformerLensLanguageModel) and model.model is not None
+            assert isinstance(model, TransformerLensLanguageModel)
             assert self.cfg.model_layer is not None
-            assert isinstance(model.model, HookedTransformer), "Model must be a TransformerLens model"
-            assert isinstance(model.model.blocks[self.cfg.model_layer], TransformerBlock), (
-                "Block must be a TransformerBlock"
-            )
-            assert isinstance(model.model.blocks[self.cfg.model_layer].mlp, CanBeUsedAsMLP)
+            assert isinstance(model.blocks[self.cfg.model_layer], TransformerBlock), "Block must be a TransformerBlock"
+            assert isinstance(model.blocks[self.cfg.model_layer].mlp, CanBeUsedAsMLP)
             sae.init_tc_with_mlp(
                 batch=batch,
-                mlp=cast(CanBeUsedAsMLP, model.model.blocks[self.cfg.model_layer].mlp),
+                mlp=cast(CanBeUsedAsMLP, model.blocks[self.cfg.model_layer].mlp),
             )
 
         if self.cfg.initialize_W_D_with_active_subspace:
@@ -248,7 +241,7 @@ class Initializer:
                 assert sae.cfg.norm_activation == "dataset-wise", (
                     "Norm activation must be dataset-wise for Lorsa if use initialize_W_D_with_active_subspace"
                 )
-                assert isinstance(model, TransformerLensLanguageModel) and model.model is not None, (
+                assert isinstance(model, TransformerLensLanguageModel), (
                     "Only support TransformerLens backend for initializing Lorsa decoder weight with active subspace"
                 )
                 assert self.cfg.model_layer is not None, (
@@ -258,7 +251,7 @@ class Initializer:
                     batch=batch,
                     mhsa=cast(
                         Attention | GroupedQueryAttention,
-                        model.model.blocks[self.cfg.model_layer].attn,
+                        model.blocks[self.cfg.model_layer].attn,
                     ),
                 )
             else:

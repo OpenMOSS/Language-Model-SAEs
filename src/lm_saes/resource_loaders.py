@@ -8,6 +8,7 @@ from lm_saes.backend.language_model import (
     LanguageModel,
     LanguageModelConfig,
     QwenVLLanguageModel,
+    TokenizerOnlyLanguageModel,
     TransformerLensLanguageModel,
 )
 from lm_saes.config import DatasetConfig
@@ -67,7 +68,9 @@ def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_
 
 def load_model(cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None) -> LanguageModel:
     backend = infer_model_backend(cfg.model_name) if cfg.backend == "auto" else cfg.backend
-    if backend == "huggingface":
+    if backend == "tokenizer_only":
+        return TokenizerOnlyLanguageModel(cfg)
+    elif backend == "huggingface":
         if cfg.model_name.startswith("Qwen/Qwen2.5-VL"):
             return QwenVLLanguageModel(cfg)
         else:
