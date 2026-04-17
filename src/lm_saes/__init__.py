@@ -115,6 +115,7 @@ __all__ = [
     "LanguageModel",
     "LanguageModelConfig",
     "HuggingFaceLanguageModel",
+    "TokenizerOnlyLanguageModel",
     "DatasetConfig",
     "ActivationFactoryActivationsSource",
     "ActivationFactoryDatasetSource",

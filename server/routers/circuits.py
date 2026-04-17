@@ -4,7 +4,7 @@ import re
 import threading
 import traceback
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import torch
 from fastapi import APIRouter, BackgroundTasks, Response
@@ -58,11 +58,15 @@ def preview(request: PreviewRequest, device_mesh: DeviceMesh | None = None):
         f"Preview only supports TransformerLens backend, got {type(model)}"
     )
 
+    assert model.tokenizer is not None, "Preview requires a tokenizer"
     if request.input.input_type == "plain_text":
         prompt = request.input.text
     elif request.input.input_type == "chat_template":
-        prompt = model.tokenizer.apply_chat_template(
-            request.input.messages, tokenize=False, add_generation_prompt=False, continue_final_message=True
+        prompt = cast(
+            str,
+            model.tokenizer.apply_chat_template(
+                request.input.messages, tokenize=False, add_generation_prompt=False, continue_final_message=True
+            ),
         )
     else:
         raise ValueError(f"Invalid input type: {request.input.input_type}")
@@ -462,11 +466,15 @@ def create_circuit(sae_set_name: str, request: GenerateCircuitRequest, backgroun
         )
 
     # Determine prompt
+    assert model.tokenizer is not None, "Circuit generation requires a tokenizer"
     if request.input.input_type == "plain_text":
         prompt = request.input.text
     elif request.input.input_type == "chat_template":
-        prompt = model.tokenizer.apply_chat_template(
-            request.input.messages, tokenize=False, add_generation_prompt=False, continue_final_message=True
+        prompt = cast(
+            str,
+            model.tokenizer.apply_chat_template(
+                request.input.messages, tokenize=False, add_generation_prompt=False, continue_final_message=True
+            ),
         )
     else:
         return Response(content=f"Invalid input type: {request.input.input_type}", status_code=400)
