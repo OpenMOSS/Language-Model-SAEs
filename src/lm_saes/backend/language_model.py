@@ -350,7 +350,7 @@ class TransformerLensLanguageModel(HookedTransformer, LanguageModel):
             return_offsets_mapping=True,
         )
         offsets = encoding["offset_mapping"].tolist()  # type: ignore[reportAttributeAccessIssue]
-        tokens = encoding["input_ids"]  # type: ignore[reportIndexIssue]
+        tokens = cast(torch.Tensor, encoding["input_ids"])  # type: ignore[reportIndexIssue]
         has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
         if self.lm_cfg.prepend_bos and not has_bos_prepended:
             offsets = [[None] + offset_ for offset_ in offsets]
@@ -604,7 +604,7 @@ class TokenizerOnlyLanguageModel(LanguageModel):
             return_offsets_mapping=True,
         )
         offsets = encoding["offset_mapping"].tolist()  # type: ignore[reportAttributeAccessIssue]
-        tokens = encoding["input_ids"]  # type: ignore[reportIndexIssue]
+        tokens = cast(torch.Tensor, encoding["input_ids"])  # type: ignore[reportIndexIssue]
         has_bos_prepended = torch.all(tokens[:, 0] == self.bos_token_id)
         if self.cfg.prepend_bos and not has_bos_prepended:
             offsets = [[None] + offset_ for offset_ in offsets]
