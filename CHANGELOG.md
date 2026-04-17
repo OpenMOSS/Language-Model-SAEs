@@ -1,3 +1,36 @@
+## v2.0.0b32 (2026-04-17)
+
+
+- Merge pull request #217 from OpenMOSS/dev
+- Release: refactor TransformerLensLanguageModel to be inherited from HookedTransformer
+- fix(backend): cast encoding['input_ids'] to Tensor for basedpyright
+- fix(server): basedpyright/ruff errors from backend refactor
+- - Add TokenizerOnlyLanguageModel to __all__ so ruff sees the export.
+- Assert tokenizer is not None before chat-template paths in circuit
+  preview + generate (model.tokenizer is Optional on the new API).
+- Cast apply_chat_template result to str (tokenize=False is known by
+  us but not inferable from the overload union).
+- fix(server): offload sync @distributed calls to thread in host-execution mode
+- Under num_workers=0, the @distributed wrapper ran the target function
+synchronously on the asyncio event loop. Long-running torch work (circuit
+attribution, model forwards) blocked the loop, so parallel frontend
+requests (progress polling, sub-resource loads) hung until the heavy call
+finished. Route sync functions through asyncio.to_thread so the loop
+stays responsive; async functions are awaited directly.
+- refactor(backend): TransformerLensLanguageModel via multiple inheritance
+- Switch from composition (`self.model = HookedTransformer(...)`) to
+multiple inheritance (`class TransformerLensLanguageModel(HookedTransformer,
+LanguageModel)`), exposing the full TL API directly without per-method proxies.
+- - Rename our `self.cfg` → `self.lm_cfg` to avoid clashing with
+  HookedTransformerConfig.
+- Drop `use_flash_attn`, `load_ckpt`, `tokenizer_only` config fields.
+- Replace the `tokenizer_only=True` flag with a dedicated
+  `TokenizerOnlyLanguageModel` backend (`backend="tokenizer_only"`).
+- Add `from_hooked_transformer` classmethod to upgrade bare HookedTransformer
+  instances via zero-copy __class__ swap.
+- Update all call sites (`model.model.blocks` → `model.blocks`, etc.) across
+  circuits, initializer, analysis, server, and CLI.
+
 ## v2.0.0b31 (2026-04-17)
 
 
