@@ -4,6 +4,7 @@ import functools
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from itertools import groupby
 from typing import (
     Any,
     Iterator,
@@ -94,18 +95,16 @@ class NodeRefs:
         return multi_batch_index([(ref, indices) for _, indices, ref in self], n_batch_dims=1)
 
     @functools.cached_property
-    def _source_split(self) -> tuple[dict[tuple[int, ...], list[int]], list[int], list[torch.Tensor]]:
-        values = self.values
-        full_groups: dict[tuple[int, ...], list[int]] = {}
-        sparse_slots: list[int] = []
-        sparse_indices: list[torch.Tensor] = []
-        for i, (ni, (_, idx, _), v) in enumerate(zip(self.dimension.node_infos, self._entries, values)):
-            if ni.is_identity:
-                full_groups.setdefault(tuple(v.shape[1:]), []).append(i)
-            else:
-                sparse_slots.append(i)
-                sparse_indices.append(idx)
-        return full_groups, sparse_slots, sparse_indices
+    def _slot_runs(self) -> list[tuple[bool, list[int]]]:
+        """Contiguous source-order runs of slots with the same indices property and shape.
+        Used for efficient computation of attribution scores.
+        """
+
+        def kind(s: int) -> tuple[bool, tuple[int, ...] | None]:
+            is_full = self.dimension.node_infos[s].is_identity
+            return (is_full, tuple(self.values[s].shape[1:]) if is_full else None)
+
+        return [(key[0], list(group)) for key, group in groupby(range(len(self.dimension.node_infos)), key=kind)]
 
     def iter_batches(self, batch_size: int) -> Iterator[NodeRefs]:
         """Yield sub-:class:`NodeRefs` of at most `batch_size` elements."""
@@ -226,13 +225,13 @@ def compute_intermediates_attribution(
     return influence
 
 
-@timer.time("batch_full_attribution")
-def _batch_full_attribution(
+@timer.time("_full_slot_attribution")
+def _full_slot_attribution(
     values: list[torch.Tensor],
     grad_refs: Sequence[torch.Tensor | None],
     slots: list[int],
 ) -> torch.Tensor:
-    """Batched input×gradient for identity-indexed sources (value.shape == ref.shape)."""
+    """Input×gradient for identity-indexed slots."""
     grads = [grad_refs[s] if grad_refs[s] is not None else torch.zeros_like(values[s]) for s in slots]
     stacked_v = torch.stack([values[s].detach() for s in slots], dim=1)
     stacked_g = torch.stack([cast(torch.Tensor, g) for g in grads], dim=1)
@@ -240,14 +239,14 @@ def _batch_full_attribution(
     return product.flatten(start_dim=1)
 
 
-@timer.time("sparse_attribution")
-def _sparse_attribution(
+@timer.time("_sparse_slot_attribution")
+def _sparse_slot_attribution(
     values: list[torch.Tensor],
     grad_refs: Sequence[torch.Tensor | None],
     slots: list[int],
     indices: list[torch.Tensor],
 ) -> torch.Tensor:
-    """Per-source input×gradient for sparse-indexed sources (need multi_batch_index)."""
+    """Input×gradient for sparse-indexed slots."""
     nonzero = [(cast(torch.Tensor, grad_refs[s]), idx) for s, idx in zip(slots, indices) if grad_refs[s] is not None]
     indexed = multi_batch_index(nonzero, n_batch_dims=1) if nonzero else []
     grad_iter = iter(indexed)
@@ -257,11 +256,7 @@ def _sparse_attribution(
         else values[s].detach().new_zeros(values[s].shape[:2])
         for s in slots
     ]
-    return (
-        torch.cat(parts, dim=1)
-        if parts
-        else torch.empty(values[0].shape[0], 0, device=values[0].device, dtype=values[0].dtype)
-    )
+    return torch.cat(parts, dim=1) if len(parts) > 1 else parts[0]
 
 
 @timer.time("attribution_scores")
@@ -270,11 +265,15 @@ def attribution_scores(
     sources: NodeRefs,
 ) -> torch.Tensor:
     """Input×gradient attribution scores of shape ``(fwd_batch, n_sources)``."""
-    values = sources.values
-    full_groups, sparse_slots, sparse_indices = sources._source_split  # pyright: ignore[reportPrivateUsage]
-    blocks = [_batch_full_attribution(values, grad_refs, slots) for _, slots in full_groups.items()]
-    blocks.append(_sparse_attribution(values, grad_refs, sparse_slots, sparse_indices))
-    return torch.cat(blocks, dim=1)
+    blocks = [
+        _full_slot_attribution(sources.values, grad_refs, slots)
+        if is_full
+        else _sparse_slot_attribution(
+            sources.values, grad_refs, slots, [sources.dimension.node_infos[s].indices for s in slots]
+        )
+        for is_full, slots in sources._slot_runs  # pyright: ignore[reportPrivateUsage]
+    ]
+    return torch.cat(blocks, dim=1) if len(blocks) > 1 else blocks[0]
 
 
 @timer.time("greedily_collect_attribution")

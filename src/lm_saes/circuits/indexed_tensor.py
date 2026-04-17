@@ -247,7 +247,7 @@ class NodeDimension(PyTree):
             device_mesh=device_mesh,
         )
 
-    @property
+    @functools.cached_property
     def node_infos(self) -> Sequence[NodeInfo]:
         if len(self) == 0:
             return []
