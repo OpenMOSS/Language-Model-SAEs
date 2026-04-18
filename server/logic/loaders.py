@@ -4,14 +4,14 @@ import torch
 from datasets import Dataset
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes import (
+from llamascopium import (
     LanguageModel,
     SparseDictionary,
     SparseDictionaryConfig,
     load_dataset_shard,
     load_model,
 )
-from lm_saes.utils.timer import timer
+from llamascopium.utils.timer import timer
 from server.config import (
     LRU_CACHE_SIZE_DATASETS,
     LRU_CACHE_SIZE_MODELS,

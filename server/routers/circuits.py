@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Response
 from pydantic import BaseModel
 from torch.distributed.device_mesh import DeviceMesh
 
-from lm_saes import (
+from llamascopium import (
     CircuitConfig,
     CircuitInput,
     CircuitStatus,
@@ -23,9 +23,9 @@ from lm_saes import (
     TransformerLensLanguageModel,
     prune_attribution,
 )
-from lm_saes.utils.distributed import is_primary_rank
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.timer import timer
+from llamascopium.utils.distributed import is_primary_rank
+from llamascopium.utils.logging import get_distributed_logger
+from llamascopium.utils.timer import timer
 from server.config import LRU_CACHE_SIZE_CIRCUITS, client, device, sae_series
 from server.logic.loaders import get_model, get_sae, get_sae_cfg
 from server.logic.samples import list_feature_data
