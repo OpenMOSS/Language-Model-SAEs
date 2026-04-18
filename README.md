@@ -35,13 +35,13 @@
 Use [pip](https://pypi.org/project/pip/) to install Llamascopium:
 
 ```bash
-pip install llamascopium==2.0.0b33
+pip install llamascopium==2.0.0b34
 ```
 
 We also highly recommend using [uv](https://docs.astral.sh/uv/) to manage your own project dependencies. You can use
 
 ```bash
-uv add llamascopium==2.0.0b33
+uv add llamascopium==2.0.0b34
 ```
 
 to add Llamascopium as your project dependency.

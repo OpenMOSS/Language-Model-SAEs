@@ -1,3 +1,10 @@
+## v2.0.0b34 (2026-04-18)
+
+
+- Merge pull request #220 from OpenMOSS/dev
+- Release: update GitHub repo URL to Llamascopium
+- docs: update GitHub repo URL from Language-Model-SAEs to Llamascopium
+
 ## v2.0.0b33 (2026-04-18)
 
 
