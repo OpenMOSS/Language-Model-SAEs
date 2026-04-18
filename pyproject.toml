@@ -1,5 +1,5 @@
 [project]
-name = "lm-saes"
+name = "llamascopium"
 version = "2.0.0b32"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
@@ -57,7 +57,8 @@ email = "junxuanwang21@m.fudan.edu.cn"
 text = "MIT"
 
 [project.scripts]
-lm-saes = "lm_saes.cli:entrypoint"
+llamascopium = "llamascopium.cli:entrypoint"
+lm-saes = "llamascopium.cli:entrypoint"
 
 [build-system]
 requires = ["uv_build>=0.9.6,<0.10.0"]
@@ -180,7 +181,7 @@ ignore = [
     "tests",
     "exp",
     "scripts",
-    "src/lm_saes/circuit",
+    "src/llamascopium/circuit",
 ]
 typeCheckingMode = "standard"
 reportRedeclaration = false
@@ -204,10 +205,12 @@ version_scheme = "pep440"
 version_provider = "uv"
 update_changelog_on_bump = true
 version_files = [
-    "README.md:pip install lm-saes==",
-    "README.md:uv add lm-saes==",
-    "docs/index.md:uv add lm-saes==",
-    "docs/index.md:pip install lm-saes==",
+    "README.md:pip install llamascopium==",
+    "README.md:uv add llamascopium==",
+    "docs/index.md:uv add llamascopium==",
+    "docs/index.md:pip install llamascopium==",
+    "shim/lm-saes/pyproject.toml:version =",
+    "shim/lm-saes/pyproject.toml:llamascopium==",
 ]
 
 [tool.commitizen.customize]
