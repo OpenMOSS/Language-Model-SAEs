@@ -2,18 +2,19 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from lm_saes.runners import (
+
+from llamascopium.runners import (
     AnalyzeSAESettings,
     GenerateActivationsSettings,
     TrainSAESettings,
 )
-from lm_saes.runners import (
+from llamascopium.runners import (
     analyze_sae as run_analyze,
 )
-from lm_saes.runners import (
+from llamascopium.runners import (
     generate_activations as run_generate,
 )
-from lm_saes.runners import (
+from llamascopium.runners import (
     train_sae as run_train,
 )
 

@@ -8,29 +8,6 @@ import torch
 import torch.distributed.checkpoint as dcp
 import torch.distributed.tensor
 import torch.optim.lr_scheduler as lr_scheduler
-from lm_saes.config import BaseConfig
-from lm_saes.metrics import (
-    ExplainedVarianceMetric,
-    FrequencyMetric,
-    GradientNormMetric,
-    L0Metric,
-    L2NormErrorMetric,
-    LossMetric,
-    MeanFeatureActMetric,
-    Metric,
-    ModelSpecificMetric,
-)
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.optim import SparseAdam, clip_grad_norm, get_scheduler
-from lm_saes.utils.distributed import is_primary_rank
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.logging import get_distributed_logger, log_metrics
-from lm_saes.utils.misc import (
-    convert_str_to_torch_dtype,
-    convert_torch_dtype_to_str,
-)
-from lm_saes.utils.tensor_specs import apply_token_mask
-from lm_saes.utils.timer import timer
 from pydantic import (
     BeforeValidator,
     ConfigDict,
@@ -43,6 +20,30 @@ from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.optim import Adam, Optimizer
 from tqdm import tqdm
 from wandb.sdk.wandb_run import Run
+
+from llamascopium.config import BaseConfig
+from llamascopium.metrics import (
+    ExplainedVarianceMetric,
+    FrequencyMetric,
+    GradientNormMetric,
+    L0Metric,
+    L2NormErrorMetric,
+    LossMetric,
+    MeanFeatureActMetric,
+    Metric,
+    ModelSpecificMetric,
+)
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.optim import SparseAdam, clip_grad_norm, get_scheduler
+from llamascopium.utils.distributed import is_primary_rank
+from llamascopium.utils.distributed.ops import item
+from llamascopium.utils.logging import get_distributed_logger, log_metrics
+from llamascopium.utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
+)
+from llamascopium.utils.tensor_specs import apply_token_mask
+from llamascopium.utils.timer import timer
 
 logger = get_distributed_logger("trainer")
 
@@ -409,7 +410,7 @@ class Trainer:
             self.tokens_since_last_activation = torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=torch.long)
             self.is_dead = torch.zeros(sae.cfg.d_sae, device=sae.cfg.device, dtype=torch.bool)
         else:
-            from lm_saes.utils.distributed import DimMap
+            from llamascopium.utils.distributed import DimMap
 
             self.tokens_since_last_activation = torch.distributed.tensor.zeros(
                 sae.cfg.d_sae,

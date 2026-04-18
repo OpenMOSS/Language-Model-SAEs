@@ -6,7 +6,7 @@ explanations, including detection and fuzzing evaluation methods.
 
 from typing import Any
 
-from lm_saes.analysis.samples import TokenizedSample
+from llamascopium.analysis.samples import TokenizedSample
 
 from .autointerp_base import AutoInterpConfig
 

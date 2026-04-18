@@ -15,26 +15,27 @@ import torch.nn as nn
 import torch.nn.functional as F
 import transformer_lens
 from jaxtyping import Float, Int
-from lm_saes.models.protocols import (
-    DatasetNormStandardizable,
-    EncoderBiasInitializable,
-    NormComputing,
-    NormConstrainable,
-)
-from lm_saes.models.sparse_dictionary import (
-    SparseDictionary,
-    SparseDictionaryConfig,
-    register_sae_config,
-    register_sae_model,
-)
-from lm_saes.utils.distributed import DimMap, masked_fill, mesh_dim_size
-from lm_saes.utils.logging import get_distributed_logger
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformer_lens.components import Attention, GroupedQueryAttention
 from transformer_lens.hook_points import HookPoint
 from typing_extensions import override
+
+from llamascopium.models.protocols import (
+    DatasetNormStandardizable,
+    EncoderBiasInitializable,
+    NormComputing,
+    NormConstrainable,
+)
+from llamascopium.models.sparse_dictionary import (
+    SparseDictionary,
+    SparseDictionaryConfig,
+    register_sae_config,
+    register_sae_model,
+)
+from llamascopium.utils.distributed import DimMap, masked_fill, mesh_dim_size
+from llamascopium.utils.logging import get_distributed_logger
 
 logger = get_distributed_logger("lorsa")
 

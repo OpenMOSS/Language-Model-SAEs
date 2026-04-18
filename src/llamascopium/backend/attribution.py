@@ -1,6 +1,6 @@
-"""Backward-compat shim for :mod:`lm_saes.circuits.attribution`."""
+"""Backward-compat shim for :mod:`llamascopium.circuits.attribution`."""
 
-from lm_saes.circuits.attribution import (
+from llamascopium.circuits.attribution import (
     AttributionResult,
     IntermediateRefs,
     NodeRefs,

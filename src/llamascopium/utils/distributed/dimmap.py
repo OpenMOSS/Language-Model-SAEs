@@ -1,10 +1,11 @@
 from typing import cast
 
 import torch
-from lm_saes.utils.timer import timer
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Placement, distribute_tensor
 from torch.distributed.tensor.placement_types import Replicate, Shard
+
+from llamascopium.utils.timer import timer
 
 
 class DimMap:

@@ -4,7 +4,7 @@ This package contains the sparse dictionary base class, protocol definitions,
 and all concrete model implementations.
 """
 
-from lm_saes.models.protocols import (
+from llamascopium.models.protocols import (
     ActiveSubspaceInitializable,
     DatasetNormStandardizable,
     EncoderBiasInitializable,
@@ -12,7 +12,7 @@ from lm_saes.models.protocols import (
     NormComputing,
     NormConstrainable,
 )
-from lm_saes.models.sparse_dictionary import (
+from llamascopium.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,

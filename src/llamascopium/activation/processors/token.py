@@ -1,8 +1,9 @@
 from typing import Any, Iterable, Optional
 
 import torch
-from lm_saes.backend.language_model import LanguageModel
-from lm_saes.utils.misc import pad_and_truncate_tokens
+
+from llamascopium.backend.language_model import LanguageModel
+from llamascopium.utils.misc import pad_and_truncate_tokens
 
 from .core import BaseActivationProcessor
 

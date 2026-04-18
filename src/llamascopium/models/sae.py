@@ -4,8 +4,15 @@ from typing import Any, Literal, Union, overload
 import torch
 import torch.distributed.tensor
 from jaxtyping import Float
-from lm_saes.activation_functions import JumpReLU
-from lm_saes.models.protocols import (
+from torch import nn
+from torch.distributed import DeviceMesh
+from torch.distributed.tensor import DTensor
+from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
+from transformer_lens.hook_points import HookPoint
+from typing_extensions import override
+
+from llamascopium.activation_functions import JumpReLU
+from llamascopium.models.protocols import (
     ActiveSubspaceInitializable,
     DatasetNormStandardizable,
     EncoderBiasInitializable,
@@ -13,19 +20,13 @@ from lm_saes.models.protocols import (
     NormComputing,
     NormConstrainable,
 )
-from lm_saes.models.sparse_dictionary import (
+from llamascopium.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
-from lm_saes.utils.distributed import DimMap
-from torch import nn
-from torch.distributed import DeviceMesh
-from torch.distributed.tensor import DTensor
-from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
-from transformer_lens.hook_points import HookPoint
-from typing_extensions import override
+from llamascopium.utils.distributed import DimMap
 
 
 @register_sae_config("sae")
@@ -359,7 +360,7 @@ class SparseAutoEncoder(
         if (
             self.cfg.use_triton_kernel and 0 < max_l0_in_batch < sparsity_threshold
         ):  # triton kernel cannot handle empty feature_acts
-            from lm_saes.kernels import decode_with_triton_spmm_kernel
+            from llamascopium.kernels import decode_with_triton_spmm_kernel
 
             reconstructed = decode_with_triton_spmm_kernel(feature_acts, self.W_D.T.contiguous())
         else:

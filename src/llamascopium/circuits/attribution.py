@@ -15,28 +15,29 @@ from typing import (
 
 import einops
 import torch
-from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.circuits.hooks import replace_model_biases_with_leaves, replace_sae_biases_with_leaves
-from lm_saes.circuits.indexed_tensor import (
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
+from tqdm import tqdm
+
+from llamascopium.backend.language_model import TransformerLensLanguageModel
+from llamascopium.circuits.hooks import replace_model_biases_with_leaves, replace_sae_biases_with_leaves
+from llamascopium.circuits.indexed_tensor import (
     NodeDimension,
     NodeIndexed,
     NodeIndexedMatrix,
     NodeIndexedVector,
     NodeInfo,
 )
-from lm_saes.core.pytree import PyTree
-from lm_saes.core.serialize import migrate
-from lm_saes.models.lorsa import LowRankSparseAttention
-from lm_saes.models.molt import MixtureOfLinearTransform
-from lm_saes.models.sae import SparseAutoEncoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.utils.distributed import DimMap, full_tensor
-from lm_saes.utils.distributed.ops import maybe_local_map, multi_batch_index, nonzero, searchsorted
-from lm_saes.utils.misc import ensure_tokenized
-from lm_saes.utils.timer import timer
-from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
-from tqdm import tqdm
+from llamascopium.core.pytree import PyTree
+from llamascopium.core.serialize import migrate
+from llamascopium.models.lorsa import LowRankSparseAttention
+from llamascopium.models.molt import MixtureOfLinearTransform
+from llamascopium.models.sae import SparseAutoEncoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.utils.distributed import DimMap, full_tensor
+from llamascopium.utils.distributed.ops import maybe_local_map, multi_batch_index, nonzero, searchsorted
+from llamascopium.utils.misc import ensure_tokenized
+from llamascopium.utils.timer import timer
 
 logger = logging.getLogger(__name__)
 

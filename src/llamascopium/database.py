@@ -12,16 +12,17 @@ import pymongo.errors
 import pymongo.results
 import torch
 from bson import ObjectId
-from lm_saes.backend.attribution import AttributionResult
-from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.config import DatasetConfig
-from lm_saes.core.serialize import dump, load
-from lm_saes.models.sparse_dictionary import SAE_TYPE_TO_CONFIG_CLASS, SparseDictionaryConfig
-from lm_saes.utils.bytes import bytes_to_np, np_to_bytes
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.timer import timer
 from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
+
+from llamascopium.backend.attribution import AttributionResult
+from llamascopium.backend.language_model import LanguageModelConfig
+from llamascopium.config import DatasetConfig
+from llamascopium.core.serialize import dump, load
+from llamascopium.models.sparse_dictionary import SAE_TYPE_TO_CONFIG_CLASS, SparseDictionaryConfig
+from llamascopium.utils.bytes import bytes_to_np, np_to_bytes
+from llamascopium.utils.logging import get_distributed_logger
+from llamascopium.utils.timer import timer
 
 logger = get_distributed_logger(__name__)
 
@@ -106,11 +107,11 @@ class SAERecord(BaseModel):
         if cfg_cls is None:
             # Lazy import model modules so config classes are registered.
             for module_name in (
-                "lm_saes.models.sae",
-                "lm_saes.models.crosscoder",
-                "lm_saes.models.clt",
-                "lm_saes.models.lorsa",
-                "lm_saes.models.molt",
+                "llamascopium.models.sae",
+                "llamascopium.models.crosscoder",
+                "llamascopium.models.clt",
+                "llamascopium.models.lorsa",
+                "llamascopium.models.molt",
             ):
                 import_module(module_name)
             cfg_cls = SAE_TYPE_TO_CONFIG_CLASS.get(sae_type)
@@ -1022,7 +1023,7 @@ class MongoClient:
         return result.modified_count > 0
 
     def store_attribution(self, circuit_id: str, attribution: AttributionResult) -> bool:
-        """Store attribution data to GridFS via ``lm_saes.core.serialize``."""
+        """Store attribution data to GridFS via ``llamascopium.core.serialize``."""
         assert self.fs is not None
 
         buf = io.BytesIO()

@@ -3,17 +3,18 @@ from typing import Callable, NamedTuple, cast
 
 import torch
 import torch.nn as nn
-from lm_saes.backend.language_model import TransformerLensLanguageModel
-from lm_saes.backend.tl_addons import mount_hooked_modules
-from lm_saes.models.lorsa import LowRankSparseAttention
-from lm_saes.models.molt import MixtureOfLinearTransform
-from lm_saes.models.sae import SparseAutoEncoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.utils.timer import timer
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
+
+from llamascopium.backend.language_model import TransformerLensLanguageModel
+from llamascopium.backend.tl_addons import mount_hooked_modules
+from llamascopium.models.lorsa import LowRankSparseAttention
+from llamascopium.models.molt import MixtureOfLinearTransform
+from llamascopium.models.sae import SparseAutoEncoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.utils.timer import timer
 
 
 @contextmanager

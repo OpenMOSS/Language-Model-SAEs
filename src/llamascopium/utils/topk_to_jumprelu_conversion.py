@@ -2,12 +2,13 @@ import math
 from typing import Iterable, Optional
 
 import torch
-from lm_saes.activation_functions import JumpReLU
-from lm_saes.models.clt import CrossLayerTranscoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+
+from llamascopium.activation_functions import JumpReLU
+from llamascopium.models.clt import CrossLayerTranscoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
 
 from .distributed import distributed_topk
 from .distributed.ops import item

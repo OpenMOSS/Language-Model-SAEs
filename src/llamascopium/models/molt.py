@@ -5,20 +5,21 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
-from lm_saes.models.protocols import DatasetNormStandardizable, NormComputing, NormConstrainable
-from lm_saes.models.sparse_dictionary import (
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
+from transformer_lens.hook_points import HookPoint
+from typing_extensions import override
+
+from llamascopium.models.protocols import DatasetNormStandardizable, NormComputing, NormConstrainable
+from llamascopium.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
-from lm_saes.utils.distributed import DimMap, item
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.timer import timer
-from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
-from transformer_lens.hook_points import HookPoint
-from typing_extensions import override
+from llamascopium.utils.distributed import DimMap, item
+from llamascopium.utils.logging import get_distributed_logger
+from llamascopium.utils.timer import timer
 
 logger = get_distributed_logger("molt")
 

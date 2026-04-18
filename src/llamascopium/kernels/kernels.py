@@ -5,7 +5,8 @@ from typing import cast
 import torch
 import triton
 import triton.language as tl
-from lm_saes.utils.logging import get_logger
+
+from llamascopium.utils.logging import get_logger
 
 logger = get_logger("kernels")
 

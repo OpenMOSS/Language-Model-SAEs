@@ -6,7 +6,7 @@ process, organized by purpose:
 - evaluation_prompts: Prompts for evaluating feature explanations
 """
 
-from lm_saes.analysis.samples import Segment, TokenizedSample, process_token
+from llamascopium.analysis.samples import Segment, TokenizedSample, process_token
 
 from .autointerp_base import (
     AutoInterpConfig,

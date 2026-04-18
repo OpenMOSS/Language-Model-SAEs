@@ -5,22 +5,23 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import torch
-from lm_saes.activation.factory import (
+from pydantic_settings import BaseSettings
+from torch.distributed.device_mesh import init_device_mesh
+
+from llamascopium.activation.factory import (
     ActivationFactory,
     ActivationFactoryConfig,
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
     BufferShuffleConfig,
 )
-from lm_saes.activation.processors.cached_activation import CachedActivationLoader
-from lm_saes.activation.writer import ActivationWriter, ActivationWriterConfig
-from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.config import DatasetConfig
-from lm_saes.database import MongoClient, MongoDBConfig
-from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.utils.logging import get_distributed_logger, setup_logging
-from pydantic_settings import BaseSettings
-from torch.distributed.device_mesh import init_device_mesh
+from llamascopium.activation.processors.cached_activation import CachedActivationLoader
+from llamascopium.activation.writer import ActivationWriter, ActivationWriterConfig
+from llamascopium.backend.language_model import LanguageModelConfig
+from llamascopium.config import DatasetConfig
+from llamascopium.database import MongoClient, MongoDBConfig
+from llamascopium.resource_loaders import load_dataset, load_model
+from llamascopium.utils.logging import get_distributed_logger, setup_logging
 
 from .utils import load_config
 

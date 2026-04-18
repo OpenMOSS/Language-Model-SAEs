@@ -39,7 +39,7 @@ def setup_logging(
     )
 
     # Get project logger
-    logger = logging.getLogger("lm_saes")
+    logger = logging.getLogger("llamascopium")
     return logger
 
 
@@ -52,7 +52,7 @@ def get_logger(name: str) -> logging.Logger:
     Returns:
         Logger instance
     """
-    return logging.getLogger(f"lm_saes.{name}")
+    return logging.getLogger(f"llamascopium.{name}")
 
 
 def is_master() -> bool:

@@ -3,8 +3,12 @@ from typing import Iterable
 
 import torch
 import torch.distributed.tensor
-from lm_saes.config import BaseConfig
-from lm_saes.metrics import (
+from tqdm import tqdm
+from transformer_lens import HookedTransformer
+from wandb.sdk.wandb_run import Run
+
+from llamascopium.config import BaseConfig
+from llamascopium.metrics import (
     DownstreamMetric,
     ExplainedVarianceMetric,
     FrequencyMetric,
@@ -15,14 +19,11 @@ from lm_saes.metrics import (
     Metric,
     ModelSpecificMetric,
 )
-from lm_saes.models.lorsa import LowRankSparseAttention
-from lm_saes.models.sae import SparseAutoEncoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.logging import get_distributed_logger, log_metrics
-from tqdm import tqdm
-from transformer_lens import HookedTransformer
-from wandb.sdk.wandb_run import Run
+from llamascopium.models.lorsa import LowRankSparseAttention
+from llamascopium.models.sae import SparseAutoEncoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.utils.distributed.ops import item
+from llamascopium.utils.logging import get_distributed_logger, log_metrics
 
 logger = get_distributed_logger("evaluator")
 

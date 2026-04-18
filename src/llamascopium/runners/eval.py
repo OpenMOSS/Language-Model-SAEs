@@ -5,16 +5,17 @@ from typing import Optional
 
 import torch
 import wandb
-from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
-from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.evaluator import EvalConfig, Evaluator
-from lm_saes.models.crosscoder import Crosscoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.trainer import WandbConfig
-from lm_saes.utils.distributed import mesh_rank
-from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
+
+from llamascopium.activation.factory import ActivationFactory, ActivationFactoryConfig
+from llamascopium.backend.language_model import LanguageModelConfig
+from llamascopium.evaluator import EvalConfig, Evaluator
+from llamascopium.models.crosscoder import Crosscoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.trainer import WandbConfig
+from llamascopium.utils.distributed import mesh_rank
+from llamascopium.utils.logging import get_distributed_logger, setup_logging
 
 from .utils import PretrainedSAE
 

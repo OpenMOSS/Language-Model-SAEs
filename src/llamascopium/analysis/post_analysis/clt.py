@@ -7,11 +7,12 @@ including handling of decoder norms for cross-layer transcoders.
 from typing import Any
 
 import torch
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.models.clt import CrossLayerTranscoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.utils.discrete import KeyedDiscreteMapper
 from torch.distributed.device_mesh import DeviceMesh
+
+from llamascopium.activation.factory import ActivationFactory
+from llamascopium.models.clt import CrossLayerTranscoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.utils.discrete import KeyedDiscreteMapper
 
 from .base import PostAnalysisProcessor, register_post_analysis_processor
 

@@ -1,6 +1,6 @@
-"""Backward-compat shim for :mod:`lm_saes.circuits.indexed_tensor`."""
+"""Backward-compat shim for :mod:`llamascopium.circuits.indexed_tensor`."""
 
-from lm_saes.circuits.indexed_tensor import (
+from llamascopium.circuits.indexed_tensor import (
     Node,
     NodeDimension,
     NodeIndexed,

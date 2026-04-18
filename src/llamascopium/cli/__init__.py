@@ -15,8 +15,8 @@ from .common import (
 from .utils import load_config
 
 app = typer.Typer(
-    name="lm-saes",
-    help="CLI for Language Model Sparse Autoencoders - training, analysis, and database management.",
+    name="llamascopium",
+    help="CLI for Llamascopium - Sparse Autoencoder training, analysis, and database management.",
     no_args_is_help=True,
 )
 

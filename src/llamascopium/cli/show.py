@@ -6,11 +6,12 @@ import numpy as np
 import torch
 import typer
 from datasets import Dataset
-from lm_saes.analysis.samples import TokenizedSample
-from lm_saes.database import FeatureAnalysisSampling, MongoClient, MongoDBConfig
-from lm_saes.resource_loaders import LanguageModel, load_dataset_shard, load_model
 from rich.panel import Panel
 from rich.text import Text
+
+from llamascopium.analysis.samples import TokenizedSample
+from llamascopium.database import FeatureAnalysisSampling, MongoClient, MongoDBConfig
+from llamascopium.resource_loaders import LanguageModel, load_dataset_shard, load_model
 
 from .common import (
     DEFAULT_MONGO_DB,

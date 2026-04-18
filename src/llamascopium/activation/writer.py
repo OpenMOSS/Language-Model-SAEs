@@ -5,12 +5,13 @@ from typing import Any, Iterable, Literal, Optional, Sequence
 
 import more_itertools
 import torch
-from lm_saes.config import BaseConfig
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.timer import timer
 from safetensors.torch import save_file
 from torch.distributed.device_mesh import DeviceMesh
 from tqdm import tqdm
+
+from llamascopium.config import BaseConfig
+from llamascopium.utils.logging import get_distributed_logger
+from llamascopium.utils.timer import timer
 
 logger = get_distributed_logger(__name__)
 

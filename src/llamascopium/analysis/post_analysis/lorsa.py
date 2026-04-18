@@ -27,15 +27,16 @@ from typing import Any
 
 import torch
 from einops import repeat
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.models.lorsa import LowRankSparseAttention
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import is_primary_rank
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.logging import get_distributed_logger
 from torch.distributed.device_mesh import DeviceMesh
 from tqdm import tqdm
+
+from llamascopium.activation.factory import ActivationFactory
+from llamascopium.models.lorsa import LowRankSparseAttention
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.utils.discrete import KeyedDiscreteMapper
+from llamascopium.utils.distributed import is_primary_rank
+from llamascopium.utils.distributed.ops import item
+from llamascopium.utils.logging import get_distributed_logger
 
 from .base import PostAnalysisProcessor, register_post_analysis_processor
 

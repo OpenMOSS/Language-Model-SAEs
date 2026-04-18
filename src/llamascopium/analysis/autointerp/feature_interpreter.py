@@ -20,11 +20,12 @@ import json_repair
 import numpy as np
 import torch
 from datasets import Dataset
-from lm_saes.analysis.samples import Segment, TokenizedSample
-from lm_saes.backend.language_model import LanguageModel
-from lm_saes.database import FeatureAnalysis, FeatureRecord, MongoClient
-from lm_saes.utils.logging import get_logger
 from pydantic import BaseModel
+
+from llamascopium.analysis.samples import Segment, TokenizedSample
+from llamascopium.backend.language_model import LanguageModel
+from llamascopium.database import FeatureAnalysis, FeatureRecord, MongoClient
+from llamascopium.utils.logging import get_logger
 
 from .autointerp_base import (
     AutoInterpConfig,

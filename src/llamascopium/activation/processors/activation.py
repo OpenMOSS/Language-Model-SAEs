@@ -2,14 +2,15 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, cast
 
 import torch
-from lm_saes.backend.language_model import LanguageModel
-from lm_saes.config import BaseConfig
-from lm_saes.utils.distributed import DimMap, mesh_dim_size
 from more_itertools import batched
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
 from tqdm import tqdm
+
+from llamascopium.backend.language_model import LanguageModel
+from llamascopium.config import BaseConfig
+from llamascopium.utils.distributed import DimMap, mesh_dim_size
 
 from .core import BaseActivationProcessor
 

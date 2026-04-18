@@ -6,7 +6,7 @@ including both neuronpedia-style and OpenAI-style explanation prompts.
 
 from typing import Any
 
-from lm_saes.analysis.samples import TokenizedSample, process_token
+from llamascopium.analysis.samples import TokenizedSample, process_token
 
 from .autointerp_base import AutoInterpConfig
 

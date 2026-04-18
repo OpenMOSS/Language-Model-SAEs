@@ -5,13 +5,14 @@ from functools import lru_cache
 from typing import Optional
 
 from datasets import Dataset
-from lm_saes.analysis.autointerp import AutoInterpConfig, FeatureInterpreter
-from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.database import MongoClient, MongoDBConfig
-from lm_saes.resource_loaders import load_dataset_shard, load_model
-from lm_saes.utils.logging import get_logger
 from pydantic_settings import BaseSettings
 from tqdm.asyncio import tqdm
+
+from llamascopium.analysis.autointerp import AutoInterpConfig, FeatureInterpreter
+from llamascopium.backend.language_model import LanguageModelConfig
+from llamascopium.database import MongoClient, MongoDBConfig
+from llamascopium.resource_loaders import load_dataset_shard, load_model
+from llamascopium.utils.logging import get_logger
 
 logger = get_logger("runners.autointerp")
 

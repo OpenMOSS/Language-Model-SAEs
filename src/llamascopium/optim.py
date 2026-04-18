@@ -9,10 +9,11 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
-from lm_saes.utils.distributed.ops import item
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
+
+from llamascopium.utils.distributed.ops import item
 
 
 #  None

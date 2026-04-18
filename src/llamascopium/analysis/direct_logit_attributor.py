@@ -2,14 +2,15 @@ from functools import singledispatch
 
 import einops
 import torch
-from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
-from lm_saes.config import BaseConfig
-from lm_saes.models.clt import CrossLayerTranscoder
-from lm_saes.models.crosscoder import Crosscoder
-from lm_saes.models.lorsa import LowRankSparseAttention
-from lm_saes.models.sae import SparseAutoEncoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
 from transformer_lens import HookedTransformer
+
+from llamascopium.backend.language_model import LanguageModel, TransformerLensLanguageModel
+from llamascopium.config import BaseConfig
+from llamascopium.models.clt import CrossLayerTranscoder
+from llamascopium.models.crosscoder import Crosscoder
+from llamascopium.models.lorsa import LowRankSparseAttention
+from llamascopium.models.sae import SparseAutoEncoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
 
 
 class DirectLogitAttributorConfig(BaseConfig):

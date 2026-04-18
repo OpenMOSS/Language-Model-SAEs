@@ -1,10 +1,6 @@
 from typing import Annotated
 
 import torch
-from lm_saes.utils.misc import (
-    convert_str_to_torch_dtype,
-    convert_torch_dtype_to_str,
-)
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -12,6 +8,11 @@ from pydantic import (
     Field,
     PlainSerializer,
     WithJsonSchema,
+)
+
+from llamascopium.utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
 )
 
 

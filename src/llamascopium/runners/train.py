@@ -6,23 +6,24 @@ from typing import Optional
 
 import torch
 import wandb
-from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
-from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.config import DatasetConfig
-from lm_saes.database import MongoClient, MongoDBConfig
-from lm_saes.initializer import Initializer, InitializerConfig
-from lm_saes.models.clt import CLTConfig
-from lm_saes.models.crosscoder import CrosscoderConfig
-from lm_saes.models.lorsa import LorsaConfig
-from lm_saes.models.molt import MOLTConfig
-from lm_saes.models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
-from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.trainer import Trainer, TrainerConfig, WandbConfig
-from lm_saes.utils.distributed import is_primary_rank, mesh_rank
-from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import init_device_mesh
+
+from llamascopium.activation.factory import ActivationFactory, ActivationFactoryConfig
+from llamascopium.backend.language_model import LanguageModelConfig
+from llamascopium.config import DatasetConfig
+from llamascopium.database import MongoClient, MongoDBConfig
+from llamascopium.initializer import Initializer, InitializerConfig
+from llamascopium.models.clt import CLTConfig
+from llamascopium.models.crosscoder import CrosscoderConfig
+from llamascopium.models.lorsa import LorsaConfig
+from llamascopium.models.molt import MOLTConfig
+from llamascopium.models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
+from llamascopium.resource_loaders import load_dataset, load_model
+from llamascopium.trainer import Trainer, TrainerConfig, WandbConfig
+from llamascopium.utils.distributed import is_primary_rank, mesh_rank
+from llamascopium.utils.logging import get_distributed_logger, setup_logging
 
 from .utils import PretrainedSAE, load_config
 
@@ -1255,7 +1256,7 @@ def sweep_sae(settings: SweepSAESettings) -> None:
                 if isinstance(value, torch.Tensor):
                     assert isinstance(value, DTensor), "value must be a DTensor"
                     local_tensor = value.to_local()
-                    from lm_saes.utils.distributed import DimMap
+                    from llamascopium.utils.distributed import DimMap
 
                     converted_value = DTensor.from_local(
                         local_tensor,

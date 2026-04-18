@@ -8,13 +8,14 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import torch
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.logging import get_logger
 from torch.distributed.device_mesh import DeviceMesh
 from tqdm import tqdm
+
+from llamascopium.activation.factory import ActivationFactory
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.utils.discrete import KeyedDiscreteMapper
+from llamascopium.utils.distributed.ops import item
+from llamascopium.utils.logging import get_logger
 
 # Set up logger for this module
 logger = get_logger(__name__)

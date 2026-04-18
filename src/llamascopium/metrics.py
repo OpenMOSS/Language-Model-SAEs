@@ -2,16 +2,17 @@ from abc import ABC
 from typing import Generic, TypeVar, cast
 
 import torch
-from lm_saes.models.lorsa import LowRankSparseAttention
-from lm_saes.models.sae import SparseAutoEncoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.optim import compute_grad_norm
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.tensor_specs import apply_token_mask, reduce
 from torch import Tensor
 from torch.types import Number
 from transformer_lens import HookedTransformer
+
+from llamascopium.models.lorsa import LowRankSparseAttention
+from llamascopium.models.sae import SparseAutoEncoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.optim import compute_grad_norm
+from llamascopium.utils.distributed.ops import item
+from llamascopium.utils.logging import get_distributed_logger
+from llamascopium.utils.tensor_specs import apply_token_mask, reduce
 
 logger = get_distributed_logger("metrics")
 

@@ -1,6 +1,6 @@
-"""Backward-compat shim for :mod:`lm_saes.circuits.hooks`."""
+"""Backward-compat shim for :mod:`llamascopium.circuits.hooks`."""
 
-from lm_saes.circuits.hooks import (
+from llamascopium.circuits.hooks import (
     apply_saes,
     detach_at,
     replace_model_biases_with_leaves,

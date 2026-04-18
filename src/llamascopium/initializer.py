@@ -1,27 +1,28 @@
 from typing import Dict, Iterable, List, Literal, cast
 
 import torch
-from lm_saes.backend.language_model import LanguageModel, TransformerLensLanguageModel
-from lm_saes.config import BaseConfig
-from lm_saes.models.clt import CrossLayerTranscoder
-from lm_saes.models.lorsa import LowRankSparseAttention
-from lm_saes.models.molt import MixtureOfLinearTransform
-from lm_saes.models.protocols import (
-    ActiveSubspaceInitializable,
-    EncoderBiasInitializable,
-    EncoderInitializable,
-    NormConstrainable,
-)
-from lm_saes.models.sae import SparseAutoEncoder
-from lm_saes.models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.misc import calculate_activation_norm
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from transformer_lens.components import Attention, GroupedQueryAttention, TransformerBlock
 from transformer_lens.components.mlps.can_be_used_as_mlp import CanBeUsedAsMLP
 from wandb.sdk.wandb_run import Run
+
+from llamascopium.backend.language_model import LanguageModel, TransformerLensLanguageModel
+from llamascopium.config import BaseConfig
+from llamascopium.models.clt import CrossLayerTranscoder
+from llamascopium.models.lorsa import LowRankSparseAttention
+from llamascopium.models.molt import MixtureOfLinearTransform
+from llamascopium.models.protocols import (
+    ActiveSubspaceInitializable,
+    EncoderBiasInitializable,
+    EncoderInitializable,
+    NormConstrainable,
+)
+from llamascopium.models.sae import SparseAutoEncoder
+from llamascopium.models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
+from llamascopium.utils.distributed.ops import item
+from llamascopium.utils.logging import get_distributed_logger
+from llamascopium.utils.misc import calculate_activation_norm
 
 logger = get_distributed_logger("initializer")
 

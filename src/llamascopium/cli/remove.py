@@ -1,7 +1,8 @@
 from typing import Annotated
 
 import typer
-from lm_saes.database import MongoClient, MongoDBConfig
+
+from llamascopium.database import MongoClient, MongoDBConfig
 
 from .common import (
     DEFAULT_MONGO_DB,

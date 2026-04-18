@@ -2,10 +2,11 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.config import DatasetConfig
-from lm_saes.database import MongoClient, MongoDBConfig
-from lm_saes.models.sae import SAEConfig
+
+from llamascopium.backend.language_model import LanguageModelConfig
+from llamascopium.config import DatasetConfig
+from llamascopium.database import MongoClient, MongoDBConfig
+from llamascopium.models.sae import SAEConfig
 
 from .common import (
     DEFAULT_MONGO_DB,

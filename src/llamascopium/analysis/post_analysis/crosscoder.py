@@ -7,13 +7,14 @@ including handling of decoder norms, similarity matrices, and inner product matr
 from typing import Any
 
 import torch
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.models.crosscoder import Crosscoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
+
+from llamascopium.activation.factory import ActivationFactory
+from llamascopium.models.crosscoder import Crosscoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.utils.discrete import KeyedDiscreteMapper
+from llamascopium.utils.distributed import DimMap
 
 from .base import PostAnalysisProcessor, register_post_analysis_processor
 

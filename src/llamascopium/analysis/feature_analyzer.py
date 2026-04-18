@@ -5,19 +5,20 @@ from typing import Any, Mapping, Optional, cast
 import torch
 import torch.distributed.tensor
 from einops import rearrange, repeat
-from lm_saes.activation.factory import ActivationFactory
-from lm_saes.config import BaseConfig
-from lm_saes.models.clt import CrossLayerTranscoder
-from lm_saes.models.crosscoder import Crosscoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.utils.discrete import KeyedDiscreteMapper
-from lm_saes.utils.distributed import DimMap, is_primary_rank, masked_fill, to_local
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 from pydantic import ConfigDict, Field
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from tqdm import tqdm
+
+from llamascopium.activation.factory import ActivationFactory
+from llamascopium.config import BaseConfig
+from llamascopium.models.clt import CrossLayerTranscoder
+from llamascopium.models.crosscoder import Crosscoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.utils.discrete import KeyedDiscreteMapper
+from llamascopium.utils.distributed import DimMap, is_primary_rank, masked_fill, to_local
+from llamascopium.utils.distributed.ops import item
+from llamascopium.utils.tensor_dict import concat_dict_of_tensor, sort_dict_of_tensor
 
 from .post_analysis import PostAnalysisProcessor, get_post_analysis_processor
 

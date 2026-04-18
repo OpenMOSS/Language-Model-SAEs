@@ -10,7 +10,8 @@ from typing import Any
 
 import numpy as np
 import torch
-from lm_saes.utils.logging import get_logger
+
+from llamascopium.utils.logging import get_logger
 
 logger = get_logger("analysis.samples")
 

@@ -2,9 +2,9 @@
 
 from typing import Literal, Optional, TypeVar, overload
 
-from lm_saes.config import BaseModelConfig
-from lm_saes.database import MongoClient
-from lm_saes.utils.logging import get_logger
+from llamascopium.config import BaseModelConfig
+from llamascopium.database import MongoClient
+from llamascopium.utils.logging import get_logger
 
 logger = get_logger("runners.utils")
 

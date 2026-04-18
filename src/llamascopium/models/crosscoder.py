@@ -6,23 +6,29 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
-from lm_saes.models.protocols import DatasetNormStandardizable, EncoderInitializable, NormComputing, NormConstrainable
-from lm_saes.models.sparse_dictionary import (
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor, Partial, Shard
+from torch.distributed.tensor.experimental import local_map
+from typing_extensions import override
+
+from llamascopium.models.protocols import (
+    DatasetNormStandardizable,
+    EncoderInitializable,
+    NormComputing,
+    NormConstrainable,
+)
+from llamascopium.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
-from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.distributed.ops import full_tensor, item
-from lm_saes.utils.distributed.utils import replace_placements
-from lm_saes.utils.misc import get_slice_length
-from lm_saes.utils.tensor_specs import TensorSpecs
-from lm_saes.utils.timer import timer
-from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor, Partial, Shard
-from torch.distributed.tensor.experimental import local_map
-from typing_extensions import override
+from llamascopium.utils.distributed import DimMap
+from llamascopium.utils.distributed.ops import full_tensor, item
+from llamascopium.utils.distributed.utils import replace_placements
+from llamascopium.utils.misc import get_slice_length
+from llamascopium.utils.tensor_specs import TensorSpecs
+from llamascopium.utils.timer import timer
 
 
 class CrosscoderSpecs(TensorSpecs):

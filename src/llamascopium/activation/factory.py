@@ -13,18 +13,19 @@ from typing import (
 import numpy as np
 import torch
 from datasets import Dataset
-from lm_saes.backend.language_model import LanguageModel
-from lm_saes.config import BaseConfig
-from lm_saes.utils.misc import (
-    convert_str_to_torch_dtype,
-    convert_torch_dtype_to_str,
-)
 from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
     PlainSerializer,
     WithJsonSchema,
+)
+
+from llamascopium.backend.language_model import LanguageModel
+from llamascopium.config import BaseConfig
+from llamascopium.utils.misc import (
+    convert_str_to_torch_dtype,
+    convert_torch_dtype_to_str,
 )
 
 from .processors.activation import (

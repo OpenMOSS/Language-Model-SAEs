@@ -4,8 +4,6 @@ from typing import Any, Callable, Literal, Tuple, Union, cast, overload
 import torch
 import torch.utils._pytree as pytree
 from jaxtyping import Float
-from lm_saes.utils.distributed.utils import all_gather_dict
-from lm_saes.utils.timer import timer
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
@@ -13,6 +11,9 @@ from torch.distributed.tensor._utils import compute_local_shape_and_global_offse
 from torch.distributed.tensor.experimental import local_map
 from torch.distributed.tensor.placement_types import Replicate, Shard
 from torch.types import Number
+
+from llamascopium.utils.distributed.utils import all_gather_dict
+from llamascopium.utils.timer import timer
 
 _mbi_shape_meta_cache: dict[tuple[tuple[int, ...], int, tuple, int, int, torch.device], tuple[Tensor, Tensor]] = {}
 

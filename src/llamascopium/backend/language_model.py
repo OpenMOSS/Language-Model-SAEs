@@ -21,12 +21,6 @@ import torch
 import torch.distributed as dist
 import torch.utils._pytree as pytree
 from huggingface_hub import hf_hub_download
-from lm_saes.backend.tl_addons import run_with_cache_until, run_with_ref_cache
-from lm_saes.config import BaseModelConfig
-from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
-from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.misc import pad_and_truncate_tokens
-from lm_saes.utils.timer import timer
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
@@ -39,9 +33,16 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
+from llamascopium.backend.tl_addons import run_with_cache_until, run_with_ref_cache
+from llamascopium.config import BaseModelConfig
+from llamascopium.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
+from llamascopium.utils.distributed import DimMap
+from llamascopium.utils.misc import pad_and_truncate_tokens
+from llamascopium.utils.timer import timer
+
 if TYPE_CHECKING:
-    from lm_saes.circuits.indexed_tensor import NodeDimension
-    from lm_saes.models.sparse_dictionary import SparseDictionary
+    from llamascopium.circuits.indexed_tensor import NodeDimension
+    from llamascopium.models.sparse_dictionary import SparseDictionary
 
 
 def to_tokens(tokenizer, text, max_length, device="cpu", prepend_bos=True):
@@ -515,14 +516,14 @@ class TransformerLensLanguageModel(HookedTransformer, LanguageModel):
 
     @contextmanager
     def apply_saes(self, saes: list[SparseDictionary]):
-        from lm_saes.circuits.hooks import apply_saes as _apply_saes
+        from llamascopium.circuits.hooks import apply_saes as _apply_saes
 
         with _apply_saes(self, saes):
             yield self
 
     @contextmanager
     def detach_at(self, hook_points: list[str]):
-        from lm_saes.circuits.hooks import detach_at as _detach_at
+        from llamascopium.circuits.hooks import detach_at as _detach_at
 
         with _detach_at(self, hook_points):
             yield self
@@ -539,7 +540,7 @@ class TransformerLensLanguageModel(HookedTransformer, LanguageModel):
         qk_top_fraction: float = 0.6,
         qk_topk: int = 10,
     ):
-        from lm_saes.circuits.attribution import attribute
+        from llamascopium.circuits.attribution import attribute
 
         return attribute(
             self,
@@ -562,7 +563,7 @@ class TransformerLensLanguageModel(HookedTransformer, LanguageModel):
         topk: int = 10,
         batch_size: int = 1,
     ):
-        from lm_saes.circuits.attribution import qk_trace
+        from llamascopium.circuits.attribution import qk_trace
 
         return qk_trace(
             self,

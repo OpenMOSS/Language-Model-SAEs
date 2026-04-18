@@ -24,23 +24,24 @@ import torch.distributed.checkpoint as dcp
 import torch.distributed.tensor
 from huggingface_hub import create_repo, hf_hub_download, snapshot_download, upload_folder
 from jaxtyping import Float
-from lm_saes.activation_functions import JumpReLU
-from lm_saes.backend.language_model import LanguageModelConfig
-from lm_saes.config import BaseModelConfig
-from lm_saes.models.protocols import DatasetNormStandardizable, NormComputing
-from lm_saes.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
-from lm_saes.utils.distributed import DimMap, distributed_topk, is_primary_rank, item, mesh_dim_size
-from lm_saes.utils.distributed.utils import execute_and_broadcast
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.math import topk
-from lm_saes.utils.tensor_specs import TensorSpecs, apply_token_mask
-from lm_saes.utils.timer import timer
 from safetensors import safe_open
 from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.experimental import local_map
 from transformer_lens.hook_points import HookedRootModule
+
+from llamascopium.activation_functions import JumpReLU
+from llamascopium.backend.language_model import LanguageModelConfig
+from llamascopium.config import BaseModelConfig
+from llamascopium.models.protocols import DatasetNormStandardizable, NormComputing
+from llamascopium.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
+from llamascopium.utils.distributed import DimMap, distributed_topk, is_primary_rank, item, mesh_dim_size
+from llamascopium.utils.distributed.utils import execute_and_broadcast
+from llamascopium.utils.logging import get_distributed_logger
+from llamascopium.utils.math import topk
+from llamascopium.utils.tensor_specs import TensorSpecs, apply_token_mask
+from llamascopium.utils.timer import timer
 
 logger = get_distributed_logger("sparse_dictionary")
 
@@ -115,14 +116,14 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
     """
 
     norm_activation: Literal["token-wise", "batch-wise", "dataset-wise", "inference"] = "dataset-wise"
-    """The activation normalization strategy to use for the input/label activations. During call of [`normalize_activations`][lm_saes.models.sparse_dictionary.SparseDictionary.normalize_activations] (which will be called by the Trainer during training), the input/label activations will be normalized to an average norm of $\\sqrt{d_\\text{model}}$. This allows easier hyperparameter (mostly learning rate) transfer between different scale of model activations, since the MSE loss without normalization is proportional to the square of the activation norm.
+    """The activation normalization strategy to use for the input/label activations. During call of [`normalize_activations`][llamascopium.models.sparse_dictionary.SparseDictionary.normalize_activations] (which will be called by the Trainer during training), the input/label activations will be normalized to an average norm of $\\sqrt{d_\\text{model}}$. This allows easier hyperparameter (mostly learning rate) transfer between different scale of model activations, since the MSE loss without normalization is proportional to the square of the activation norm.
     
     Different activation normalization strategy determines in what view the norm is *averaged*, with the following options:
     
     - `token-wise`: Norm is directly computed for activation from each token. No averaging is performed.
     - `batch-wise`: Norm is computed for each batch, then averaged over the batch dimension.
     - `dataset-wise`: Norm is computed from several samples from the activation. Compared to `batch-wise`, `dataset-wise` gives a fixed value of average norm for all activations, preserving the linearity of pre-activation encoding and decoding.
-    - `inference`: No normalization is performed. A inference mode is produced after calling [`standardize_parameters_of_dataset_norm`][lm_saes.models.sparse_dictionary.SparseDictionary.standardize_parameters_of_dataset_norm] method, which folds the dataset-wise average norm into the weights and biases of the model. Switching to `inference` mode doesn't affect the encoding and decoding as a whole, that is, the reconstructed activations keep the same as the denormalized reconstructed activations in `dataset-wise` mode. However, the feature activations will reflect the activation scale. This allows real magnitude of feature activations to present during inference.
+    - `inference`: No normalization is performed. A inference mode is produced after calling [`standardize_parameters_of_dataset_norm`][llamascopium.models.sparse_dictionary.SparseDictionary.standardize_parameters_of_dataset_norm] method, which folds the dataset-wise average norm into the weights and biases of the model. Switching to `inference` mode doesn't affect the encoding and decoding as a whole, that is, the reconstructed activations keep the same as the denormalized reconstructed activations in `dataset-wise` mode. However, the feature activations will reflect the activation scale. This allows real magnitude of feature activations to present during inference.
     """
 
     sparsity_include_decoder_norm: bool = True
@@ -208,10 +209,10 @@ class SparseDictionary(HookedRootModule, ABC):
     Concrete implementations should inherit from this class and selectively implement the
     following optional mixins based on the capabilities they support:
 
-    - [`NormComputing`][lm_saes.models.protocols.NormComputing]: Weight norm computation (`encoder_norm`, `decoder_norm`, `decoder_bias_norm`)
-    - [`NormConstrainable`][lm_saes.models.protocols.NormConstrainable]: Weight norm constraints (`set_decoder_to_fixed_norm`, `set_encoder_to_fixed_norm`, `transform_to_unit_decoder_norm`)
-    - [`DatasetNormStandardizable`][lm_saes.models.protocols.DatasetNormStandardizable]: Dataset norm standardization (`standardize_parameters_of_dataset_norm`)
-    - [`EncoderInitializable`][lm_saes.models.protocols.EncoderInitializable]: Encoder initialization from decoder (`init_encoder_with_decoder_transpose`)
+    - [`NormComputing`][llamascopium.models.protocols.NormComputing]: Weight norm computation (`encoder_norm`, `decoder_norm`, `decoder_bias_norm`)
+    - [`NormConstrainable`][llamascopium.models.protocols.NormConstrainable]: Weight norm constraints (`set_decoder_to_fixed_norm`, `set_encoder_to_fixed_norm`, `transform_to_unit_decoder_norm`)
+    - [`DatasetNormStandardizable`][llamascopium.models.protocols.DatasetNormStandardizable]: Dataset norm standardization (`standardize_parameters_of_dataset_norm`)
+    - [`EncoderInitializable`][llamascopium.models.protocols.EncoderInitializable]: Encoder initialization from decoder (`init_encoder_with_decoder_transpose`)
     """
 
     specs: type[TensorSpecs] = TensorSpecs
@@ -278,11 +279,11 @@ class SparseDictionary(HookedRootModule, ABC):
         if Path(ckpt_path).suffix == ".safetensors":
             state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
             if self.device_mesh is None or is_primary_rank(self.device_mesh):
-                safe.save_file(state_dict, ckpt_path, {"version": version("lm-saes")})
+                safe.save_file(state_dict, ckpt_path, {"version": version("llamascopium")})
         elif Path(ckpt_path).suffix == ".pt":
             state_dict = {k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in state_dict.items()}
             if self.device_mesh is None or is_primary_rank(self.device_mesh):
-                torch.save({"sae": state_dict, "version": version("lm-saes")}, ckpt_path)
+                torch.save({"sae": state_dict, "version": version("llamascopium")}, ckpt_path)
         elif Path(ckpt_path).suffix == ".dcp":
             fs_writer = FileSystemWriter(ckpt_path)
             assert self.device_mesh is not None, "device_mesh must be provided when saving to DCP checkpoint"
@@ -372,7 +373,7 @@ class SparseDictionary(HookedRootModule, ABC):
         ],
     ]:
         """Encode input tensor through the sparse dictionary.
-        Ensure that the input activations are normalized by calling [`normalize_activations`][lm_saes.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
+        Ensure that the input activations are normalized by calling [`normalize_activations`][llamascopium.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
         """
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -405,7 +406,7 @@ class SparseDictionary(HookedRootModule, ABC):
         Float[torch.Tensor, "batch seq_len d_model"],
     ]:
         """Forward pass through the sparse dictionary.
-        Ensure that the input activations are normalized by calling [`normalize_activations`][lm_saes.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
+        Ensure that the input activations are normalized by calling [`normalize_activations`][llamascopium.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
         """
         feature_acts = self.encode(x, **encoder_kwargs)
         reconstructed = self.decode(feature_acts, **decoder_kwargs)
@@ -461,7 +462,7 @@ class SparseDictionary(HookedRootModule, ABC):
         self, batch: dict[str, torch.Tensor], *, return_scale_factor: bool = False
     ) -> dict[str, torch.Tensor] | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         """Normalize the input activations.
-        This should be called before calling [`encode`][lm_saes.models.sparse_dictionary.SparseDictionary.encode] or [`compute_loss`][lm_saes.models.sparse_dictionary.SparseDictionary.compute_loss].
+        This should be called before calling [`encode`][llamascopium.models.sparse_dictionary.SparseDictionary.encode] or [`compute_loss`][llamascopium.models.sparse_dictionary.SparseDictionary.compute_loss].
         """
 
         scale_factors = {
@@ -481,7 +482,7 @@ class SparseDictionary(HookedRootModule, ABC):
         self, batch: dict[str, torch.Tensor], scale_factors: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
         """Denormalize the input activations.
-        This should be called after calling [`encode`][lm_saes.models.sparse_dictionary.SparseDictionary.encode] or [`compute_loss`][lm_saes.models.sparse_dictionary.SparseDictionary.compute_loss].
+        This should be called after calling [`encode`][llamascopium.models.sparse_dictionary.SparseDictionary.encode] or [`compute_loss`][llamascopium.models.sparse_dictionary.SparseDictionary.compute_loss].
         """
         return {k: v / scale_factors[k] for k, v in batch.items()}
 
@@ -612,7 +613,7 @@ class SparseDictionary(HookedRootModule, ABC):
         Args:
             pretrained_name_or_path (str): If loading from local directory, this is the path to the local directory. If loading sparse dictionary from HuggingFace Hub, this is the format <repo_id>:<name>. If loading SAELens compatible format sparse dictionary, this is the format <release>:<sae_id>.
             device_mesh (DeviceMesh | None): The device mesh to use for the model. If None, the model will be loaded on the current device.
-            fold_activation_scale (bool): Whether to fold the dataset-wise average activation norm into the weights and biases of the model. See [`standardize_parameters_of_dataset_norm`][lm_saes.models.sparse_dictionary.SparseDictionary.standardize_parameters_of_dataset_norm] method for more details.
+            fold_activation_scale (bool): Whether to fold the dataset-wise average activation norm into the weights and biases of the model. See [`standardize_parameters_of_dataset_norm`][llamascopium.models.sparse_dictionary.SparseDictionary.standardize_parameters_of_dataset_norm] method for more details.
             strict_loading (bool): Whether to strictly load the state dictionary. If False, the state dictionary will be loaded with a relaxed strictness, allowing for missing keys or extra keys.
             **kwargs: Additional keyword arguments to pass to the constructor.
 
@@ -656,8 +657,9 @@ class SparseDictionary(HookedRootModule, ABC):
                 "Current does not support distributed loading from SAELens. Try converting later to distributed format."
             )
 
-            from lm_saes.models.sae import SparseAutoEncoder
             from sae_lens import SAE
+
+            from llamascopium.models.sae import SparseAutoEncoder
 
             assert cls is SparseDictionary or cls is SparseAutoEncoder, (
                 f"SAELens only supports vanilla SAE architecture, but got {cls.__name__}"
@@ -841,7 +843,7 @@ class SparseDictionary(HookedRootModule, ABC):
         dict[str, Any],
     ]:
         """Compute the loss for the sparse dictionary.
-        Ensure that the input activations are normalized by calling [`normalize_activations`][lm_saes.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
+        Ensure that the input activations are normalized by calling [`normalize_activations`][llamascopium.models.sparse_dictionary.SparseDictionary.normalize_activations] before calling this method.
         """
         x, encoder_kwargs, decoder_kwargs = self.prepare_input(batch)
 

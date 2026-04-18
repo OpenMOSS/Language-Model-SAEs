@@ -16,23 +16,24 @@ import torch
 import torch.distributed.tensor
 import torch.nn as nn
 from jaxtyping import Float
-from lm_saes.activation_functions import JumpReLU
-from lm_saes.models.protocols import DatasetNormStandardizable, EncoderBiasInitializable, NormComputing
-from lm_saes.models.sparse_dictionary import (
+from torch._tensor import Tensor
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor
+from typing_extensions import override
+
+from llamascopium.activation_functions import JumpReLU
+from llamascopium.models.protocols import DatasetNormStandardizable, EncoderBiasInitializable, NormComputing
+from llamascopium.models.sparse_dictionary import (
     SparseDictionary,
     SparseDictionaryConfig,
     register_sae_config,
     register_sae_model,
 )
-from lm_saes.utils.distributed import DimMap
-from lm_saes.utils.distributed.ops import item
-from lm_saes.utils.logging import get_distributed_logger
-from lm_saes.utils.tensor_specs import TensorSpecs
-from lm_saes.utils.timer import timer
-from torch._tensor import Tensor
-from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
-from typing_extensions import override
+from llamascopium.utils.distributed import DimMap
+from llamascopium.utils.distributed.ops import item
+from llamascopium.utils.logging import get_distributed_logger
+from llamascopium.utils.tensor_specs import TensorSpecs
+from llamascopium.utils.timer import timer
 
 logger = get_distributed_logger("clt")
 
@@ -257,7 +258,7 @@ class CrossLayerTranscoder(
 
         elif self.cfg.act_fn.lower() == "topk":
             if device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_topk
+                from llamascopium.utils.distributed import distributed_topk
 
                 def topk_activation(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],
@@ -275,7 +276,7 @@ class CrossLayerTranscoder(
                 def topk_activation(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],
                 ):
-                    from lm_saes.utils.math import topk
+                    from llamascopium.utils.math import topk
 
                     x = x * x.gt(0).to(x.dtype)
                     return topk(
@@ -288,7 +289,7 @@ class CrossLayerTranscoder(
 
         elif self.cfg.act_fn.lower() == "layertopk":
             if device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_topk
+                from llamascopium.utils.distributed import distributed_topk
 
                 def layer_topk(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],
@@ -303,7 +304,7 @@ class CrossLayerTranscoder(
                     )
             else:
                 # single-GPU batchtopk
-                from lm_saes.utils.math import topk
+                from llamascopium.utils.math import topk
 
                 def layer_topk(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],
@@ -319,7 +320,7 @@ class CrossLayerTranscoder(
 
         elif self.cfg.act_fn.lower() == "batchtopk":
             if device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_topk
+                from llamascopium.utils.distributed import distributed_topk
 
                 def batch_topk(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],
@@ -334,7 +335,7 @@ class CrossLayerTranscoder(
                     )
                     return result
             else:
-                from lm_saes.utils.math import topk
+                from llamascopium.utils.math import topk
 
                 def batch_topk(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],
@@ -351,7 +352,7 @@ class CrossLayerTranscoder(
 
         elif self.cfg.act_fn.lower() == "batchlayertopk":
             if device_mesh is not None:
-                from lm_saes.utils.distributed import distributed_topk
+                from llamascopium.utils.distributed import distributed_topk
 
                 def batch_layer_topk(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],
@@ -368,7 +369,7 @@ class CrossLayerTranscoder(
                     return result
             else:
                 # single-GPU batchtopk
-                from lm_saes.utils.math import topk
+                from llamascopium.utils.math import topk
 
                 def batch_layer_topk(
                     x: Float[torch.Tensor, "batch n_layer d_sae"],

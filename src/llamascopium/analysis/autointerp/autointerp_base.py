@@ -7,8 +7,9 @@ including configuration and helper functions.
 from enum import Enum
 from typing import Optional
 
-from lm_saes.config import BaseConfig
 from pydantic import Field
+
+from llamascopium.config import BaseConfig
 
 
 class ExplainerType(str, Enum):

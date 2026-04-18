@@ -6,9 +6,10 @@ including JumpReLU and its associated STEFunction.
 
 import torch
 import torch.distributed.tensor
-from lm_saes.utils.distributed import DimMap
 from torch.distributed.device_mesh import DeviceMesh
 from typing_extensions import cast
+
+from llamascopium.utils.distributed import DimMap
 
 
 class STEFunction(torch.autograd.Function):

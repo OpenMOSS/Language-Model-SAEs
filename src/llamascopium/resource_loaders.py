@@ -1,7 +1,9 @@
 from typing import Any, Literal, Optional, cast
 
 import datasets
-from lm_saes.backend.language_model import (
+from torch.distributed.device_mesh import DeviceMesh
+
+from llamascopium.backend.language_model import (
     HuggingFaceLanguageModel,
     LanguageModel,
     LanguageModelConfig,
@@ -9,8 +11,7 @@ from lm_saes.backend.language_model import (
     TokenizerOnlyLanguageModel,
     TransformerLensLanguageModel,
 )
-from lm_saes.config import DatasetConfig
-from torch.distributed.device_mesh import DeviceMesh
+from llamascopium.config import DatasetConfig
 
 
 def load_dataset_shard(

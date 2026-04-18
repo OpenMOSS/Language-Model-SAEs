@@ -6,19 +6,20 @@ from pathlib import Path
 from typing import Any, Optional
 
 import torch
-from lm_saes.activation.factory import ActivationFactory, ActivationFactoryConfig
-from lm_saes.analysis.direct_logit_attributor import DirectLogitAttributor, DirectLogitAttributorConfig
-from lm_saes.analysis.feature_analyzer import FeatureAnalyzer, FeatureAnalyzerConfig
-from lm_saes.backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
-from lm_saes.config import DatasetConfig
-from lm_saes.database import MongoClient, MongoDBConfig
-from lm_saes.models.crosscoder import Crosscoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.resource_loaders import load_dataset, load_model
-from lm_saes.utils.distributed.utils import broadcast_object
-from lm_saes.utils.logging import get_distributed_logger, setup_logging
 from pydantic_settings import BaseSettings
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+
+from llamascopium.activation.factory import ActivationFactory, ActivationFactoryConfig
+from llamascopium.analysis.direct_logit_attributor import DirectLogitAttributor, DirectLogitAttributorConfig
+from llamascopium.analysis.feature_analyzer import FeatureAnalyzer, FeatureAnalyzerConfig
+from llamascopium.backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
+from llamascopium.config import DatasetConfig
+from llamascopium.database import MongoClient, MongoDBConfig
+from llamascopium.models.crosscoder import Crosscoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.resource_loaders import load_dataset, load_model
+from llamascopium.utils.distributed.utils import broadcast_object
+from llamascopium.utils.logging import get_distributed_logger, setup_logging
 
 from .utils import PretrainedSAE, load_config
 

@@ -1,4 +1,4 @@
-from lm_saes.circuits.attribution import (
+from llamascopium.circuits.attribution import (
     AttributionResult,
     IntermediateRefs,
     NodeRefs,
@@ -9,13 +9,13 @@ from lm_saes.circuits.attribution import (
     prune_attribution,
     qk_trace,
 )
-from lm_saes.circuits.hooks import (
+from llamascopium.circuits.hooks import (
     apply_saes,
     detach_at,
     replace_model_biases_with_leaves,
     replace_sae_biases_with_leaves,
 )
-from lm_saes.circuits.indexed_tensor import (
+from llamascopium.circuits.indexed_tensor import (
     NodeDimension,
     NodeIndexed,
     NodeIndexedMatrix,

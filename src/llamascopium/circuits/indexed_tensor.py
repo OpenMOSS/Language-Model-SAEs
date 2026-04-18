@@ -16,21 +16,22 @@ from typing import (
 )
 
 import torch
-from lm_saes.core.pytree import PyTree
-from lm_saes.core.serialize import (
+from torch import Tensor
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import DTensor, Replicate
+from torch.types import Number
+
+from llamascopium.core.pytree import PyTree
+from llamascopium.core.serialize import (
     override,
     register_overrides,
     structure,
     unstructure,
 )
-from lm_saes.utils.discrete import DiscreteMapper
-from lm_saes.utils.distributed import DimMap, full_tensor
-from lm_saes.utils.misc import tensor_id
-from lm_saes.utils.timer import timer
-from torch import Tensor
-from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor, Replicate
-from torch.types import Number
+from llamascopium.utils.discrete import DiscreteMapper
+from llamascopium.utils.distributed import DimMap, full_tensor
+from llamascopium.utils.misc import tensor_id
+from llamascopium.utils.timer import timer
 
 
 @register_overrides(_inv_indices=override(omit=True))
