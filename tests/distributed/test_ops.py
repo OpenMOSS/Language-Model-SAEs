@@ -5,8 +5,8 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import DTensor, distribute_tensor
 from torch.distributed.tensor.placement_types import Replicate, Shard
 
-from lm_saes.testing import distributed_test
-from lm_saes.utils.distributed.ops import nonzero
+from llamascopium.testing import distributed_test
+from llamascopium.utils.distributed.ops import nonzero
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")

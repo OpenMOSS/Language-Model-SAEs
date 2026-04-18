@@ -1,9 +1,9 @@
-# Language-Model-SAEs
+# Llamascopium
 
-> [!IMPORTANT]
-> Currently the examples are outdated and some parallelism strategies are not working due to lack of bandwidth. We are working on better organizing recent updates and will make everything work ASAP.
+> [!NOTE]
+> This package was previously published as **`lm-saes`** (project name: **Language-Model-SAEs**) and now it has been renamed to `llamascopium`.
 
-`Language-Model-SAEs` is a comprehensive, **fully-distributed** framework designed for **training, analyzing and visualizing Sparse Autoencoders (SAEs)**, empowering scalable and systematic **Mechanistic Interpretability** research.
+`llamascopium` is a comprehensive, **fully-distributed** framework designed for **training, analyzing and visualizing Sparse Autoencoders (SAEs)**, empowering scalable and systematic **Mechanistic Interpretability** research.
 
 ## News
 
@@ -32,19 +32,19 @@
 
 ## Installation
 
-Use [pip](https://pypi.org/project/pip/) to install Language-Model-SAEs:
+Use [pip](https://pypi.org/project/pip/) to install Llamascopium:
 
 ```bash
-pip install lm-saes==2.0.0b32
+pip install llamascopium==2.0.0b32
 ```
 
 We also highly recommend using [uv](https://docs.astral.sh/uv/) to manage your own project dependencies. You can use
 
 ```bash
-uv add lm-saes==2.0.0b32
+uv add llamascopium==2.0.0b32
 ```
 
-to add Language-Model-SAEs as your project dependency.
+to add Llamascopium as your project dependency.
 
 ## Development
 
@@ -69,7 +69,7 @@ bun install
 
 ## Launch an Experiment
 
-Explore the `examples` to check the basic usage of training/analyzing SAEs in different configurations. Note a MongoDB is recommended for recording the model/dataset/SAE configurations and required for storing analyses. For more advanced usage, you may explore `src/lm_saes/runners` folder for the interface for generating activations and training & analyzing SAE variants, and directly write your own variant of training/analyzing script at the runner level.
+Explore the `examples` to check the basic usage of training/analyzing SAEs in different configurations. Note a MongoDB is recommended for recording the model/dataset/SAE configurations and required for storing analyses. For more advanced usage, you may explore `src/llamascopium/runners` folder for the interface for generating activations and training & analyzing SAE variants, and directly write your own variant of training/analyzing script at the runner level.
 
 ## Visualizing the Learned Dictionary
 

@@ -1,8 +1,8 @@
 import mongomock
 import pytest
 
-from lm_saes import MongoDBConfig, SAEConfig
-from lm_saes.database import MongoClient, SAERecord
+from llamascopium import MongoDBConfig, SAEConfig
+from llamascopium.database import MongoClient, SAERecord
 
 
 @pytest.fixture

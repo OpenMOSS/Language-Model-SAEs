@@ -3,7 +3,7 @@ import os
 
 import torch
 
-from lm_saes import (
+from llamascopium import (
     ActivationFactoryConfig,
     ActivationFactoryDatasetSource,
     ActivationFactoryTarget,
@@ -71,7 +71,7 @@ if __name__ == "__main__":
             )
         },
         wandb=WandbConfig(
-            wandb_project="lm-saes",
+            wandb_project="llamascopium",
             exp_name="pythia-160m-lorsa",
         ),
         activation_factory=ActivationFactoryConfig(

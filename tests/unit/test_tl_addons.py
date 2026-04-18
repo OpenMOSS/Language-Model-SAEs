@@ -3,7 +3,7 @@ import torch
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 
-from lm_saes.backend.tl_addons import mount_hooked_modules, run_with_cache_until, run_with_ref_cache
+from llamascopium.backend.tl_addons import mount_hooked_modules, run_with_cache_until, run_with_ref_cache
 
 
 def _model_and_tokens():

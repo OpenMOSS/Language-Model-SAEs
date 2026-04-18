@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import torch
 
-from lm_saes.circuits.attribution import NodeRefs, compute_qk_tracing
+from llamascopium.circuits.attribution import NodeRefs, compute_qk_tracing
 
 
 def _build_curated_setup(

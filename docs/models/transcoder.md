@@ -6,7 +6,7 @@ Transcoders were proposed in [Anthropic Circuits Update - January 2024](https://
 
 ## Configuration
 
-Transcoders use the same [`SAEConfig`][lm_saes.SAEConfig] and [`InitializerConfig`][lm_saes.InitializerConfig] as standard SAEs. See the [SAE configuration guide](sae.md#configuration) for the full parameter reference.
+Transcoders use the same [`SAEConfig`][llamascopium.SAEConfig] and [`InitializerConfig`][llamascopium.InitializerConfig] as standard SAEs. See the [SAE configuration guide](sae.md#configuration) for the full parameter reference.
 
 The only essential difference is that `hook_point_in` and `hook_point_out` should point to **different** locations—typically the input and output of the MLP sublayer you want to decompose:
 
@@ -23,7 +23,7 @@ transcoder_config = SAEConfig(
 Proper initialization is crucial for training high-quality transcoders. We recommend the following configuration:
 
 ```python
-from lm_saes import InitializerConfig
+from llamascopium import InitializerConfig
 
 initializer = InitializerConfig(
     bias_init_method="geometric_median",

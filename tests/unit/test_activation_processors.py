@@ -5,16 +5,16 @@ from pytest_mock import MockerFixture
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import DTensor
 
-from lm_saes.activation.processors.activation import (
+from llamascopium.activation.processors.activation import (
     ActivationBatchler,
     ActivationBuffer,
     ActivationGenerator,
     ActivationTransformer,
 )
-from lm_saes.activation.processors.huggingface import HuggingFaceDatasetLoader
-from lm_saes.backend.language_model import LanguageModel
-from lm_saes.testing import distributed_test
-from lm_saes.utils.distributed import DimMap
+from llamascopium.activation.processors.huggingface import HuggingFaceDatasetLoader
+from llamascopium.backend.language_model import LanguageModel
+from llamascopium.testing import distributed_test
+from llamascopium.utils.distributed import DimMap
 
 
 def test_huggingface_dataset_loader():
@@ -274,7 +274,7 @@ def test_activation_batchler(mocker: MockerFixture):
     assert torch.allclose(result[0]["tokens"], torch.tensor([[1, 2, 3], [1, 2, 3]]))
 
     # Test with buffer_shuffle_config
-    from lm_saes import BufferShuffleConfig
+    from llamascopium import BufferShuffleConfig
 
     buffer_shuffle_config = BufferShuffleConfig(enabled=True, method="full", perm_seed=42, generator_device="cpu")
 

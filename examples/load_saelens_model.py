@@ -1,13 +1,13 @@
 """
-Load a sparse dictionary from HuggingFace (using SAELens format) and use it with lm-saes.
+Load a sparse dictionary from HuggingFace (using SAELens format) and use it with llamascopium.
 
-Requires: uv add "lm-saes[sae_lens]"
+Requires: uv add "llamascopium[sae_lens]"
 """
 
 import torch
 from transformer_lens import HookedTransformer
 
-from lm_saes.models.sparse_dictionary import SparseDictionary
+from llamascopium.models.sparse_dictionary import SparseDictionary
 
 # Load Gemma Scope 2 sparse dictionary from HuggingFace
 sae = SparseDictionary.from_pretrained("gemma-scope-2-1b-pt-res-all:layer_12_width_16k_l0_small").to("cpu")

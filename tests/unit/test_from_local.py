@@ -8,9 +8,9 @@ import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes import SAEConfig, SparseAutoEncoder
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.testing import distributed_test
+from llamascopium import SAEConfig, SparseAutoEncoder
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.testing import distributed_test
 
 
 @pytest.fixture

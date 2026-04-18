@@ -1,4 +1,4 @@
-# Visualization Frontend for Language-Model-SAEs
+# Visualization Frontend for Llamascopium
 
 This is a rewritten version of visualization frontend, using [Tanstack](https://tanstack.com/) libraries. To use it, first ensure you have [bun](https://bun.sh/) installed and a visualization backend running at `http://your-url-to-backend`, and run
 

@@ -3,8 +3,8 @@ import math
 import pytest
 import torch
 
-from lm_saes import SAEConfig
-from lm_saes.models.sae import SparseAutoEncoder
+from llamascopium import SAEConfig
+from llamascopium.models.sae import SparseAutoEncoder
 
 
 @pytest.fixture

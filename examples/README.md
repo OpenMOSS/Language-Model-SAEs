@@ -1,4 +1,4 @@
-# Example setups of Language-Model-SAEs
+# Example setups of Llamascopium
 
 The standard SAE-based pipeline of mechanistically interpreting internal representations of language models contains the following steps: Generating activations (optional) -> Training SAEs -> Analyzing SAEs -> Visualizing analyses.
 

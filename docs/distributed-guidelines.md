@@ -1,6 +1,6 @@
 # Distributed Guidelines
 
-A fundamental advantage of `Language-Model-SAEs` is its support of distributed setup, including data parallelism (DP), tensor parallelism (TP), some special parallelism strategy for some specific models, and their arbitrary combination. These strategies avoid OOM and accelerate model computation, making it possible for training arbitrarily large sparse dictionaries for frontier models.
+A fundamental advantage of `llamascopium` is its support of distributed setup, including data parallelism (DP), tensor parallelism (TP), some special parallelism strategy for some specific models, and their arbitrary combination. These strategies avoid OOM and accelerate model computation, making it possible for training arbitrarily large sparse dictionaries for frontier models.
 
 ## How does it work
 
@@ -83,7 +83,7 @@ DimMap({})                      # Fully replicated
 
 Given a concrete `DeviceMesh`, `DimMap.placements(device_mesh)` generates the correct positional `Placement` tuple dynamically.
 
-### Application in Language-Model-SAEs
+### Application in Llamascopium
 
 Ideally the above system can inherently solve multi-dimensional parallelism, including DP and TP -- we just need to provide a DeviceMesh, and specify the DimMap of each leaf node tensor (input and weight), and the tensor operations (matrix multiplications and others) will be automatically accelerated. 
 
@@ -135,4 +135,4 @@ settings = AnalyzeSAESettings(
 )
 ```
 
-For custom runners, you may create the `DeviceMesh` yourself and pass it to modules like [`ActivationFactory`][lm_saes.ActivationFactory]. Most modules in `Language-Model-SAEs` support `DeviceMesh` inherently.
+For custom runners, you may create the `DeviceMesh` yourself and pass it to modules like [`ActivationFactory`][llamascopium.ActivationFactory]. Most modules in `llamascopium` support `DeviceMesh` inherently.

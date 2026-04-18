@@ -3,9 +3,9 @@ import torch
 from pytest_mock import MockerFixture
 from transformer_lens import HookedTransformer
 
-from lm_saes import EvalConfig, SAEConfig
-from lm_saes.evaluator import Evaluator
-from lm_saes.models.sae import SparseAutoEncoder
+from llamascopium import EvalConfig, SAEConfig
+from llamascopium.evaluator import Evaluator
+from llamascopium.models.sae import SparseAutoEncoder
 
 
 @pytest.fixture

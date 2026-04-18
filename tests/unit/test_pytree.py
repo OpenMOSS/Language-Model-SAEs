@@ -5,7 +5,7 @@ from typing import Generic, TypeVar
 
 import torch
 
-from lm_saes.core.pytree import PyTree
+from llamascopium.core.pytree import PyTree
 
 V = TypeVar("V")
 
@@ -72,8 +72,8 @@ def test_generic_pytree_nested_list_full_tensor():
 
 def test_attribution_result_full_tensor():
     """full_tensor on real AttributionResult with qk_trace_results (parameterized generic field)."""
-    from lm_saes.circuits.attribution import AttributionResult, QKTracingResult
-    from lm_saes.circuits.indexed_tensor import (
+    from llamascopium.circuits.attribution import AttributionResult, QKTracingResult
+    from llamascopium.circuits.indexed_tensor import (
         NodeDimension,
         NodeIndexed,
         NodeIndexedMatrix,

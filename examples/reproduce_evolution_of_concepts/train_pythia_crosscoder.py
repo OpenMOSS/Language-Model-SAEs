@@ -4,7 +4,7 @@ import os
 
 import torch
 
-from lm_saes import (
+from llamascopium import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryTarget,

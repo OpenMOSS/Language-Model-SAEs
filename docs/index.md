@@ -1,6 +1,6 @@
-# Language Model SAEs
+# Llamascopium
 
-Welcome to the documentation for **Language Model SAEs** - a library for training and analyzing Sparse Autoencoders (SAEs) on language models.
+Welcome to the documentation for **Llamascopium** - a library for training and analyzing Sparse Autoencoders (SAEs) on language models.
 
 ## Overview
 
@@ -24,13 +24,13 @@ This library provides:
     To add our library as a project dependency, run:
 
     ```bash
-    uv add lm-saes==2.0.0b32
+    uv add llamascopium==2.0.0b32
     ```
 
     We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To add our library as a project dependency with NPU dependency constraints, run:
 
     ```bash
-    uv add lm-saes[npu]
+    uv add llamascopium[npu]
     ```
 
 === "Pip"
@@ -38,20 +38,20 @@ This library provides:
     Of course, you can also directly use [pip](https://pypi.org/project/pip/) to install our library. To install our library with pip, run:
 
     ```bash
-    pip install lm-saes==2.0.0b32
+    pip install llamascopium==2.0.0b32
     ```
 
     We also support [Ascend NPU](https://github.com/Ascend/pytorch) as an accelerator backend. To install our library with NPU dependency constraints, run:
 
     ```bash
-    pip install lm-saes[npu]
+    pip install llamascopium[npu]
     ```
 
 ### Load a trained sparse dictionary from HuggingFace
 
-Load any sparse dictionary in `Language-Model-SAEs` or SAELens format.
+Load any sparse dictionary in `llamascopium` or SAELens format.
 
-=== "Language-Model-SAEs"
+=== "Llamascopium"
 
     ```python
     # Load Llama Scope 2 Transcoder
@@ -114,7 +114,7 @@ settings = TrainSAESettings(
         )
     },
     wandb=WandbConfig(
-        wandb_project="lm-saes",
+        wandb_project="llamascopium",
         exp_name="pythia-160m-sae",
     ),
     activation_factory=ActivationFactoryConfig(
@@ -169,7 +169,7 @@ analyze_sae(settings)
 Requires `sae_lens` package available. Supports ReLU, JumpReLU, and TopK SAEs.
 
 ```python
-from lm_saes import SparseAutoEncoder
+from llamascopium import SparseAutoEncoder
 
 sae = SparseAutoEncoder.from_pretrained("path/to/sae")
 sae_saelens = sae.to_saelens(model_name="pythia-160m")
