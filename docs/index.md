@@ -10,7 +10,7 @@ This library provides:
 
 - **Scalability**: Our framework is fully distributed with arbitrary combinations of data, model, and head parallelism for both training and analysis. Enjoy training SAEs with millions of features!
 - **Flexibility**: We support a wide range of sparse dictionary variants, including vanilla SAEs, Lorsa (Low-rank Sparse Attention), CLT (Cross-layer Transcoder), MOLT (Mixture of Linear Transforms), Crosscoder, and more. Each variant can be combined with different activation functions (e.g., ReLU, JumpReLU, TopK, BatchTopK) and sparsity penalties (e.g., L1, Tanh).
-- **Easy to Use**: We provide high-level `runners` APIs to quickly launch experiments with simple configurations. Check our [examples](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples) for verified hyperparameters.
+- **Easy to Use**: We provide high-level `runners` APIs to quickly launch experiments with simple configurations. Check our [examples](https://github.com/OpenMOSS/Llamascopium/tree/main/examples) for verified hyperparameters.
 - **Visualization**: We provide a unified web interface to visualize learned sparse dictionary variants and their features.
 
 ## Quick Start
@@ -185,7 +185,7 @@ If you find this library useful in your research, please cite:
 @misc{Ge2024OpenMossSAEs,
     title  = {OpenMoss Language Model Sparse Autoencoders},
     author = {Xuyang Ge and Wentao Shu and Junxuan Wang and Guancheng Zhou and Jiaxing Wu and Fukang Zhu and Lingjie Chen and Zhengfu He},
-    url    = {https://github.com/OpenMOSS/Language-Model-SAEs},
+    url    = {https://github.com/OpenMOSS/Llamascopium},
     year   = {2024}
 }
 ```

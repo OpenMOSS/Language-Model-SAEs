@@ -1,6 +1,6 @@
 # Train Sparse Autoencoders
 
-`llamascopium` provides a general way to train, analyze and visualize Sparse Autoencoders and their variants. To help you get started quickly, we've included [example scripts](https://github.com/OpenMOSS/Language-Model-SAEs/tree/main/examples) that guide you through each stage of working with SAEs. This guide begins with a foundational example and progressively introduces the core features and capabilities of the library.
+`llamascopium` provides a general way to train, analyze and visualize Sparse Autoencoders and their variants. To help you get started quickly, we've included [example scripts](https://github.com/OpenMOSS/Llamascopium/tree/main/examples) that guide you through each stage of working with SAEs. This guide begins with a foundational example and progressively introduces the core features and capabilities of the library.
 
 ## Training Basic Sparse Autoencoders
 
