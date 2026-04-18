@@ -282,7 +282,7 @@ The distributed support in Language-Model-SAEs relies on [DeviceMesh](https://do
 
 Below list some rules to better leverage `DTensor` for distributed programming in Language-Model-SAEs:
 
-- Avoid hardcoding `DTensor` placements. Use [DimMap](https://github.com/OpenMOSS/Language-Model-SAEs/blob/main/src/lm_saes/utils/distributed/dimmap.py) (which is designed to be similar to [PartitionSpec](https://docs.jax.dev/en/latest/jax.sharding.html#jax.sharding.PartitionSpec) in JAX) to dynamically generate placements based on current `DeviceMesh`. This allows absence of some specific dimensions in `DeviceMesh`.
+- Avoid hardcoding `DTensor` placements. Use [DimMap](https://github.com/OpenMOSS/Language-Model-SAEs/blob/main/src/llamascopium/utils/distributed/dimmap.py) (which is designed to be similar to [PartitionSpec](https://docs.jax.dev/en/latest/jax.sharding.html#jax.sharding.PartitionSpec) in JAX) to dynamically generate placements based on current `DeviceMesh`. This allows absence of some specific dimensions in `DeviceMesh`.
 
     !!! success "DimMap-generated Placements"
 

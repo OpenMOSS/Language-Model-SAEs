@@ -135,4 +135,4 @@ settings = AnalyzeSAESettings(
 )
 ```
 
-For custom runners, you may create the `DeviceMesh` yourself and pass it to modules like [`ActivationFactory`][lm_saes.ActivationFactory]. Most modules in `Language-Model-SAEs` support `DeviceMesh` inherently.
+For custom runners, you may create the `DeviceMesh` yourself and pass it to modules like [`ActivationFactory`][llamascopium.ActivationFactory]. Most modules in `Language-Model-SAEs` support `DeviceMesh` inherently.

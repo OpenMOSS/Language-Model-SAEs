@@ -16,7 +16,7 @@ This section provides comprehensive documentation for the various sparse diction
 
 ## Common Configuration Parameters
 
-All sparse dictionary variants inherit from [`SparseDictionaryConfig`][lm_saes.SparseDictionaryConfig], which provides common configuration parameters. These parameters are available for all model types unless specifically overridden.
+All sparse dictionary variants inherit from [`SparseDictionaryConfig`][llamascopium.SparseDictionaryConfig], which provides common configuration parameters. These parameters are available for all model types unless specifically overridden.
 
 ### Core Architecture Parameters
 

@@ -1,5 +1,5 @@
-site_name: Language Model SAEs
-site_url: https://lm-saes.readthedocs.io
+site_name: Llamascopium
+site_url: https://llamascopium.readthedocs.io
 repo_url: https://github.com/OpenMOSS/Language-Model-SAEs
 
 theme:

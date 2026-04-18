@@ -32,12 +32,12 @@ The architecture was introduced in [*Towards Understanding the Nature of Attenti
 
 ## Configuration
 
-Lorsa is configured using the [`LorsaConfig`][lm_saes.LorsaConfig] class. All sparse dictionary models inherit common parameters from [`SparseDictionaryConfig`][lm_saes.SparseDictionaryConfig]. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
+Lorsa is configured using the [`LorsaConfig`][llamascopium.LorsaConfig] class. All sparse dictionary models inherit common parameters from [`SparseDictionaryConfig`][llamascopium.SparseDictionaryConfig]. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
 
 ### Lorsa-Specific Parameters
 
 ```python
-from lm_saes import LorsaConfig
+from llamascopium import LorsaConfig
 import torch
 
 lorsa_config = LorsaConfig(
@@ -153,7 +153,7 @@ This initialization helps Lorsa start from a good approximation of the attention
 Lorsa requires 2D activations with sequence dimension preserved (`ActivationFactoryTarget.ACTIVATIONS_2D`) since it models positional attention patterns:
 
 ```python
-from lm_saes import (
+from llamascopium import (
     TrainLorsaSettings,
     train_lorsa,
     LorsaConfig,
@@ -219,8 +219,8 @@ train_lorsa(settings)
 
 ### Important Training Considerations
 
-1. **Sequence batching**: Since Lorsa operates on sequences, `batch_size` in [`ActivationFactoryConfig`][lm_saes.ActivationFactoryConfig] represents the number of sequences (not tokens). The effective token batch size is `batch_size * n_ctx`.
+1. **Sequence batching**: Since Lorsa operates on sequences, `batch_size` in [`ActivationFactoryConfig`][llamascopium.ActivationFactoryConfig] represents the number of sequences (not tokens). The effective token batch size is `batch_size * n_ctx`.
 
 2. **Memory requirements**: Lorsa stores attention patterns and requires more memory than standard SAEs. Consider using parallelism (see [distributed-guidelines](../distributed-guidelines.md)) reducing batch size.
 
-3. **Context length**: Ensure `n_ctx` in [`LorsaConfig`][lm_saes.LorsaConfig] matches the `context_size` in [`ActivationFactoryConfig`][lm_saes.ActivationFactoryConfig] during activation generation.
+3. **Context length**: Ensure `n_ctx` in [`LorsaConfig`][llamascopium.LorsaConfig] matches the `context_size` in [`ActivationFactoryConfig`][llamascopium.ActivationFactoryConfig] during activation generation.
