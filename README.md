@@ -1,10 +1,7 @@
 # Llamascopium
 
 > [!NOTE]
-> This package was previously published as **`lm-saes`** (project name: **Language-Model-SAEs**). It has been renamed to `llamascopium`. The old `lm-saes` package on PyPI now ships as a thin shim that re-exports `llamascopium` with a deprecation warning — please update your dependency to `llamascopium`.
-
-> [!IMPORTANT]
-> Currently the examples are outdated and some parallelism strategies are not working due to lack of bandwidth. We are working on better organizing recent updates and will make everything work ASAP.
+> This package was previously published as **`lm-saes`** (project name: **Language-Model-SAEs**) and now it has been renamed to `llamascopium`.
 
 `llamascopium` is a comprehensive, **fully-distributed** framework designed for **training, analyzing and visualizing Sparse Autoencoders (SAEs)**, empowering scalable and systematic **Mechanistic Interpretability** research.
 

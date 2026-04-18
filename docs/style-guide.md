@@ -1,6 +1,6 @@
 # Style Guide for Llamascopium
 
-Llamascopium (previously published as `lm-saes` / Language-Model-SAEs) basically takes advantage of Python and TypeScript (React), respectively for the core library & backend, and the frontend visualization. This style guide is a list of common _dos_ and _don'ts_.
+Llamascopium basically takes advantage of Python and TypeScript (React), respectively for the core library & backend, and the frontend visualization. This style guide is a list of common _dos_ and _don'ts_.
 
 ## Python Style Guide
 
