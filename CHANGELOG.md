@@ -1,3 +1,10 @@
+## v2.0.0b33 (2026-04-18)
+
+
+- Merge pull request #219 from OpenMOSS/dev
+- Release: rename package lm-saes to llamascopium
+- chore: rename package lm-saes to llamascopium (#218)
+
 ## v2.0.0b32 (2026-04-17)
 
 

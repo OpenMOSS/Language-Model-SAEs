@@ -1641,7 +1641,7 @@ wheels = [
 
 [[package]]
 name = "llamascopium"
-version = "2.0.0b32"
+version = "2.0.0b33"
 source = { editable = "." }
 dependencies = [
     { name = "cattrs" },

@@ -1,9 +1,9 @@
 [project]
 name = "lm-saes"
-version = "2.0.0b32"
+version = "2.0.0b33"
 description = "Shim package — lm-saes has been renamed to llamascopium. Install llamascopium directly."
 requires-python = ">=3.11,<3.13"
-dependencies = ["llamascopium==2.0.0b32"]
+dependencies = ["llamascopium==2.0.0b33"]
 readme = "README.md"
 
 [[project.authors]]

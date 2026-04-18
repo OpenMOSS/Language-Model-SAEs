@@ -1,6 +1,6 @@
 [project]
 name = "llamascopium"
-version = "2.0.0b32"
+version = "2.0.0b33"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
     "transformer-lens>=2.16.2",
