@@ -1,10 +1,10 @@
 # Sparse Dictionary Models
 
-This section provides comprehensive documentation for the various sparse dictionary architectures supported by `Language-Model-SAEs`. While all models share the common goal of learning interpretable sparse representations of neural network activations, they differ in their architectural designs and the computational patterns they aim to capture.
+This section provides comprehensive documentation for the various sparse dictionary architectures supported by `llamascopium`. While all models share the common goal of learning interpretable sparse representations of neural network activations, they differ in their architectural designs and the computational patterns they aim to capture.
 
 ## Overview
 
-`Language-Model-SAEs` supports multiple sparse dictionary variants:
+`llamascopium` supports multiple sparse dictionary variants:
 
 - **[Sparse Autoencoder (SAE)](sae.md)**: The foundational architecture that learns to decompose activations from a single layer into sparse, interpretable features.
 

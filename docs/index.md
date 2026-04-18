@@ -51,7 +51,7 @@ This library provides:
 
 Load any sparse dictionary in `llamascopium` or SAELens format.
 
-=== "Language-Model-SAEs"
+=== "Llamascopium"
 
     ```python
     # Load Llama Scope 2 Transcoder

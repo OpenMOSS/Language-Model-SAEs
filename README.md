@@ -1,4 +1,7 @@
-# Language-Model-SAEs
+# Llamascopium
+
+> [!NOTE]
+> This package was previously published as **`lm-saes`** (project name: **Language-Model-SAEs**). It has been renamed to `llamascopium`. The old `lm-saes` package on PyPI now ships as a thin shim that re-exports `llamascopium` with a deprecation warning — please update your dependency to `llamascopium`.
 
 > [!IMPORTANT]
 > Currently the examples are outdated and some parallelism strategies are not working due to lack of bandwidth. We are working on better organizing recent updates and will make everything work ASAP.
@@ -32,7 +35,7 @@
 
 ## Installation
 
-Use [pip](https://pypi.org/project/pip/) to install Language-Model-SAEs:
+Use [pip](https://pypi.org/project/pip/) to install Llamascopium:
 
 ```bash
 pip install llamascopium==2.0.0b32
@@ -44,7 +47,7 @@ We also highly recommend using [uv](https://docs.astral.sh/uv/) to manage your o
 uv add llamascopium==2.0.0b32
 ```
 
-to add Language-Model-SAEs as your project dependency.
+to add Llamascopium as your project dependency.
 
 ## Development
 

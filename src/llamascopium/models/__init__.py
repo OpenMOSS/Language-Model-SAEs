@@ -1,4 +1,4 @@
-"""Model definitions for Language Model SAEs.
+"""Model definitions for Llamascopium.
 
 This package contains the sparse dictionary base class, protocol definitions,
 and all concrete model implementations.
