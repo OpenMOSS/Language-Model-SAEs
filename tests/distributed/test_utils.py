@@ -2,8 +2,8 @@ import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes.testing import distributed_test
-from lm_saes.utils.distributed.utils import execute_and_broadcast
+from llamascopium.testing import distributed_test
+from llamascopium.utils.distributed.utils import execute_and_broadcast
 
 
 def get_rank_specific_value(val):

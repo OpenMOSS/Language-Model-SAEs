@@ -1,6 +1,6 @@
 """End-to-end regression test for tiny SAE training metrics.
 
-This test runs training through the public lm_saes training API and compares
+This test runs training through the public llamascopium training API and compares
 logged metrics against a hardcoded baseline.
 """
 
@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 import torch
 
-import lm_saes.trainer as trainer_module
-from lm_saes import (
+import llamascopium.trainer as trainer_module
+from llamascopium import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryTarget,
@@ -129,7 +129,7 @@ def test_tiny_training_metrics_regression(tmp_path: Path, monkeypatch: pytest.Mo
     try:
         train_sae(settings)
     except Exception as exc:
-        pytest.fail(f"lm_saes.train_sae failed: {exc!r}")
+        pytest.fail(f"llamascopium.train_sae failed: {exc!r}")
 
     for step in EVAL_STEPS:
         actual_step = captured_metrics.get(step, {})

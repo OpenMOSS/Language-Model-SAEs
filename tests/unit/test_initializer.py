@@ -2,8 +2,8 @@ import pytest
 import torch
 from pytest_mock import MockerFixture
 
-from lm_saes import InitializerConfig, SAEConfig
-from lm_saes.initializer import Initializer
+from llamascopium import InitializerConfig, SAEConfig
+from llamascopium.initializer import Initializer
 
 
 @pytest.fixture

@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import torch
 
-from lm_saes.circuits.attribution import AttributionResult, QKTracingResult
-from lm_saes.circuits.indexed_tensor import (
+from llamascopium.circuits.attribution import AttributionResult, QKTracingResult
+from llamascopium.circuits.indexed_tensor import (
     NodeDimension,
     NodeIndexed,
     NodeIndexedMatrix,
     NodeIndexedVector,
     NodeInfo,
 )
-from lm_saes.core.serialize import dump, load
+from llamascopium.core.serialize import dump, load
 
 
 def _deep_equal(a: object, b: object) -> bool:
@@ -315,7 +315,7 @@ def test_load_legacy_attribution_result_with_bare_nodeindexed_qk() -> None:
     # it in a ``{"_version": "1", "data": ...}`` envelope — the pre-refactor
     # FORMAT_VERSION. The migration framework picks up ``_version`` < current
     # and invokes the ``QKTracingResult._v1_to_v2`` hook.
-    from lm_saes.core.serialize import unstructure
+    from llamascopium.core.serialize import unstructure
 
     legacy_blob = {
         "_version": "1",

@@ -4,7 +4,7 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.tensor import DTensor
 from torch.nn import Module
 
-from lm_saes import (
+from llamascopium import (
     CLTConfig,
     Crosscoder,
     CrosscoderConfig,
@@ -14,8 +14,8 @@ from lm_saes import (
     SAEConfig,
     SparseAutoEncoder,
 )
-from lm_saes.testing import distributed_test
-from lm_saes.utils.distributed.dimmap import DimMap
+from llamascopium.testing import distributed_test
+from llamascopium.utils.distributed.dimmap import DimMap
 
 
 def run_load_test(model: Module, device_mesh: DeviceMesh, sharded: bool = True) -> None:

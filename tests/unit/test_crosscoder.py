@@ -3,8 +3,8 @@ import math
 import pytest
 import torch
 
-from lm_saes import CrosscoderConfig
-from lm_saes.models.crosscoder import Crosscoder
+from llamascopium import CrosscoderConfig
+from llamascopium.models.crosscoder import Crosscoder
 
 
 @pytest.fixture
