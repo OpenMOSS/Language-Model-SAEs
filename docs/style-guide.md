@@ -1,6 +1,6 @@
-# Style Guide for Language-Model-SAEs
+# Style Guide for Llamascopium
 
-Language-Model-SAEs basically takes advantage of Python and TypeScript (React), respectively for the core library & backend, and the frontend visualization. This style guide is a list of common _dos_ and _don'ts_.
+Llamascopium basically takes advantage of Python and TypeScript (React), respectively for the core library & backend, and the frontend visualization. This style guide is a list of common _dos_ and _don'ts_.
 
 ## Python Style Guide
 
@@ -8,7 +8,7 @@ The Python style guide mainly follows the best practices listed in [Google Pytho
 
 ### Lint and Format
 
-Language-Model-SAEs uses [ruff](https://docs.astral.sh/ruff/) as the Python linter and formatter. `ruff` is a tool for detecting stylistic inconsistencies and potential bugs in Python source code. The formatter ensures consistent formatting throughout the codebase, including indentation, line width, trailing commas, and string quote style. The linter checks code quality, catching issues like unused variables and non-standard naming conventions. Make sure ruff is happy before committing, by running:
+Llamascopium uses [ruff](https://docs.astral.sh/ruff/) as the Python linter and formatter. `ruff` is a tool for detecting stylistic inconsistencies and potential bugs in Python source code. The formatter ensures consistent formatting throughout the codebase, including indentation, line width, trailing commas, and string quote style. The linter checks code quality, catching issues like unused variables and non-standard naming conventions. Make sure ruff is happy before committing, by running:
 
 ```bash
 uv run ruff format # Run the Ruff formatter
@@ -278,11 +278,11 @@ PyTorch provides a wide range of tensor operations. However, most can be decompo
 
 ### Distributed Programming
 
-The distributed support in Language-Model-SAEs relies on [DeviceMesh](https://docs.pytorch.org/tutorials/recipes/distributed_device_mesh.html) and [DTensor](https://docs.pytorch.org/docs/stable/distributed.tensor.html). The design of `DeviceMesh` and `DTensor` is heavily inspired by [JAX](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html). `DeviceMesh` allows users to easily manage multi-dimensional parallelism by creating a "mesh" that controls all devices and specifies how different parallelism strategies are distributed across them. Built on `DeviceMesh`, `DTensor` provides a global view of how tensors are distributed across devices, following the SPMD (Single Program, Multiple Data) programming model. With `DTensor`, users can (ideally) work as if they have infinite logical device memory to accommodate large tensors and perform operations on them. `DTensor` automatically splits the data and computation across physical devices based on the `DeviceMesh` it operates on and the sharding strategy it uses.
+The distributed support in Llamascopium relies on [DeviceMesh](https://docs.pytorch.org/tutorials/recipes/distributed_device_mesh.html) and [DTensor](https://docs.pytorch.org/docs/stable/distributed.tensor.html). The design of `DeviceMesh` and `DTensor` is heavily inspired by [JAX](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html). `DeviceMesh` allows users to easily manage multi-dimensional parallelism by creating a "mesh" that controls all devices and specifies how different parallelism strategies are distributed across them. Built on `DeviceMesh`, `DTensor` provides a global view of how tensors are distributed across devices, following the SPMD (Single Program, Multiple Data) programming model. With `DTensor`, users can (ideally) work as if they have infinite logical device memory to accommodate large tensors and perform operations on them. `DTensor` automatically splits the data and computation across physical devices based on the `DeviceMesh` it operates on and the sharding strategy it uses.
 
-Below list some rules to better leverage `DTensor` for distributed programming in Language-Model-SAEs:
+Below list some rules to better leverage `DTensor` for distributed programming in Llamascopium:
 
-- Avoid hardcoding `DTensor` placements. Use [DimMap](https://github.com/OpenMOSS/Language-Model-SAEs/blob/main/src/lm_saes/utils/distributed/dimmap.py) (which is designed to be similar to [PartitionSpec](https://docs.jax.dev/en/latest/jax.sharding.html#jax.sharding.PartitionSpec) in JAX) to dynamically generate placements based on current `DeviceMesh`. This allows absence of some specific dimensions in `DeviceMesh`.
+- Avoid hardcoding `DTensor` placements. Use [DimMap](https://github.com/OpenMOSS/Language-Model-SAEs/blob/main/src/llamascopium/utils/distributed/dimmap.py) (which is designed to be similar to [PartitionSpec](https://docs.jax.dev/en/latest/jax.sharding.html#jax.sharding.PartitionSpec) in JAX) to dynamically generate placements based on current `DeviceMesh`. This allows absence of some specific dimensions in `DeviceMesh`.
 
     !!! success "DimMap-generated Placements"
 
@@ -321,7 +321,7 @@ Below list some rules to better leverage `DTensor` for distributed programming i
 
 ### Type Annotation
 
-All codes should be annotated with [type hints](https://docs.python.org/3/library/typing.html). Language-Model-SAEs relys on [basedpyright](https://github.com/DetachHead/basedpyright) to perform static type checking. Below list some extra rules:
+All codes should be annotated with [type hints](https://docs.python.org/3/library/typing.html). Llamascopium relys on [basedpyright](https://github.com/DetachHead/basedpyright) to perform static type checking. Below list some extra rules:
 
 - Type hints of generic types should follow [PEP 585](https://peps.python.org/pep-0585/). Use built-in types `list`, `dict`, `set`, etc. rather than types from the `typing` module.
 

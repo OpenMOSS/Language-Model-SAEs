@@ -3,9 +3,9 @@ import os
 import torch
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
-from lm_saes.backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
-from lm_saes.models.sparse_dictionary import SparseDictionary
-from lm_saes.resource_loaders import load_model
+from llamascopium.backend.language_model import LanguageModelConfig, TransformerLensLanguageModel
+from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.resource_loaders import load_model
 
 
 def load_replacement_modules(

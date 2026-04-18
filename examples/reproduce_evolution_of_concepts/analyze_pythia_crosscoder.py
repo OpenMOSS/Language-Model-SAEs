@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 from more_itertools import batched
 
-from lm_saes import (
+from llamascopium import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryTarget,

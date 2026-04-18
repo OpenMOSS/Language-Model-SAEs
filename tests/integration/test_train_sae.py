@@ -5,9 +5,9 @@ import torch
 from pytest_mock import MockerFixture
 from torch.distributed.device_mesh import init_device_mesh
 
-from lm_saes import InitializerConfig, SAEConfig, TrainerConfig
-from lm_saes.initializer import Initializer
-from lm_saes.trainer import Trainer
+from llamascopium import InitializerConfig, SAEConfig, TrainerConfig
+from llamascopium.initializer import Initializer
+from llamascopium.trainer import Trainer
 
 pytest.skip("This test needs fixing", allow_module_level=True)
 

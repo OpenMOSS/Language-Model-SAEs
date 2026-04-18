@@ -2,7 +2,7 @@
 
 What can a trained Sparse Autoencoder tell us? As an approach to **Interpretability**, we definitely want to see what each individual latent of a Sparse Autoencoder (i.e., **feature**) means.
 
-`Language-Model-SAEs` incorporates a bunch of methods to explore the functionality of each individual feature, primarily on on what context a feature activates. If an SAE is trained well, you can naturally observe that there's a type of commonality among these contexts. The language model extracts information from these context and expresses it by the feature's activation. Other types of analytical methods are also supported, including Direct Logit Attribution and Automated Interpretation.
+`llamascopium` incorporates a bunch of methods to explore the functionality of each individual feature, primarily on on what context a feature activates. If an SAE is trained well, you can naturally observe that there's a type of commonality among these contexts. The language model extracts information from these context and expresses it by the feature's activation. Other types of analytical methods are also supported, including Direct Logit Attribution and Automated Interpretation.
 
 ## Setup Prerequisites
 
@@ -22,11 +22,11 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
 
 === "Runner"
 
-    Create the [`AnalyzeSAESettings`][lm_saes.AnalyzeSAESettings] and call [`analyze_sae`][lm_saes.analyze_sae] with it. 
+    Create the [`AnalyzeSAESettings`][llamascopium.AnalyzeSAESettings] and call [`analyze_sae`][llamascopium.analyze_sae] with it. 
 
     ```python
     import torch
-    from lm_saes import (
+    from llamascopium import (
         AnalyzeSAESettings,
         analyze_sae,
         PretrainedSAE,
@@ -73,7 +73,7 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
 
 === "CLI"
 
-    CLI-based workflow requires a configuration file containing the settings consistent with [`AnalyzeSAESettings`][lm_saes.AnalyzeSAESettings]. 
+    CLI-based workflow requires a configuration file containing the settings consistent with [`AnalyzeSAESettings`][llamascopium.AnalyzeSAESettings]. 
 
     Create a TOML configuration file (e.g., `analyze_config.toml`) with the following content:
 
@@ -114,17 +114,17 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
     Then run the analysis with:
 
     ```bash
-    lm-saes analyze analyze_config.toml
+    llamascopium analyze analyze_config.toml
     ```
 
 === "Full Script"
 
-    For more granular control, you can use the [`FeatureAnalyzer`][lm_saes.FeatureAnalyzer] directly.
+    For more granular control, you can use the [`FeatureAnalyzer`][llamascopium.FeatureAnalyzer] directly.
 
     ```python
     import datasets
     import torch
-    from lm_saes import (
+    from llamascopium import (
         ActivationFactory,
         ActivationFactoryConfig,
         ActivationFactoryDatasetSource,
@@ -175,24 +175,24 @@ To analyze a trained Sparse Autoencoder, you can run the following variants:
     )
     ```
 
-Note that a key difference of activation generation between training and analyzing is: we want activations with their complete contexts in analyzing. These tokens are only meaningful (to human) when the surrounding contexts are present. In comparison, SAEs are unaware of the contexts of activations in training, but just treat activations at different context positions as equal. Thus, we here generate activations with `ActivationFactoryTarget.ACTIVATIONS_2D` in [`ActivationFactoryConfig`][lm_saes.ActivationFactoryConfig]. This stops our generation process breaking down the with-context activations and shuffling them.
+Note that a key difference of activation generation between training and analyzing is: we want activations with their complete contexts in analyzing. These tokens are only meaningful (to human) when the surrounding contexts are present. In comparison, SAEs are unaware of the contexts of activations in training, but just treat activations at different context positions as equal. Thus, we here generate activations with `ActivationFactoryTarget.ACTIVATIONS_2D` in [`ActivationFactoryConfig`][llamascopium.ActivationFactoryConfig]. This stops our generation process breaking down the with-context activations and shuffling them.
 
 ## Visualize Feature Analysis
 
-We have successfully retrieved top activation contexts of each feature. But we definitely do not want to look at each token and each feature's activation value on it. Luckily, `Language-Model-SAEs` provide two methods to visualize the feature analyses.
+We have successfully retrieved top activation contexts of each feature. But we definitely do not want to look at each token and each feature's activation value on it. Luckily, `llamascopium` provide two methods to visualize the feature analyses.
 
 ### CLI Feature Preview
 
 You can preview top activation contexts of a certain feature via the CLI. After analyzing an SAE, you can run:
 
 ```bash
-lm-saes show feature <sae-name> <feature-index>
+llamascopium show feature <sae-name> <feature-index>
 ```
 
 to preview the feature with its analyses. Here's an example output:
 
 <div class="cli-output" markdown="0">
-<pre>$ lm-saes show feature qwen3-1.7b-plt-8x-topk64-layer13 7893</pre>
+<pre>$ llamascopium show feature qwen3-1.7b-plt-8x-topk64-layer13 7893</pre>
 
 <div class="cli-panel cli-panel-info">
 <div class="cli-panel-header">Feature Info</div>
@@ -345,7 +345,7 @@ DLA is like an opposite of the top activation contexts: the top activation conte
 To perform DLA, you can use the `direct_logit_attribute` runner:
 
 ```python
-from lm_saes import DirectLogitAttributeSettings, direct_logit_attribute, DirectLogitAttributorConfig, PretrainedSAE
+from llamascopium import DirectLogitAttributeSettings, direct_logit_attribute, DirectLogitAttributorConfig, PretrainedSAE
 
 settings = DirectLogitAttributeSettings(
     sae=PretrainedSAE(pretrained_name_or_path="results"),
@@ -363,12 +363,12 @@ direct_logit_attribute(settings)
 
 ## Automated Interpretation
 
-`Language-Model-SAEs` supports automated interpretation of features using LLMs. The interpretation are mostly generated through investigating the top activation context of each feature. While not perfect, it can help human to quickly gain a brief cognition of the feature.
+`llamascopium` supports automated interpretation of features using LLMs. The interpretation are mostly generated through investigating the top activation context of each feature. While not perfect, it can help human to quickly gain a brief cognition of the feature.
 
-To run automated interpretation, you can use the [`auto_interp`][lm_saes.auto_interp] runner:
+To run automated interpretation, you can use the [`auto_interp`][llamascopium.auto_interp] runner:
 
 ```python
-from lm_saes import AutoInterpSettings, auto_interp, AutoInterpConfig, LanguageModelConfig, MongoDBConfig
+from llamascopium import AutoInterpSettings, auto_interp, AutoInterpConfig, LanguageModelConfig, MongoDBConfig
 
 settings = AutoInterpSettings(
     sae_name="pythia-160m-sae",

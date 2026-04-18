@@ -1,6 +1,6 @@
 # Distributed Tests
 
-This directory contains tests for distributed functionality of `lm-saes`. These tests are managed by `pytest` but executed in multiple processes.
+This directory contains tests for distributed functionality of `llamascopium`. These tests are managed by `pytest` but executed in multiple processes.
 
 ## Running Tests
 
@@ -33,7 +33,7 @@ If any child process fails (raises an assertion or error), the parent process (p
 To create a new distributed test, use the `@distributed_test` decorator:
 
 ```python
-from lm_saes.testing import distributed_test
+from llamascopium.testing import distributed_test
 import torch.distributed as dist
 
 @distributed_test(nproc_per_node=2, backend="gloo")

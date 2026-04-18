@@ -17,12 +17,12 @@ The architecture was introduced in foundational works including [*Sparse Autoenc
 
 ## Configuration
 
-SAEs are configured using the [`SAEConfig`][lm_saes.SAEConfig] class. All sparse dictionary models inherit common parameters from [`SparseDictionaryConfig`][lm_saes.SparseDictionaryConfig]. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
+SAEs are configured using the [`SAEConfig`][llamascopium.SAEConfig] class. All sparse dictionary models inherit common parameters from [`SparseDictionaryConfig`][llamascopium.SparseDictionaryConfig]. See the [Common Configuration Parameters](overview.md#common-configuration-parameters) section for the full list of inherited parameters.
 
 ### SAE-Specific Parameters
 
 ```python
-from lm_saes import SAEConfig
+from llamascopium import SAEConfig
 import torch
 
 sae_config = SAEConfig(
@@ -53,7 +53,7 @@ sae_config = SAEConfig(
 Proper initialization is crucial for training high-quality SAEs. We recommend the following configuration:
 
 ```python
-from lm_saes import InitializerConfig
+from llamascopium import InitializerConfig
 
 initializer = InitializerConfig(
     bias_init_method="geometric_median",

@@ -1,3 +1,3 @@
 # Key Concepts
 
-![Overview of Language Model SAEs Pipeline](assets/images/lm-saes-overview.svg)
+![Overview of Llamascopium Pipeline](assets/images/llamascopium-overview.svg)

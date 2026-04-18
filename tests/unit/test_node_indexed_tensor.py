@@ -1,7 +1,7 @@
 """Unit tests for NodeIndexedTensor, NodeIndexedVector, and NodeIndexedMatrix.
 
-Each axis of a :class:`~lm_saes.backend.language_model.NodeIndexedTensor` is
-described by a :class:`~lm_saes.backend.language_model.NodeDimension` (node layout,
+Each axis of a :class:`~llamascopium.backend.language_model.NodeIndexedTensor` is
+described by a :class:`~llamascopium.backend.language_model.NodeDimension` (node layout,
 offsets, inverse indices). Construction uses ``from_dimensions`` /
 ``from_data(..., dimensions=...)``. Selector-style APIs accept either a
 sequence of :class:`NodeInfo` or a prebuilt :class:`NodeDimension`, while
@@ -19,7 +19,7 @@ key (e.g. (token_pos, feature_idx)) use :func:`_ni2`.
 import pytest
 import torch
 
-from lm_saes.circuits.indexed_tensor import (
+from llamascopium.circuits.indexed_tensor import (
     NodeDimension,
     NodeIndexedMatrix,
     NodeIndexedTensor,

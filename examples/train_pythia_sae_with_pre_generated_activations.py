@@ -4,7 +4,7 @@ import os
 
 import torch
 
-from lm_saes import (
+from llamascopium import (
     ActivationFactoryActivationsSource,
     ActivationFactoryConfig,
     ActivationFactoryTarget,
@@ -68,7 +68,7 @@ if __name__ == "__main__":
             jumprelu_lr_factor=0.1,
         ),
         wandb=WandbConfig(
-            wandb_project="lm-saes",
+            wandb_project="llamascopium",
             exp_name="pythia-160m-sae",
         ),
         activation_factory=ActivationFactoryConfig(

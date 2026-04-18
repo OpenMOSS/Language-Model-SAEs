@@ -1,4 +1,4 @@
-from lm_saes.utils.discrete import DiscreteMapper, KeyedDiscreteMapper
+from llamascopium.utils.discrete import DiscreteMapper, KeyedDiscreteMapper
 
 
 def test_discrete_mapper():
