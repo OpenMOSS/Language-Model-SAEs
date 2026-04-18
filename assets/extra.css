@@ -1,0 +1,139 @@
+.md-tooltip2__inner.md-typeset p:last-child {
+  margin-bottom: 0 !important;
+}
+
+.md-tooltip2__inner.md-typeset .arithmatex,
+.md-tooltip2__inner.md-typeset .katex-display {
+  margin-top: 0.5em !important;
+  margin-bottom: 0.5em !important;
+}
+
+/* Ensure the backref doesn't add extra space at the bottom */
+.md-tooltip2__inner.md-typeset .footnote-backref {
+  display: none;
+  /* Usually not needed in a tooltip */
+}
+
+/* Alternative if we want to keep the backref but remove its block padding */
+.md-tooltip2__inner.md-typeset p:has(.footnote-backref) {
+  margin-bottom: 0 !important;
+  line-height: 0;
+}
+
+/* CLI Output Styling */
+.cli-output {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 16px;
+  border-radius: 8px;
+  font-family: "Fira Code", "Consolas", "Monaco", monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-x: auto;
+}
+
+.cli-output pre {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #808080;
+}
+
+.cli-panel {
+  border: 1px solid;
+  border-radius: 8px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  position: relative;
+}
+
+.cli-panel-info {
+  border-color: #00d7d7;
+}
+
+.cli-panel-stats {
+  border-color: #00d700;
+}
+
+.cli-panel-header {
+  position: absolute;
+  top: -0.7em;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e1e1e;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.cli-panel-info .cli-panel-header {
+  color: #00d7d7;
+}
+
+.cli-panel-stats .cli-panel-header {
+  color: #00d700;
+}
+
+.cli-panel-content {
+  margin-top: 4px;
+}
+
+.cli-panel-title {
+  color: #00d7d7;
+  font-weight: bold;
+}
+
+.cli-panel-subtitle {
+  color: #d4d4d4;
+  font-style: italic;
+}
+
+.cli-label {
+  font-weight: bold;
+}
+
+.cli-sample {
+  border: 1px solid #5f87ff;
+  border-radius: 8px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  position: relative;
+}
+
+.cli-sample-header {
+  position: absolute;
+  top: -0.7em;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e1e1e;
+  padding: 0 8px;
+  color: #5f87ff;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cli-sample-content {
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
+
+.cli-legend {
+  margin: 16px 0 8px 0;
+}
+
+/* Token highlight colors matching Rich CLI (on grey23 #303030 background) */
+.tok-weak {
+  background: #303030;
+  color: #ffff00;
+  font-weight: bold;
+}
+
+.tok-medium {
+  background: #303030;
+  color: #ff8700;
+  font-weight: bold;
+}
+
+.tok-strong {
+  background: #303030;
+  color: #ff0000;
+  font-weight: bold;
+}
