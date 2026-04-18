@@ -1,0 +1,21 @@
+[project]
+name = "lm-saes"
+version = "2.0.0b31"
+description = "Shim package — lm-saes has been renamed to llamascopium. Install llamascopium directly."
+requires-python = ">=3.11,<3.13"
+dependencies = ["llamascopium==2.0.0b31"]
+readme = "README.md"
+
+[[project.authors]]
+name = "Xuyang Ge"
+email = "xyge20@fudan.edu.cn"
+
+[project.license]
+text = "MIT"
+
+[project.scripts]
+lm-saes = "lm_saes:_cli_entrypoint"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
