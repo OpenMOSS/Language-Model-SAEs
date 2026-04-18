@@ -40,6 +40,37 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
+  build-shim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build shim package
+        run: python -m build shim/lm-saes
+
+      - name: Upload shim build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-shim
+          path: shim/lm-saes/dist/
+
+  publish-shim-pypi:
+    needs: [build-shim, publish-pypi] # publish main package first so the ==version pin resolves
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-shim
+          path: dist/
+
+      - name: Publish shim to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
   github-release:
     needs: build
     runs-on: ubuntu-latest
