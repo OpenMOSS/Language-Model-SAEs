@@ -117,6 +117,7 @@ def test_dump_attribution_result() -> None:
                     },
                 ],
             },
+            "targets": None,
             "logits": logits,
             "probs": probs,
             "prompt_token_ids": [1, 2, 3],

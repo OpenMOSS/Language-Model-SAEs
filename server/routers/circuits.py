@@ -174,11 +174,17 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     if ar is None:
         raise ValueError(f"Attribution data not found for circuit {circuit_id}")
 
+    reduction_weight = (
+        ar.probs
+        if ar.probs is not None
+        else torch.ones(len(ar.targets), device=ar.attribution.data.device, dtype=ar.attribution.data.dtype)
+    )
     attribution = prune_attribution(
         ar.attribution,
-        ar.probs,
+        reduction_weight,
         node_threshold=node_threshold,
         edge_threshold=edge_threshold,
+        targets=ar.targets,
     )
 
     sae_set = client.get_sae_set(name=circuit.sae_set_name)
@@ -224,9 +230,14 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
 
     nodes = ov_nodes + qk_nodes
 
-    logit_token_map = {token_id: token for token_id, token in zip(ar.logit_token_ids, ar.logit_tokens)}
-    logit_prob_map = {token_id: float(prob.item()) for token_id, prob in zip(ar.logit_token_ids, ar.probs)}
-    target_vocab_index = int(targets.node_mappings["logits"].indices[0][0].item())
+    logit_token_map = {token_id: token for token_id, token in zip(ar.logit_token_ids or [], ar.logit_tokens or [])}
+    logit_prob_map = {
+        token_id: float(prob.item())
+        for token_id, prob in zip(ar.logit_token_ids or [], ar.probs if ar.probs is not None else [])
+    }
+    target_vocab_index = (
+        int(targets.node_mappings["logits"].indices[0][0].item()) if "logits" in targets.node_mappings else -1
+    )
     n_layers = max((int(item["layer_idx"]) for item in sae_metadata.values()), default=-1) + 1
 
     @timer.time("make_node")
@@ -419,9 +430,33 @@ def run_circuit_attribution(
                 if is_primary_rank(device_mesh):
                     client.update_circuit_progress(circuit_id, overall_progress, phase)
 
+            feature_targets: list[tuple[str, int, int]] = []
+            if request.list_of_features:
+                layer_key_map: dict[tuple[int, bool], str] = {}
+                for sae in saes.values():
+                    cfg = sae.cfg
+                    assert isinstance(cfg, SAEConfig | LorsaConfig | MOLTConfig)
+                    m = re.search(r"blocks\.(\d+)\.", cfg.hook_point_out)
+                    if m:
+                        layer_key_map[(int(m.group(1)), isinstance(cfg, LorsaConfig))] = (
+                            cfg.hook_point_out + ".sae.hook_feature_acts"
+                        )
+                missing = [
+                    (layer, is_lorsa)
+                    for layer, _, _, is_lorsa in request.list_of_features
+                    if (layer, is_lorsa) not in layer_key_map
+                ]
+                assert not missing, f"No SAE in set {sae_set_name} covers (layer, is_lorsa)={missing}"
+                feature_targets = [
+                    (layer_key_map[(layer, is_lorsa)], pos, feat_idx)
+                    for layer, feat_idx, pos, is_lorsa in request.list_of_features
+                ]
+
             attribution = model.attribute(
                 inputs=prompt,
                 replacement_modules=list(saes.values()),
+                target_type="features" if feature_targets else "logits",
+                features=feature_targets,
                 max_n_logits=request.max_n_logits,
                 desired_logit_prob=request.desired_logit_prob,
                 batch_size=16,

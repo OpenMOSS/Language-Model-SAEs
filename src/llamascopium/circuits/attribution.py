@@ -8,6 +8,7 @@ from itertools import groupby
 from typing import (
     Any,
     Iterator,
+    Literal,
     Self,
     Sequence,
     cast,
@@ -186,12 +187,13 @@ class AttributionResult(PyTree):
 
     activations: NodeIndexedVector
     attribution: NodeIndexedMatrix
-    logits: torch.Tensor
-    probs: torch.Tensor
+    targets: NodeDimension | None = None
+    logits: torch.Tensor | None = None
+    probs: torch.Tensor | None = None
     prompt_token_ids: list[int] = field(default_factory=list)
     prompt_tokens: list[str] = field(default_factory=list)
-    logit_token_ids: list[int] = field(default_factory=list)
-    logit_tokens: list[str] = field(default_factory=list)
+    logit_token_ids: list[int] | None = None
+    logit_tokens: list[str] | None = None
     qk_trace_results: QKTracingResult | None = None
 
 
@@ -377,25 +379,34 @@ def _find_influence_threshold(scores: torch.Tensor, threshold: float) -> torch.T
 @timer.time("prune_attribution")
 def prune_attribution(
     attribution: NodeIndexedMatrix,
-    logit_weights: torch.Tensor,
+    reduction_weight: torch.Tensor,
     node_threshold: float = 0.6,
     edge_threshold: float = 0.8,
+    targets: NodeDimension | None = None,
 ) -> NodeIndexedMatrix:
     """Prune an attribution NodeIndexedMatrix by removing low-influence nodes and edges.
 
     The attribution matrix is expected to have:
-    - dim 0 (targets/rows): logit nodes (key="logits") + collected feature nodes
+    - dim 0 (targets/rows): target nodes (logits or user-specified features) + collected feature nodes
     - dim 1 (sources/cols): embed nodes (key="hook_embed") + error nodes (key ends with ".error")
                              + all (possibly uncollected) feature nodes
 
-    Logit nodes and embed/error source nodes are always kept. Feature nodes are pruned based
-    on their cumulative contribution to the weighted logit output.
+    Target nodes and embed/error source nodes are always kept. Intermediate
+    feature nodes are pruned based on their cumulative contribution to the
+    weighted target output.
 
     Args:
         attribution: NodeIndexedMatrix from the attribution computation.
+        reduction_weight: Per-target scalar weights (shape ``[n_targets]``) used to
+            collapse the target dimension into a single influence score per
+            intermediate / source. For logit targets this is typically the
+            target-token probabilities; for feature targets, uniform ones.
         node_threshold: Retain feature nodes accounting for this fraction of total influence.
         edge_threshold: Retain edges accounting for this fraction of total edge influence.
-        logit_weights: Per-logit scalar weights (shape ``[n_logits]``).
+        targets: Target NodeDimension identifying which rows of ``attribution``
+            are targets vs intermediates. When ``None``, defaults to rows with
+            key ``"logits"`` for backward compatibility with logit-target
+            attributions.
 
     Returns:
         Pruned NodeIndexedMatrix containing only kept nodes and edges.
@@ -405,15 +416,16 @@ def prune_attribution(
     if edge_threshold > 1.0 or edge_threshold < 0.0:
         raise ValueError("edge_threshold must be between 0.0 and 1.0")
 
-    logits = attribution.dimensions[0].filter_keys(lambda key: key == "logits")
-    intermediates = attribution.dimensions[0].filter_keys(lambda key: key != "logits")
+    if targets is None:
+        targets = attribution.dimensions[0].filter_keys(lambda key: key == "logits")
+    intermediates = attribution.dimensions[0] - targets
     optional_sources = attribution.dimensions[1].filter_keys(lambda key: key.endswith(".error")) + intermediates
 
-    node_scores = NodeIndexedVector.from_data(logit_weights, dimensions=(logits,)) @ compute_intermediates_attribution(
-        attribution, logits, intermediates, max_iter=100
-    )
+    node_scores = NodeIndexedVector.from_data(
+        reduction_weight, dimensions=(targets,)
+    ) @ compute_intermediates_attribution(attribution, targets, intermediates, max_iter=100)
     influence = node_scores[intermediates]
-    influence.add_nodes(logits, logit_weights)
+    influence.add_nodes(targets, reduction_weight)
     edge_scores = NodeIndexedMatrix.from_data(
         get_normalized_matrix(attribution).data * influence[attribution.dimensions[0]].data[:, None],
         dimensions=attribution.dimensions,
@@ -526,6 +538,8 @@ def attribute(
     model: TransformerLensLanguageModel,
     inputs: torch.Tensor | str,
     replacement_modules: list[SparseDictionary],
+    target_type: Literal["logits", "features"] = "logits",
+    features: list[tuple[str, int, int]] | NodeDimension = [],
     max_n_logits: int = 10,
     desired_logit_prob: float = 0.95,
     batch_size: int = 512,
@@ -541,6 +555,8 @@ def attribute(
         inputs: Prompt as a token tensor or raw string (tokenized internally).
         replacement_modules: SAE / Lorsa / MoLT modules spliced into the
             residual stream as the upstream feature basis.
+        target_type: The type of interested targets to attribute from. Can be "logits" or "features".
+        features: Feature nodes to attribute from. Can be a NodeDimension directly representing the feature nodes, or a list of tuples (key, pos, feature_index) representing the feature nodes. Required if target_type is "features".
         max_n_logits: Maximum number of top output logits to treat as targets.
         desired_logit_prob: Cumulative probability mass that the selected top
             logits must cover; the actual target count is the smallest prefix
@@ -572,23 +588,36 @@ def attribute(
         with_bias_leaves=enable_qk_tracing,
     )
 
-    with torch.no_grad():
-        probs = torch.softmax(batch_logits[0, -1], dim=-1)
-        top_p, top_idx = torch.topk(probs, max_n_logits)
-        cutoff = int(searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
-        top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
-
     seq_len = cache["hook_embed.post"].shape[1]
 
-    targets = NodeRefs.from_nodes_and_refs(
-        [
-            (
-                "logits",
-                top_idx.unsqueeze(-1),
-                batch_logits[:, -1, :] - batch_logits[:, -1, :].mean(dim=-1, keepdim=True),
-            ),
-        ]
-    )
+    if target_type == "features":
+        feat_dim = _coerce_feature_dim(features, model.device, model.device_mesh)
+        # Use ``.pre`` (pre-detach, still connected to the encoder) as the target
+        # ref so gradients flow back through the SAE encoder → residual stream →
+        # upstream sources. ``.post`` is a detached leaf with no upstream path,
+        # which would make attribution collapse to the target's self-entry.
+        targets = NodeRefs.from_nodes_and_refs(
+            [(ni.key, ni.indices, cache[ni.key + ".pre"]) for ni in feat_dim.node_infos]
+        )
+        reduction_weight = torch.ones(len(feat_dim), device=model.device, dtype=targets.dtype)
+    elif target_type == "logits":
+        with torch.no_grad():
+            probs = torch.softmax(batch_logits[0, -1], dim=-1)
+            top_p, top_idx = torch.topk(probs, max_n_logits)
+            cutoff = int(searchsorted(torch.cumsum(top_p, 0), desired_logit_prob)) + 1
+            top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
+        targets = NodeRefs.from_nodes_and_refs(
+            [
+                (
+                    "logits",
+                    top_idx.unsqueeze(-1),
+                    batch_logits[:, -1, :] - batch_logits[:, -1, :].mean(dim=-1, keepdim=True),
+                ),
+            ]
+        )
+        reduction_weight = top_p
+    else:
+        raise ValueError(f"invalid target_type={target_type!r}")
 
     seq_indices = (
         torch.arange(seq_len, device=model.device).unsqueeze(-1)
@@ -629,7 +658,7 @@ def attribute(
         sources=sources,
         intermediates=intermediates,
         max_intermediates=max_intermediates,
-        reduction_weight=top_p,
+        reduction_weight=reduction_weight,
         max_iter=max_iter,
     )
 
@@ -652,7 +681,9 @@ def attribute(
     )
 
     prompt_token_ids = full_tensor(tokens).detach().cpu().tolist()
-    logit_token_ids = full_tensor(top_idx).detach().cpu().tolist()
+    logit_token_ids = (
+        full_tensor(top_idx).detach().cpu().tolist() if target_type == "logits" and top_idx.numel() > 0 else None  # pyright: ignore[reportPossiblyUnboundVariable]
+    )
 
     qk_trace_results = None
     if enable_qk_tracing:
@@ -665,7 +696,7 @@ def attribute(
 
         if len(lorsa_features) > 0:
             lorsa_influence = (
-                NodeIndexedVector.from_data(top_p, dimensions=(targets.dimension,))
+                NodeIndexedVector.from_data(reduction_weight, dimensions=(targets.dimension,))
                 @ compute_intermediates_attribution(attribution, targets.dimension, collected_intermediates, max_iter)[
                     None, lorsa_features
                 ]
@@ -723,16 +754,49 @@ def attribute(
                 ),
             )
 
+    last_logits = (
+        batch_logits[:, -1, top_idx].detach()  # pyright: ignore[reportPossiblyUnboundVariable]
+        if target_type == "logits" and top_idx.numel() > 0 and top_idx.dim() == 1  # pyright: ignore[reportPossiblyUnboundVariable]
+        else None
+    )
+    logit_tokens = (
+        [cast(Any, model.tokenizer).decode([token_id]) for token_id in logit_token_ids]
+        if logit_token_ids is not None
+        else None
+    )
+
     return AttributionResult(
         activations=activations_vec,
         attribution=attribution,
-        logits=batch_logits[:, -1, top_idx].detach(),
-        probs=top_p,
+        targets=targets.dimension,
+        logits=last_logits,
+        probs=top_p if target_type == "logits" else None,  # pyright: ignore[reportPossiblyUnboundVariable]
         prompt_token_ids=prompt_token_ids,
         prompt_tokens=[cast(Any, model.tokenizer).decode([token_id]) for token_id in prompt_token_ids],
         logit_token_ids=logit_token_ids,
-        logit_tokens=[cast(Any, model.tokenizer).decode([token_id]) for token_id in logit_token_ids],
+        logit_tokens=logit_tokens,
         qk_trace_results=qk_trace_results,
+    )
+
+
+def _coerce_feature_dim(
+    features: list[tuple[str, int, int]] | NodeDimension,
+    device: torch.device | str,
+    device_mesh: DeviceMesh | None,
+) -> NodeDimension:
+    if isinstance(features, NodeDimension):
+        if len(features) == 0:
+            raise ValueError("target_type='features' requires a non-empty NodeDimension")
+        return features
+    if len(features) == 0:
+        raise ValueError("target_type='features' requires a non-empty features list")
+    by_key: dict[str, list[tuple[int, int]]] = {}
+    for key, pos, fidx in features:
+        by_key.setdefault(key, []).append((int(pos), int(fidx)))
+    return NodeDimension.from_node_infos(
+        [NodeInfo(key=k, indices=torch.tensor(v, device=device, dtype=torch.long)) for k, v in by_key.items()],
+        device=device,
+        device_mesh=device_mesh,
     )
 
 
