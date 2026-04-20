@@ -461,7 +461,7 @@ def run_circuit_attribution(
                 features=feature_targets,
                 max_n_logits=request.max_n_logits,
                 desired_logit_prob=request.desired_logit_prob,
-                batch_size=16,
+                batch_size=10,
                 max_features=request.max_feature_nodes,
                 enable_qk_tracing=request.qk_tracing_topk > 0,
             ).full_tensor()
