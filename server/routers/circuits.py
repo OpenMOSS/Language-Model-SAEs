@@ -174,11 +174,13 @@ def load_circuit_graph(*, circuit_id: str, node_threshold: float, edge_threshold
     if ar is None:
         raise ValueError(f"Attribution data not found for circuit {circuit_id}")
 
-    reduction_weight = (
-        ar.probs
-        if ar.probs is not None
-        else torch.ones(len(ar.targets), device=ar.attribution.data.device, dtype=ar.attribution.data.dtype)
-    )
+    if ar.probs is not None:
+        reduction_weight = ar.probs
+    else:
+        assert ar.targets is not None
+        reduction_weight = torch.ones(
+            len(ar.targets), device=ar.attribution.data.device, dtype=ar.attribution.data.dtype
+        )
     attribution = prune_attribution(
         ar.attribution,
         reduction_weight,
