@@ -475,7 +475,90 @@ To enable W&B logging, add the `wandb` configuration to your training setup:
 
 ## Checkpoints and Continue Training
 
-WIP
+You can save the model using
+``` python
+sae.save_pretrained(save_path, fold_activation_scale)
+```
+This method creates the target directory and saves the SAE checkpoint; when `fold_activation_scale=True`, it calls `sae.standardize_parameters_of_dataset_norm()` to fold the dataset-wise average activation norm into the model's weights and biases for inference.
+
+If you need to additionally save training-related state for later resumption, we recommend using:
+
+```python
+trainer.save_checkpoint(sae, checkpoint_path)
+```
+
+This saves both the SAE checkpoint and all training-related state (training configuration, current step, optimizer state, etc.) in a single call. The method creates a subdirectory at `f"{checkpoint_path}/checkpoints/step_{cur_step}"` and writes all the above information there.
+
+### Resuming Training
+
+To restore a training snapshot saved by `trainer.save_checkpoint`, use the following:
+
+```python
+latest_snapshot_path = f"{checkpoint_path}/checkpoints/step_{cur_step}"
+
+sae = SparseDictionary.from_pretrained(
+    pretrained_name_or_path=latest_snapshot_path,
+)
+
+trainer = Trainer.from_checkpoint(
+    sae,
+    checkpoint_path=latest_snapshot_path,
+)
+```
+
+If you use `wandb` to track training and want the resumed run to append to the original curve rather than start a new one, you need to manually initialize a `wandb_logger` and pass it to the `Trainer`:
+
+```python
+wandb_logger = wandb.init(
+    # ... other settings, identical to the original run ...
+    resume="must",
+    id=wandb_run_id,  # ID of the original wandb run;
+                      # saved at latest_snapshot_path/wandb_run_id.json
+)
+trainer.wandb_logger = wandb_logger
+```
+
+You can resume training via the runner API, provided you already have a training snapshot available.
+
+=== "Runner"
+
+    ``` python
+    from llamascopium import (
+        TrainSAESettings,
+        train_sae,
+        TrainerConfig,
+        WandbConfig,
+    )
+
+    settings = TrainSAESettings(
+        # ... other settings ...
+        trainer=TrainerConfig(
+            # ...
+            exp_result_path=checkpoint_path,
+            from_pretrained_path=f"{checkpoint_path}/checkpoints/step_{cur_step}"
+        ),
+        wandb=WandbConfig(
+            # ...
+            wandb_resume="must"
+            wandb_run_id=wandb_run_id
+        )
+    )
+
+    train_sae(settings)
+    ```
+
+=== "CLI"
+    ``` toml
+    # ... other configurations ...
+
+    [trainer]
+    exp_result_path = "<checkpoint_path>"
+    from_pretrained_path = "<checkpoint_path>/checkpoints/step_<cur_step>"
+
+    [wandb]
+    wandb_resume = "must"
+    wandb_run_id = "<wandb_run_id>"
+    ```
 
 ## Activation Functions
 
