@@ -11,9 +11,9 @@ from transformer_lens import HookedTransformer
 from wandb.sdk.wandb_run import Run
 
 from lm_saes.abstract_sae import AbstractSparseAutoEncoder
-from lm_saes.circuit.attribution import attribute
-from lm_saes.circuit.graph import Graph, compute_influence, normalize_matrix
-from lm_saes.circuit.replacement_model import ReplacementModel
+from lm_saes.circuit.attribution_qk import attribute
+from lm_saes.circuit.graph_lc0 import Graph, compute_influence, normalize_matrix
+from lm_saes.circuit.replacement_lc0_model import ReplacementModel
 from lm_saes.clt import CrossLayerTranscoder
 from lm_saes.config import EvalConfig, GraphEvalConfig
 from lm_saes.sae import SparseAutoEncoder

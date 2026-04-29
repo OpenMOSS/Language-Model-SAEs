@@ -5,7 +5,7 @@ from transformer_lens import HookedTransformer
 from typing import Dict, List, Any, Optional, Tuple
 from collections import defaultdict
 from tqdm.auto import tqdm
-from src.chess_utils.sae import get_feature_vector
+from src.chess_utils import get_feature_vector
 from src.chess_utils import get_move_from_policy_output_with_prob
 
 def collect_activated_features_at_position(

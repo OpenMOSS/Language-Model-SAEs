@@ -3172,6 +3172,7 @@ def run_feature_attribution(
 
     visited = torch.zeros(total_active_feats, dtype=torch.bool)
     n_visited = 0
+    index_device = logit_p.device
 
     pbar = tqdm(total=max_feature_nodes, desc="Feature influence computation")
 
@@ -3225,11 +3226,12 @@ def run_feature_attribution(
         if idx_batch.numel() == 0:
             continue
         n_visited += len(idx_batch)
-        layers = idx_to_layer(idx_batch)
-        positions = idx_to_pos(idx_batch)
-        inject_values = idx_to_encoder_rows(idx_batch).detach()
-        encoder_bias = idx_to_encoder_bias(idx_batch)
-        attn_patterns = idx_to_pattern(idx_batch)
+        idx_batch_device = idx_batch.to(device=index_device)
+        layers = idx_to_layer(idx_batch_device)
+        positions = idx_to_pos(idx_batch_device)
+        inject_values = idx_to_encoder_rows(idx_batch_device).detach()
+        encoder_bias = idx_to_encoder_bias(idx_batch_device)
+        attn_patterns = idx_to_pattern(idx_batch_device)
 
         if isinstance(attn_patterns, torch.Tensor):
             attn_patterns = attn_patterns.detach()
@@ -3250,7 +3252,10 @@ def run_feature_attribution(
         bs = rows_feature.shape[0]
         end = st + bs
         edge_matrix[st:end, :logit_offset] = rows_feature.detach().cpu()
-        row_to_node_index[st:end] = idx_batch
+        row_to_node_index[st:end] = idx_batch.to(
+            device=row_to_node_index.device,
+            dtype=row_to_node_index.dtype,
+        )
         visited[idx_batch] = True
         st = end
         pbar.update(len(idx_batch))

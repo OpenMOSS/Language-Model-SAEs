@@ -1,4 +1,4 @@
 from .replacement_lc0_model import ReplacementModel
-from .attribution import attribute
+from .attribution_qk import attribute
 
 __all__ = ["ReplacementModel", "attribute"]
