@@ -22,8 +22,20 @@ from tqdm import tqdm
 
 try:
     from .constants import BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH
+    from .circuit_trace_defaults import (
+        DEFAULT_EDGE_THRESHOLD,
+        DEFAULT_MAX_FEATURE_NODES,
+        DEFAULT_NODE_THRESHOLD,
+        DEFAULT_SAVE_ACTIVATION_INFO,
+    )
 except ImportError:
     from constants import BT4_TC_BASE_PATH, BT4_LORSA_BASE_PATH
+    from circuit_trace_defaults import (
+        DEFAULT_EDGE_THRESHOLD,
+        DEFAULT_MAX_FEATURE_NODES,
+        DEFAULT_NODE_THRESHOLD,
+        DEFAULT_SAVE_ACTIVATION_INFO,
+    )
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent.parent.parent.parent
@@ -488,7 +500,7 @@ def run_attribution(
     sae_series: str,
     act_times_max: Optional[int] = None,
     encoder_demean: bool = False,
-    save_activation_info: bool = False,
+    save_activation_info: bool = DEFAULT_SAVE_ACTIVATION_INFO,
     negative_move_uci: Optional[str] = None,  # Added negative_move_uci parameter
 ) -> Dict[str, Any]:
     """Run attribution analysis"""
@@ -633,8 +645,8 @@ def create_graph_from_attribution(
 def create_graph_json_data(
     graph: Graph,
     slug: str,
-    node_threshold: float = 0.8,
-    edge_threshold: float = 0.98,
+    node_threshold: float = DEFAULT_NODE_THRESHOLD,
+    edge_threshold: float = DEFAULT_EDGE_THRESHOLD,
     sae_series: Optional[str] = None,
     lorsa_analysis_name: str = "",
     tc_analysis_name: str = "",
@@ -718,7 +730,7 @@ def run_circuit_trace(
     side: str = "both",
     max_n_logits: int = 1,
     desired_logit_prob: float = 0.95,
-    max_feature_nodes: int = 4096,
+    max_feature_nodes: int = DEFAULT_MAX_FEATURE_NODES,
     batch_size: int = 1,
     order_mode: str = "abs",
     mongo_uri: str = "mongodb://10.245.40.154:27017",
@@ -726,15 +738,16 @@ def run_circuit_trace(
     sae_series: str = "BT4-exp128",
     act_times_max: Optional[int] = None,
     encoder_demean: bool = False,
-    save_activation_info: bool = False,
-    node_threshold: float = 0.73,
-    edge_threshold: float = 0.57,
+    save_activation_info: bool = DEFAULT_SAVE_ACTIVATION_INFO,
+    node_threshold: float = DEFAULT_NODE_THRESHOLD,
+    edge_threshold: float = DEFAULT_EDGE_THRESHOLD,
     log_level: str = "INFO",
     hooked_model: Optional[HookedTransformer] = None,
     cached_transcoders: Optional[Dict[int, SparseAutoEncoder]] = None,
     cached_lorsas: Optional[List[LowRankSparseAttention]] = None,
     cached_replacement_model: Optional[ReplacementModel] = None,
     sae_combo_id: Optional[str] = None,
+    mongo_client: Optional[MongoClient] = None,
     trace_logs: Optional[list] = None
 ) -> Dict[str, Any]:
     """Run circuit trace and return graph data"""
@@ -773,8 +786,8 @@ def run_circuit_trace(
                 lorsa_base_path, n_layers, hooked_model
             )
         
-        mongo_client = setup_mongodb(mongo_uri, mongo_db)
-        print(f'DEBUG: mongo_client = {mongo_client}')
+        mongo_client_instance = mongo_client if mongo_client is not None else setup_mongodb(mongo_uri, mongo_db)
+        print(f'DEBUG: mongo_client = {mongo_client_instance}')
         slug = f'circuit_trace_{order_mode}_{side}_{max_feature_nodes}'
         
         attribution_result = run_attribution(
@@ -788,11 +801,11 @@ def run_circuit_trace(
             max_feature_nodes=max_feature_nodes,
             batch_size=batch_size,
             order_mode=order_mode,
-            mongo_client=mongo_client,
+            mongo_client=mongo_client_instance,
             sae_series=sae_series,
             act_times_max=act_times_max,
             encoder_demean=encoder_demean,
-            save_activation_info=True,
+            save_activation_info=save_activation_info,
             negative_move_uci=negative_move_uci
         )
         
@@ -916,7 +929,7 @@ def main():
                        help="Maximum logit number")
     parser.add_argument("--desired_logit_prob", type=float, default=0.95,
                        help="Desired logit probability")
-    parser.add_argument("--max_feature_nodes", type=int, default=1024,
+    parser.add_argument("--max_feature_nodes", type=int, default=DEFAULT_MAX_FEATURE_NODES,
                        help="Maximum feature nodes number")
     parser.add_argument("--batch_size", type=int, default=1,
                        help="Batch size")
@@ -939,9 +952,9 @@ def main():
     parser.add_argument("--log_level", type=str, default="INFO",
                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                        help="Log level")
-    parser.add_argument("--node_threshold", type=float, default=0.73,
+    parser.add_argument("--node_threshold", type=float, default=DEFAULT_NODE_THRESHOLD,
                        help="Node threshold")
-    parser.add_argument("--edge_threshold", type=float, default=0.57,
+    parser.add_argument("--edge_threshold", type=float, default=DEFAULT_EDGE_THRESHOLD,
                        help="Edge threshold")
     
     args = parser.parse_args()

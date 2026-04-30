@@ -11,6 +11,7 @@ import { NodeConnections } from '@/components/circuits/node-connections';
 import { ChessBoard } from '@/components/chess/chess-board';
 import { transformCircuitData } from '@/components/circuits/link-graph/utils';
 import { useModelLoadingStatus } from '@/components/shared/model-loading-status';
+import { CIRCUIT_TRACE_DEFAULTS } from '@/config/circuit-trace-defaults';
 
 // Search edge data type
 interface SearchEdge {
@@ -76,9 +77,9 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
   const [showParamsDialog, setShowParamsDialog] = useState(false);
   const [circuitParams, setCircuitParams] = useState<CircuitTraceParams>(
     existingResult?.params || {
-      max_feature_nodes: 4096,
-      node_threshold: 0.73,
-      edge_threshold: 0.57,
+      max_feature_nodes: CIRCUIT_TRACE_DEFAULTS.max_feature_nodes,
+      node_threshold: CIRCUIT_TRACE_DEFAULTS.node_threshold,
+      edge_threshold: CIRCUIT_TRACE_DEFAULTS.edge_threshold,
       max_act_times: null,
     }
   );
@@ -148,7 +149,7 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
         node_threshold: circuitParams.node_threshold,
         edge_threshold: circuitParams.edge_threshold,
         max_act_times: circuitParams.max_act_times,
-        save_activation_info: true,
+        save_activation_info: CIRCUIT_TRACE_DEFAULTS.save_activation_info,
       };
       
       console.log('🔍 Edge circuit trace request:', {
@@ -601,12 +602,12 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
           </Button>
           <Button
             variant="outline"
-            onClick={() => setCircuitParams({
-              max_feature_nodes: 4096,
-              node_threshold: 0.73,
-              edge_threshold: 0.57,
-              max_act_times: null,
-            })}
+              onClick={() => setCircuitParams({
+                max_feature_nodes: CIRCUIT_TRACE_DEFAULTS.max_feature_nodes,
+                node_threshold: CIRCUIT_TRACE_DEFAULTS.node_threshold,
+                edge_threshold: CIRCUIT_TRACE_DEFAULTS.edge_threshold,
+                max_act_times: null,
+              })}
           >
             Reset
           </Button>
@@ -628,4 +629,3 @@ export const EdgeCircuitTracePanel: React.FC<EdgeCircuitTracePanelProps> = ({
 };
 
 export default EdgeCircuitTracePanel;
-

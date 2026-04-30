@@ -33,6 +33,12 @@ try:
         BT4_DEFAULT_SAE_COMBO,
         get_bt4_sae_combo,
     )
+    from .circuit_trace_defaults import (
+        DEFAULT_EDGE_THRESHOLD,
+        DEFAULT_MAX_FEATURE_NODES,
+        DEFAULT_NODE_THRESHOLD,
+        DEFAULT_SAVE_ACTIVATION_INFO,
+    )
 except ImportError:
     from constants import (
         BT4_MODEL_NAME,
@@ -41,6 +47,12 @@ except ImportError:
         BT4_SAE_COMBOS,
         BT4_DEFAULT_SAE_COMBO,
         get_bt4_sae_combo,
+    )
+    from circuit_trace_defaults import (
+        DEFAULT_EDGE_THRESHOLD,
+        DEFAULT_MAX_FEATURE_NODES,
+        DEFAULT_NODE_THRESHOLD,
+        DEFAULT_SAVE_ACTIVATION_INFO,
     )
 try:
     from torchvision import transforms
@@ -3198,15 +3210,15 @@ def circuit_trace(request: dict):
             - fen: FEN string (required)
             - move_uci: UCI move to analyze (required)
             - side: analysis side (q/k/both, default: "k")
-            - max_feature_nodes: maximum feature nodes (default: 4096)
-            - node_threshold: node threshold (default: 0.73)
-            - edge_threshold: edge threshold (default: 0.57)
+            - max_feature_nodes: maximum feature nodes (default: configured value)
+            - node_threshold: node threshold (default: configured value)
+            - edge_threshold: edge threshold (default: configured value)
             - max_n_logits: maximum logit number (default: 1)
             - desired_logit_prob: desired logit probability (default: 0.95)
             - batch_size: batch size (default: 1)
             - order_mode: abs | positive | negative | both (default: "abs")
             - encoder_demean: whether to demean encoder (default: False)
-            - save_activation_info: whether to save activation info (default: False)
+            - save_activation_info: whether to save activation info (default: configured value)
     
     Returns:
         graph data (JSON format)
@@ -3241,15 +3253,15 @@ def circuit_trace(request: dict):
                 negative_move_uci = _decode_fen(negative_move_uci)  # negative_move_uci may also be encoded
             
             side = request.get("side", "k")
-            max_feature_nodes = request.get("max_feature_nodes", 4096)
-            node_threshold = request.get("node_threshold", 0.73)
-            edge_threshold = request.get("edge_threshold", 0.57)
+            max_feature_nodes = request.get("max_feature_nodes", DEFAULT_MAX_FEATURE_NODES)
+            node_threshold = request.get("node_threshold", DEFAULT_NODE_THRESHOLD)
+            edge_threshold = request.get("edge_threshold", DEFAULT_EDGE_THRESHOLD)
             max_n_logits = request.get("max_n_logits", 1)
             desired_logit_prob = request.get("desired_logit_prob", 0.95)
             batch_size = request.get("batch_size", 1)
             order_mode = request.get("order_mode", "abs")
             encoder_demean = request.get("encoder_demean", False)
-            save_activation_info = request.get("save_activation_info", True)  # default to enable activation info saving
+            save_activation_info = request.get("save_activation_info", DEFAULT_SAVE_ACTIVATION_INFO)
             max_act_times = request.get("max_act_times", None)  # add maximum activation times parameter
             # force using BT4 model
             model_name = "lc0/BT4-1024x15x32h"

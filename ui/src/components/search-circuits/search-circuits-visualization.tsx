@@ -11,6 +11,7 @@ import { Zap, ChevronDown, ChevronRight, Maximize2, Download, Trash2, Play, Squa
 import { EdgeCircuitTracePanel, EdgeCircuitTraceResult } from "./edge-circuit-trace-panel";
 import { ModelLoadingStatus, useModelLoadingStatus } from "@/components/shared/model-loading-status";
 import { SaeComboLoader } from "@/components/common/SaeComboLoader";
+import { CIRCUIT_TRACE_DEFAULTS } from "@/config/circuit-trace-defaults";
 interface SearchNode {
   fen: string;
   moves: string[];
@@ -98,9 +99,9 @@ export const SearchCircuitsVisualization = () => {
   const [isBatchTracing, setIsBatchTracing] = useState(false);
   const [batchTraceProgress, setBatchTraceProgress] = useState({ current: 0, total: 0, currentEdge: '' });
   const [batchTraceParams, setBatchTraceParams] = useState({
-    max_feature_nodes: 4096,
-    node_threshold: 0.73,
-    edge_threshold: 0.57,
+    max_feature_nodes: CIRCUIT_TRACE_DEFAULTS.max_feature_nodes,
+    node_threshold: CIRCUIT_TRACE_DEFAULTS.node_threshold,
+    edge_threshold: CIRCUIT_TRACE_DEFAULTS.edge_threshold,
     max_act_times: null as number | null,
     side: 'both' as 'q' | 'k' | 'both',
     orderMode: 'abs' as 'abs' | 'positive' | 'negative',
@@ -470,7 +471,7 @@ export const SearchCircuitsVisualization = () => {
           node_threshold: batchTraceParams.node_threshold,
           edge_threshold: batchTraceParams.edge_threshold,
           max_act_times: batchTraceParams.max_act_times,
-          save_activation_info: true,
+          save_activation_info: CIRCUIT_TRACE_DEFAULTS.save_activation_info,
         };
         
         const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/circuit_trace`, {
@@ -1300,7 +1301,7 @@ export const SearchCircuitsVisualization = () => {
                     id="batch-max-nodes"
                     type="number"
                     value={batchTraceParams.max_feature_nodes}
-                    onChange={(e) => setBatchTraceParams(p => ({ ...p, max_feature_nodes: parseInt(e.target.value) || 4096 }))}
+                    onChange={(e) => setBatchTraceParams(p => ({ ...p, max_feature_nodes: parseInt(e.target.value) || CIRCUIT_TRACE_DEFAULTS.max_feature_nodes }))}
                   />
                 </div>
                 <div>

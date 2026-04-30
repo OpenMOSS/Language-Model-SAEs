@@ -14,6 +14,7 @@ import { FeatureCard } from '@/components/feature/feature-card';
 import { ChessBoard } from '@/components/chess/chess-board';
 import { Feature } from '@/types/feature';
 import { transformCircuitData } from './link-graph/utils';
+import { CIRCUIT_TRACE_DEFAULTS } from '@/config/circuit-trace-defaults';
 
 interface CircuitTracingProps {
   gameFen: string; // FEN before move
@@ -49,9 +50,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
 
   const [showParamsDialog, setShowParamsDialog] = useState(false);
   const [circuitParams, setCircuitParams] = useState({
-    max_feature_nodes: 4096,
-    node_threshold: 0.73,
-    edge_threshold: 0.57,
+    max_feature_nodes: CIRCUIT_TRACE_DEFAULTS.max_feature_nodes,
+    node_threshold: CIRCUIT_TRACE_DEFAULTS.node_threshold,
+    edge_threshold: CIRCUIT_TRACE_DEFAULTS.edge_threshold,
     max_act_times: null as number | null,
   });
 
@@ -637,7 +638,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
         node_threshold: circuitParams.node_threshold,
         edge_threshold: circuitParams.edge_threshold,
         max_act_times: circuitParams.max_act_times,
-        save_activation_info: true
+        save_activation_info: CIRCUIT_TRACE_DEFAULTS.save_activation_info
       };
       
       // If the frontend has a selected SAE combo ID, pass it to the backend
@@ -2092,7 +2093,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  Controls the maximum number of feature nodes considered in circuit trace. Default: 4096.
+                  Controls the maximum number of feature nodes considered in circuit trace. Default: {CIRCUIT_TRACE_DEFAULTS.max_feature_nodes}.
                 </p>
               </div>
               
@@ -2109,7 +2110,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  Node importance threshold used to filter out unimportant nodes. Default: 0.73.
+                  Node importance threshold used to filter out unimportant nodes. Default: {CIRCUIT_TRACE_DEFAULTS.node_threshold}.
                 </p>
               </div>
               
@@ -2126,7 +2127,7 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
                   className="font-mono"
                 />
                 <p className="text-xs text-gray-500">
-                  Edge importance threshold used to filter out unimportant connections. Default: 0.57.
+                  Edge importance threshold used to filter out unimportant connections. Default: {CIRCUIT_TRACE_DEFAULTS.edge_threshold}.
                 </p>
               </div>
               
@@ -2189,9 +2190,9 @@ export const CircuitTracing: React.FC<CircuitTracingProps> = ({
               onClick={() => {
                 // Reset to default values
                 setCircuitParams({
-                  max_feature_nodes: 4096,
-                  node_threshold: 0.73,
-                  edge_threshold: 0.57,
+                  max_feature_nodes: CIRCUIT_TRACE_DEFAULTS.max_feature_nodes,
+                  node_threshold: CIRCUIT_TRACE_DEFAULTS.node_threshold,
+                  edge_threshold: CIRCUIT_TRACE_DEFAULTS.edge_threshold,
                   max_act_times: null,
                 });
               }}
