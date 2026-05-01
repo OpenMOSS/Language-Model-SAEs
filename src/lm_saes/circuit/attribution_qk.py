@@ -22,6 +22,7 @@ https://transformer-circuits.pub/2025/attribution-graphs/methods.html
 
 import contextlib
 import logging
+import os
 import time
 import weakref
 from collections import deque
@@ -2472,6 +2473,7 @@ def _run_attribution(
             idx_to_encoder_rows=idx_to_encoder_rows,
             idx_to_encoder_bias=idx_to_encoder_bias,
             idx_to_pattern=idx_to_pattern,
+            idx_to_activation_values=idx_to_activation_values,
             compute_partial_influences=compute_partial_influences,
             bias_attr_now=bias_attr_now,
             edge_matrix=edge_matrix_q,
@@ -2501,6 +2503,7 @@ def _run_attribution(
             idx_to_encoder_rows=idx_to_encoder_rows,
             idx_to_encoder_bias=idx_to_encoder_bias,
             idx_to_pattern=idx_to_pattern,
+            idx_to_activation_values=idx_to_activation_values,
             compute_partial_influences=compute_partial_influences,
             bias_attr_now=bias_attr_now,
             edge_matrix=edge_matrix_k,
@@ -3129,6 +3132,7 @@ def run_feature_attribution(
     idx_to_encoder_rows,
     idx_to_encoder_bias,
     idx_to_pattern,
+    idx_to_activation_values,
     compute_partial_influences,
     bias_attr_now,
     # Only provide one edge_matrix and row_to_node_index
@@ -3169,6 +3173,12 @@ def run_feature_attribution(
 
     phase_start = time.time()
     st = n_logits  # Row start: first put logit rows
+    debug_conservation = os.environ.get("ATTRIBUTION_DEBUG_CONSERVATION", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     visited = torch.zeros(total_active_feats, dtype=torch.bool)
     n_visited = 0
@@ -3247,7 +3257,61 @@ def run_feature_attribution(
             retain_graph=has_more_in_this_phase,
         )
 
-        _ = bias_attr_now(model) + encoder_bias
+        model_bias_attr = bias_attr_now(model)
+        _ = model_bias_attr + encoder_bias
+
+        if debug_conservation:
+            n_layers, n_pos, _ = tc_activation_matrix.shape
+            rows_feature_cpu = rows_feature.detach().cpu()
+            activation_values = idx_to_activation_values(idx_batch_device).detach().cpu()
+            encoder_bias_cpu = encoder_bias.detach().cpu()
+            model_bias_value = float(model_bias_attr.detach().cpu().item())
+
+            feature_slice = slice(0, total_active_feats)
+            error_slice = slice(total_active_feats, total_active_feats + 2 * n_layers * n_pos)
+            token_slice = slice(total_active_feats + 2 * n_layers * n_pos, logit_offset)
+
+            for row_idx, gid in enumerate(idx_batch.tolist()):
+                feature_contribution = float(rows_feature_cpu[row_idx, feature_slice].sum().item())
+                error_contribution = float(rows_feature_cpu[row_idx, error_slice].sum().item())
+                token_contribution = float(rows_feature_cpu[row_idx, token_slice].sum().item())
+                edge_contribution = feature_contribution + error_contribution + token_contribution
+                overall_activation = float(activation_values[row_idx].item())
+                encoder_bias_value = float(encoder_bias_cpu[row_idx].item())
+
+                approx_without_encoder_bias = edge_contribution + model_bias_value
+                approx_with_encoder_bias = approx_without_encoder_bias + encoder_bias_value
+                close_without_encoder_bias = torch.isclose(
+                    torch.tensor(overall_activation),
+                    torch.tensor(approx_without_encoder_bias),
+                    rtol=1e-1,
+                    atol=1e-4,
+                ).item()
+                close_with_encoder_bias = torch.isclose(
+                    torch.tensor(overall_activation),
+                    torch.tensor(approx_with_encoder_bias),
+                    rtol=1e-1,
+                    atol=1e-4,
+                ).item()
+
+                print(f"[ATTRIBUTION_DEBUG] gid={gid} layer={int(layers[row_idx].item())} pos={int(positions[row_idx].item())}")
+                print(f"[ATTRIBUTION_DEBUG] attention_pattern={attn_patterns[row_idx] if isinstance(attn_patterns, torch.Tensor) else None}")
+                print(f"[ATTRIBUTION_DEBUG] model_bias_contribution={model_bias_value:.6f}")
+                print(f"[ATTRIBUTION_DEBUG] encoder_bias_contribution={encoder_bias_value:.6f}")
+                print(f"[ATTRIBUTION_DEBUG] feature_contribution={feature_contribution:.6f}")
+                print(f"[ATTRIBUTION_DEBUG] error_contribution={error_contribution:.6f}")
+                print(f"[ATTRIBUTION_DEBUG] token_contribution={token_contribution:.6f}")
+                print(f"[ATTRIBUTION_DEBUG] edge_contribution_sum={edge_contribution:.6f}")
+                print(f"[ATTRIBUTION_DEBUG] overall_activation={overall_activation:.6f}")
+                print(
+                    f"[ATTRIBUTION_DEBUG] activation≈edges+model_bias: "
+                    f"{close_without_encoder_bias} ({approx_without_encoder_bias:.6f})"
+                )
+                print(
+                    f"[ATTRIBUTION_DEBUG] activation≈edges+model_bias+encoder_bias: "
+                    f"{close_with_encoder_bias} ({approx_with_encoder_bias:.6f})"
+                )
+                print("[ATTRIBUTION_DEBUG] --------------------------------")
 
         bs = rows_feature.shape[0]
         end = st + bs

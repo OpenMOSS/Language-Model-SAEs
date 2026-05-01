@@ -254,7 +254,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
     if (!rowWeight && (!link || link.weight === undefined)) return null;
 
     const weight = rowWeight !== undefined ? rowWeight : (link!.weight as number);
-    const pctInput = rowPct !== undefined ? rowPct : (link!.pctInput || 0);
     const isPinned = pinnedIds.includes(node.nodeId);
     const isHidden = hiddenIds.includes(node.featureId);
     const isHovered = node.nodeId === hoveredId;
@@ -304,9 +303,6 @@ export const NodeConnections: React.FC<NodeConnectionsProps> = ({
           <div className="text-right">
             <div className="text-sm font-mono">
               {weight > 0 ? '+' : ''}{weight.toFixed(3)}
-            </div>
-            <div className="text-xs text-gray-500">
-              {pctInput.toFixed(1)}%
             </div>
           </div>
         </div>
