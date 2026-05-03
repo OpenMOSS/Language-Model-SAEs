@@ -2821,6 +2821,30 @@ _circuit_tracing_lock = threading.Lock()
 _is_circuit_tracing = False
 
 
+def _preload_default_sae_combo_on_startup() -> None:
+    if not CIRCUITS_SERVICE_AVAILABLE or load_model_and_transcoders is None:
+        print("Skipping default SAE combo preload: circuit tracing service not available")
+        return
+
+    try:
+        result = preload_circuit_models(
+            {
+                "model_name": BT4_MODEL_NAME,
+                "sae_combo_id": BT4_DEFAULT_SAE_COMBO,
+            }
+        )
+        status = result.get("status", "unknown")
+        combo_id = result.get("sae_combo_id", BT4_DEFAULT_SAE_COMBO)
+        print(f"Default SAE combo preload finished: {combo_id} ({status})")
+    except Exception as exc:
+        print(f"Default SAE combo preload failed: {exc}")
+
+
+@app.on_event("startup")
+def preload_default_sae_combo_startup() -> None:
+    _preload_default_sae_combo_on_startup()
+
+
 @app.post("/circuit/preload_models")
 def preload_circuit_models(request: dict):
     global CURRENT_BT4_SAE_COMBO_ID, _loading_locks, _loading_status, _loading_logs, _cancel_loading

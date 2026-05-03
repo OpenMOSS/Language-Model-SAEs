@@ -3259,7 +3259,8 @@ def run_feature_attribution(
 
         model_bias_attr = bias_attr_now(model)
         _ = model_bias_attr + encoder_bias
-
+        
+        # DEBUG MODE
         if debug_conservation:
             n_layers, n_pos, _ = tc_activation_matrix.shape
             rows_feature_cpu = rows_feature.detach().cpu()

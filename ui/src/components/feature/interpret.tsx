@@ -452,6 +452,9 @@ export const FeatureInterpretationCard = ({
   if (!feature) {
     return null;
   }
+
+  const featureKey = `${feature.dictionaryName}:${feature.featureIndex}`;
+
   return (
     <Card>
       {title !== "" && (
@@ -461,7 +464,7 @@ export const FeatureInterpretationCard = ({
       )}
       <CardContent className={title === "" ? "pt-6" : undefined}>
         <Suspense fallback={<div>Loading Interpretation...</div>}>
-          <FeatureInterpretation feature={feature} />
+          <FeatureInterpretation key={featureKey} feature={feature} />
         </Suspense>
       </CardContent>
     </Card>
