@@ -855,80 +855,9 @@ export const CircuitVisualization = () => {
     }
   }, [linkGraphData, getDictionaryName]);
 
-  /** Check if SAE is loaded (by querying backend state) */
-  const checkSaeLoaded = useCallback(async (): Promise<boolean> => {
-    try {
-      const saeComboId = typeof window !== 'undefined' 
-        ? window.localStorage.getItem("bt4_sae_combo_id") 
-        : null;
-      
-      if (!saeComboId) {
-        console.warn("sae_combo_id not found; please load SAE combo first");
-        return false;
-      }
-      
-      const params = new URLSearchParams({
-        model_name: 'lc0/BT4-1024x15x32h',
-        sae_combo_id: saeComboId,
-      });
-      
-      const response = await fetch(
-        `${import.meta.env.VITE_BACKEND_URL}/circuit/loading_logs?${params.toString()}`
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        const logs = data.logs || [];
-        
-        // If loading, return false
-        if (data.is_loading === true) {
-          console.log("SAE is loading...");
-          return false;
-        }
-        
-        // Check for successful load logs (completion message)
-        const hasSuccessLog = logs.some((log: { message: string }) => 
-          log.message.includes("Preload complete") ||
-          log.message.includes('already_loaded') ||
-          log.message.includes("ready")
-        );
-        
-        // If success log exists, SAE is loaded
-        if (hasSuccessLog) {
-          console.log("SAE loaded (confirmed from logs)");
-          return true;
-        }
-        
-        // No logs: may not have loaded yet
-        if (logs.length === 0) {
-          console.warn("No load logs found; SAE may not be loaded");
-          return false;
-        }
-        
-        // Logs exist but no success message: may have failed or still loading
-        console.warn("SAE status unclear: logs exist but no success message");
-        return false;
-      }
-      
-      return false;
-    } catch (error) {
-      console.warn("Failed to check SAE load status:", error);
-      return false;
-    }
-  }, []);
-
   /** Fetches Token Predictions data from backend */
   const fetchTokenPredictions = useCallback(async (nodeId: string, currentSteeringScale?: number) => {
     if (!nodeId || !fen) return;
-
-    // Check backend state directly rather than global state
-    const saeLoaded = await checkSaeLoaded();
-    if (!saeLoaded) {
-      console.warn("TC/Lorsa not loaded; skipping steering_analysis call");
-      alert("Please load TC/Lorsa combo (SaeComboLoader) above first, then use steering.");
-      setTokenPredictions(null);
-      return;
-    }
     
     setLoadingTokenPredictions(true);
     try {
@@ -941,6 +870,9 @@ export const CircuitVisualization = () => {
       
       const currentNode = linkGraphData?.nodes.find(n => n.nodeId === nodeId);
       const featureType = currentNode?.feature_type?.toLowerCase() === 'lorsa' ? 'lorsa' : 'transcoder';
+      const saeComboId = typeof window !== 'undefined'
+        ? window.localStorage.getItem("bt4_sae_combo_id") || undefined
+        : undefined;
       
       // Use passed steeringScale or value from current state
       const scaleToUse = currentSteeringScale !== undefined ? currentSteeringScale : steeringScale;
@@ -970,16 +902,24 @@ export const CircuitVisualization = () => {
             pos: pos,
             feature: featureIndex,
             steering_scale: scaleToUse,
-            metadata: linkGraphData?.metadata
+            metadata: {
+              ...(linkGraphData?.metadata || {}),
+              sae_combo_id: saeComboId,
+            }
           })
         }
       );
       
       if (!response.ok) {
         const errorText = await response.text();
-        // 503 means model not loaded
-        if (response.status === 503) {
-          alert("Please load TC/Lorsa combo (SaeComboLoader) above first.");
+        const normalizedError = errorText.toLowerCase();
+        const needsPreload =
+          normalizedError.includes("not preloaded") ||
+          normalizedError.includes("not loaded") ||
+          normalizedError.includes("preload_models") ||
+          normalizedError.includes("still loading");
+        if (needsPreload) {
+          alert("Please load TC/Lorsa combo (SaeComboLoader) above first, then use steering.");
         }
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
@@ -996,7 +936,7 @@ export const CircuitVisualization = () => {
     } finally {
       setLoadingTokenPredictions(false);
     }
-  }, [fen, linkGraphData, steeringScale, checkSaeLoaded]);
+  }, [fen, linkGraphData, steeringScale]);
 
   /** Fetch Top Activation data when node is clicked (Token Predictions is manual) */
   useEffect(() => {
