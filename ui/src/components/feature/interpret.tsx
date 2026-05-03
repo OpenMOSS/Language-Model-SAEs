@@ -1,5 +1,5 @@
 import { Feature, Interpretation, InterpretationSchema } from "@/types/feature";
-import { useState, useCallback, Suspense } from "react";
+import { useState, useCallback, Suspense, useEffect } from "react";
 import { Button } from "../ui/button";
 import { Ban, Check, Info, ChevronDown, ChevronRight, Copy, CheckCircle2 } from "lucide-react";
 import { useAsyncFn } from "react-use";
@@ -12,10 +12,12 @@ const FeatureCustomInterpretionArea = ({
   feature,
   defaultInterpretation,
   onInterpretation,
+  onInterpretationSaved,
 }: {
   feature: Feature;
   defaultInterpretation: Interpretation | null;
   onInterpretation: (interpretation: Interpretation) => void;
+  onInterpretationSaved?: (interpretation: Interpretation) => Promise<void> | void;
 }) => {
   const [customInput, setCustomInput] = useState<string>(defaultInterpretation?.text || "");
   const [state, submit] = useAsyncFn(async () => {
@@ -40,8 +42,13 @@ const FeatureCustomInterpretionArea = ({
       .then(async (res) => await res.json())
       .then((res) => InterpretationSchema.parse(camelcaseKeys(res)));
     onInterpretation(interpretation);
+    await onInterpretationSaved?.(interpretation);
     return interpretation;
-  }, [customInput]);
+  }, [customInput, feature.dictionaryName, feature.featureIndex, onInterpretation, onInterpretationSaved]);
+
+  useEffect(() => {
+    setCustomInput(defaultInterpretation?.text || "");
+  }, [defaultInterpretation?.text, feature.dictionaryName, feature.featureIndex]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -58,7 +65,13 @@ const FeatureCustomInterpretionArea = ({
   );
 };
 
-export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
+export const FeatureInterpretation = ({
+  feature,
+  onInterpretationSaved,
+}: {
+  feature: Feature;
+  onInterpretationSaved?: (interpretation: Interpretation) => Promise<void> | void;
+}) => {
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
   const [isUserPromptExpanded, setIsUserPromptExpanded] = useState<boolean>(false);
   const [isSystemPromptExpanded, setIsSystemPromptExpanded] = useState<boolean>(false);
@@ -67,6 +80,18 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
   const [interpretation, setInterpretation] = useState<Interpretation | null>(feature.interpretation || null);
 
   const [validating, setValidating] = useState<boolean>(false);
+
+  useEffect(() => {
+    setInterpretation(feature.interpretation || null);
+  }, [feature.dictionaryName, feature.featureIndex, feature.interpretation]);
+
+  useEffect(() => {
+    setShowCustomInput(false);
+    setIsUserPromptExpanded(false);
+    setIsSystemPromptExpanded(false);
+    setExpandedValidationSections({});
+    setValidating(false);
+  }, [feature.dictionaryName, feature.featureIndex]);
 
   // Function to highlight tokens within << and >> with colored text
   const highlightTokens = useCallback((text: string): React.ReactNode => {
@@ -151,8 +176,9 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
       .then((res) => InterpretationSchema.parse(camelcaseKeys(res)))
       .finally(() => setValidating(false));
     setInterpretation(interpretationValidated);
+    await onInterpretationSaved?.(interpretationValidated);
     return interpretationValidated;
-  });
+  }, [feature.dictionaryName, feature.featureIndex, onInterpretationSaved]);
 
   // Toggle validation section expand/collapse state
   const toggleValidationSection = (validationIndex: number, section: string) => {
@@ -404,6 +430,7 @@ export const FeatureInterpretation = ({ feature }: { feature: Feature }) => {
         <FeatureCustomInterpretionArea
           feature={feature}
           defaultInterpretation={interpretation}
+          onInterpretationSaved={onInterpretationSaved}
           onInterpretation={(interpretation) => {
             setInterpretation(interpretation);
             setShowCustomInput(false);

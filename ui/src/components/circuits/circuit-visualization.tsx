@@ -13,7 +13,6 @@ import { SaeComboLoader } from "@/components/common/SaeComboLoader";
 import { CustomFenInput } from "@/components/feature/custom-fen-input";
 import { PosFeatureCard } from "@/components/feature/pos-feature-card";
 import { CircuitInterpretationCard } from "./circuit-interpretation-card";
-import { FeatureInterpretationCard } from "@/components/feature/interpret";
 import { useCircuitFileUpload } from "@/hooks/useCircuitFileUpload";
 import { FileUploadZone } from "./FileUploadZone";
 import { useActivationData } from "@/hooks/useActivationData";
@@ -321,6 +320,10 @@ export const CircuitVisualization = () => {
   }, [hoveredId, setHoveredId]);
 
   const handleFeatureSelect = useCallback((feature: Feature | null) => {
+    setSelectedFeature(feature);
+  }, []);
+
+  const handleSelectedFeatureUpdated = useCallback((feature: Feature) => {
     setSelectedFeature(feature);
   }, []);
 
@@ -2713,42 +2716,6 @@ export const CircuitVisualization = () => {
           </div>
         )}
 
-        {/* Feature Interpretation - saves to backend MongoDB (same as feature page) */}
-        {clickedId && displayLinkGraphData && (() => {
-          const currentNode = displayLinkGraphData.nodes.find(
-            (n: any) => String(n.nodeId ?? n.id ?? "") === String(clickedId)
-          );
-          if (!currentNode) return null;
-          const ft = (currentNode.feature_type || "").toLowerCase();
-          if (ft !== "lorsa" && ft !== "cross layer transcoder") return null;
-          const parts = (currentNode.nodeId ?? currentNode.id ?? "").split("_");
-          if (parts.length < 2) return null;
-          const rawLayer = parseInt(parts[0]) || 0;
-          const featureIndex = parseInt(parts[1]) || 0;
-          const layerIdx = Math.floor(rawLayer / 2);
-          const isLorsa = ft === "lorsa";
-          const dictionaryName = getDictionaryName(layerIdx, isLorsa);
-          const clerpText = nodeActivationData?.clerp ?? (currentNode as any)?.clerp ?? "";
-          const feature: Feature = {
-            featureIndex,
-            dictionaryName,
-            analysisName: dictionaryName,
-            interpretation: clerpText ? { text: clerpText, validation: [] } : undefined,
-          };
-          return (
-            <div className="w-full border rounded-lg p-4 bg-white shadow-sm">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold">Feature Interpretation</h3>
-                <span className="text-sm text-gray-600">Node: {clickedId}</span>
-              </div>
-              <FeatureInterpretationCard feature={feature} title="" />
-              <p className="text-xs text-gray-500 mt-2">
-                Interpretation is saved to backend MongoDB. Use &quot;Provide Custom Interpretation&quot; or &quot;Automatic Interpretation&quot; to save.
-              </p>
-            </div>
-          );
-        })()}
-
         {/* Bottom Row: Feature Card below Link Graph Container */}
         {clickedId && displayLinkGraphData && (() => {
           const currentNode = displayLinkGraphData.nodes.find(
@@ -2807,7 +2774,10 @@ export const CircuitVisualization = () => {
                 </div>
               </div>
               {selectedFeature ? (
-                <FeatureCard feature={selectedFeature} />
+                <FeatureCard
+                  feature={selectedFeature}
+                  onFeatureUpdated={handleSelectedFeatureUpdated}
+                />
               ) : (
                 <div className="flex items-center justify-center p-8 bg-gray-50 border rounded-lg">
                   <div className="text-center">

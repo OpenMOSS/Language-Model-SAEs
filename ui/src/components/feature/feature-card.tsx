@@ -1,4 +1,5 @@
 import { Feature, FeatureSampleCompactSchema } from "@/types/feature";
+import { fetchFeatureByDictionaryName } from "@/utils/api";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 import { useState, useEffect, useCallback } from "react";
@@ -112,7 +113,13 @@ const FeatureBookmarkButton = ({ feature }: { feature: Feature }) => {
   );
 };
 
-export const FeatureCard = ({ feature }: { feature: Feature }) => {
+export const FeatureCard = ({
+  feature,
+  onFeatureUpdated,
+}: {
+  feature: Feature;
+  onFeatureUpdated?: (feature: Feature) => Promise<void> | void;
+}) => {
   const analysisNameMap = (analysisName: string) => {
     if (analysisName === "top_activations") {
       return "Top Activations";
@@ -126,14 +133,34 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
   };
 
   const [showCustomInput, setShowCustomInput] = useState<boolean>(false);
+  const [currentFeature, setCurrentFeature] = useState<Feature>(feature);
 
-  const activationTimesSpan = feature.nAnalyzedTokens ? (
+  useEffect(() => {
+    setCurrentFeature(feature);
+    setShowCustomInput(false);
+  }, [feature]);
+
+  const refreshFeature = useCallback(async () => {
+    const refreshedFeature = await fetchFeatureByDictionaryName(
+      currentFeature.dictionaryName,
+      currentFeature.featureIndex
+    );
+
+    if (!refreshedFeature) {
+      return;
+    }
+
+    setCurrentFeature(refreshedFeature);
+    await onFeatureUpdated?.(refreshedFeature);
+  }, [currentFeature.dictionaryName, currentFeature.featureIndex, onFeatureUpdated]);
+
+  const activationTimesSpan = currentFeature.nAnalyzedTokens ? (
     <span className="font-medium">
       (Activation Times ={" "}
       <span className="font-bold">
-        {feature.actTimes}
-        {feature.actTimesModalities &&
-          ` = ${Object.entries(feature.actTimesModalities)
+        {currentFeature.actTimes}
+        {currentFeature.actTimesModalities &&
+          ` = ${Object.entries(currentFeature.actTimesModalities)
             .map(([modality, actTime]) => `${actTime} (${modality})`)
             .join(" + ")}`}
         )
@@ -143,10 +170,10 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
     <span className="font-medium">
       (Activation Frequency ={" "}
       <span className="font-bold">
-        {(feature.actTimes / feature.nAnalyzedTokens!).toFixed(3)}
-        {feature.actTimesModalities &&
-          ` = ${Object.entries(feature.actTimesModalities)
-            .map(([modality, actTime]) => `${(actTime / feature.nAnalyzedTokens!).toFixed(3)} (${modality})`)
+        {(currentFeature.actTimes / currentFeature.nAnalyzedTokens!).toFixed(3)}
+        {currentFeature.actTimesModalities &&
+          ` = ${Object.entries(currentFeature.actTimesModalities)
+            .map(([modality, actTime]) => `${(actTime / currentFeature.nAnalyzedTokens!).toFixed(3)} (${modality})`)
             .join(" + ")}`}
         )
       </span>
@@ -157,9 +184,9 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
     <span className="font-medium">
       (Max Activation ={" "}
       <span className="font-bold">
-        {feature.maxFeatureAct}
-        {feature.maxFeatureActsModalities &&
-          ` = max(${Object.entries(feature.maxFeatureActsModalities)
+        {currentFeature.maxFeatureAct}
+        {currentFeature.maxFeatureActsModalities &&
+          ` = max(${Object.entries(currentFeature.maxFeatureActsModalities)
             .map(([modality, maxFeatureAct]) => `${maxFeatureAct} (${modality})`)
             .join(", ")})`}
         )
@@ -172,11 +199,11 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
       <CardHeader>
         <CardTitle className="flex justify-between items-center text-xl">
           <span>
-            #{feature.featureIndex} {activationTimesSpan}
+            #{currentFeature.featureIndex} {activationTimesSpan}
             {maxActivationSpan}
           </span>
           <div className="flex gap-2">
-            <FeatureBookmarkButton feature={feature} />
+            <FeatureBookmarkButton feature={currentFeature} />
             <Button onClick={() => setShowCustomInput((prev) => !prev)}>
               {showCustomInput ? "Hide Custom Input" : "Try Custom Input"}
             </Button>
@@ -185,18 +212,22 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
       </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-4">
-          {showCustomInput && <FeatureCustomInputArea feature={feature} />}
+          {showCustomInput && <FeatureCustomInputArea feature={currentFeature} />}
 
-          <FeatureInterpretation feature={feature} />
+          <FeatureInterpretation
+            key={`${currentFeature.dictionaryName}:${currentFeature.featureIndex}`}
+            feature={currentFeature}
+            onInterpretationSaved={refreshFeature}
+          />
 
-          {feature.decoderNorms && (
+          {currentFeature.decoderNorms && (
             <div id="DecoderNorms" className="flex flex-col w-full gap-4">
               <p className="font-bold">Decoder Norms</p>
               <Plot
                 data={[
                   {
-                    x: Array.from({ length: feature.decoderNorms.length }, (_, i) => i),
-                    y: feature.decoderNorms,
+                    x: Array.from({ length: currentFeature.decoderNorms.length }, (_, i) => i),
+                    y: currentFeature.decoderNorms,
                     type: "bar",
                     marker: { color: "#636EFA" },
                     hovertemplate: "Index: %{x}<br>Norm: %{y}<extra></extra>",
@@ -215,16 +246,16 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
             </div>
           )}
 
-          {(feature.decoderSimilarityMatrix || feature.decoderInnerProductMatrix) && (
+          {(currentFeature.decoderSimilarityMatrix || currentFeature.decoderInnerProductMatrix) && (
             <div className="flex flex-col w-full gap-4">
               <div className="flex justify-between gap-4">
-                {feature.decoderSimilarityMatrix && (
+                {currentFeature.decoderSimilarityMatrix && (
                   <div id="DecoderSimilarityMatrix" className="flex flex-col w-1/2 gap-2">
                     <p className="font-bold">Decoder Similarity Matrix</p>
                     <Plot
                       data={[
                         {
-                          z: feature.decoderSimilarityMatrix,
+                          z: currentFeature.decoderSimilarityMatrix,
                           type: "heatmap",
                           colorscale: "Viridis",
                           hovertemplate: "Row: %{y}<br>Column: %{x}<br>Value: %{z}<extra></extra>",
@@ -250,13 +281,13 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                   </div>
                 )}
 
-                {feature.decoderInnerProductMatrix && (
+                {currentFeature.decoderInnerProductMatrix && (
                   <div id="DecoderInnerProductMatrix" className="flex flex-col w-1/2 gap-2">
                     <p className="font-bold">Decoder Inner Product Matrix</p>
                     <Plot
                       data={[
                         {
-                          z: feature.decoderInnerProductMatrix,
+                          z: currentFeature.decoderInnerProductMatrix,
                           type: "heatmap",
                           colorscale: "Viridis",
                           hovertemplate: "Row: %{y}<br>Column: %{x}<br>Value: %{z}<extra></extra>",
@@ -285,11 +316,11 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
             </div>
           )}
 
-          {feature.featureActivationHistogram && (
+          {currentFeature.featureActivationHistogram && (
             <div id="Histogram" className="flex flex-col w-full gap-4">
               <p className="font-bold">Activation Histogram</p>
               <Plot
-                data={feature.featureActivationHistogram}
+                data={currentFeature.featureActivationHistogram}
                 layout={{
                   xaxis: { title: "Activation" },
                   yaxis: { title: "Count" },
@@ -301,7 +332,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
             </div>
           )}
 
-          {feature.logits && (
+          {currentFeature.logits && (
             <div id="Logits" className="flex flex-col w-full gap-4">
               <p className="font-bold">Logits</p>
               <div className="flex gap-4">
@@ -315,7 +346,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {feature.logits.topPositive.map((token) => (
+                      {currentFeature.logits.topPositive.map((token) => (
                         <TableRow key={token.token}>
                           <TableCell className="underline whitespace-pre-wrap decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
                             {token.token}
@@ -336,7 +367,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {feature.logits.topNegative.map((token) => (
+                      {currentFeature.logits.topNegative.map((token) => (
                         <TableRow key={token.token}>
                           <TableCell className="underline whitespace-pre-wrap decoration-slate-400 decoration-1 decoration-dotted underline-offset-[6px]">
                             {token.token}
@@ -349,7 +380,7 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
                 </div>
               </div>
               <Plot
-                data={feature.logits.histogram}
+                data={currentFeature.logits.histogram}
                 layout={{
                   bargap: 0.2,
                   margin: { t: 0, b: 40 },
@@ -362,28 +393,28 @@ export const FeatureCard = ({ feature }: { feature: Feature }) => {
           <div id="Activation" className="flex flex-col w-full gap-4">
             <Tabs defaultValue="top_activations">
               <TabsList className="font-bold">
-                {feature.sampleGroups.slice(0, feature.sampleGroups.length / 2).map((sampleGroup) => (
+                {currentFeature.sampleGroups.slice(0, currentFeature.sampleGroups.length / 2).map((sampleGroup) => (
                   <TabsTrigger key={`tab-trigger-${sampleGroup.analysisName}`} value={sampleGroup.analysisName}>
                     {analysisNameMap(sampleGroup.analysisName)}
                   </TabsTrigger>
                 ))}
               </TabsList>
               <TabsList className="font-bold">
-                {feature.sampleGroups
-                  .slice(feature.sampleGroups.length / 2, feature.sampleGroups.length)
+                {currentFeature.sampleGroups
+                  .slice(currentFeature.sampleGroups.length / 2, currentFeature.sampleGroups.length)
                   .map((sampleGroup) => (
                     <TabsTrigger key={`tab-trigger-${sampleGroup.analysisName}`} value={sampleGroup.analysisName}>
                       {analysisNameMap(sampleGroup.analysisName)}
                     </TabsTrigger>
                   ))}
               </TabsList>
-              {feature.sampleGroups.map((sampleGroup) => (
+              {currentFeature.sampleGroups.map((sampleGroup) => (
                 <TabsContent
                   key={`tab-content-${sampleGroup.analysisName}`}
                   value={sampleGroup.analysisName}
                   className="mt-0"
                 >
-                  <FeatureSampleGroup feature={feature} sampleGroup={sampleGroup} />
+                  <FeatureSampleGroup feature={currentFeature} sampleGroup={sampleGroup} />
                 </TabsContent>
               ))}
             </Tabs>

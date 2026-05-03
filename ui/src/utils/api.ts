@@ -41,6 +41,40 @@ export const fetchFeature = async (
   }
 };
 
+export const fetchFeatureByDictionaryName = async (
+  dictionaryName: string,
+  featureId: number
+): Promise<Feature | null> => {
+  try {
+    const response = await fetch(
+      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionaryName}/features/${featureId}`,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/x-msgpack",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn(`Failed to fetch feature from ${dictionaryName}: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const decoded = decode(new Uint8Array(arrayBuffer)) as Record<string, unknown>;
+    const camelCased = camelcaseKeys(decoded, {
+      deep: true,
+      stopPaths: ["context"],
+    });
+
+    return camelCased as Feature;
+  } catch (error) {
+    console.error(`Error fetching feature ${featureId} from dictionary ${dictionaryName}:`, error);
+    return null;
+  }
+};
+
 /**
  * Get dictionary name from circuit JSON metadata.
  * Uses lorsa_analysis_name / tc_analysis_name to build full dictionary names.
