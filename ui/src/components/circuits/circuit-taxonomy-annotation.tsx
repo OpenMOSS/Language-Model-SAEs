@@ -193,6 +193,7 @@ export const CircuitTaxonomyAnnotation = () => {
   const [loadingCircuits, setLoadingCircuits] = useState(false);
   const [loadingCircuitDetail, setLoadingCircuitDetail] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [jumpingToPending, setJumpingToPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const featureCacheRef = useRef<Record<string, Feature>>({});
@@ -487,6 +488,38 @@ export const CircuitTaxonomyAnnotation = () => {
     setSelectedCircuitFile(resumeTarget.file_name);
   }, [circuitDetail, currentFeatureIndex, selectedCircuitFile, selectedDirectoryId]);
 
+  const jumpToCurrentFilePendingFeature = useCallback(async () => {
+    if (!circuitDetail || !selectedDirectoryId || !selectedCircuitFile) {
+      return;
+    }
+
+    setJumpingToPending(true);
+    setError(null);
+    try {
+      const resumeTarget = await fetchCircuitTaxonomyResumeTarget(
+        selectedDirectoryId,
+        selectedCircuitFile,
+        0,
+      );
+
+      if (resumeTarget.completed || resumeTarget.feature_index === null) {
+        window.alert("This file has no remaining unlabeled features.");
+        return;
+      }
+
+      if (resumeTarget.file_name !== selectedCircuitFile) {
+        return;
+      }
+
+      setCurrentFeatureIndex(resumeTarget.feature_index);
+      setClickedId(circuitDetail.features[resumeTarget.feature_index]?.node_id ?? null);
+    } catch (jumpError) {
+      setError(jumpError instanceof Error ? jumpError.message : "Failed to jump to pending feature");
+    } finally {
+      setJumpingToPending(false);
+    }
+  }, [circuitDetail, selectedCircuitFile, selectedDirectoryId]);
+
   const handleGraphFeatureSelect = useCallback((feature: Feature | null) => {
     if (!feature || !circuitDetail) {
       return;
@@ -693,6 +726,13 @@ export const CircuitTaxonomyAnnotation = () => {
                       disabled={!circuitDetail}
                     >
                       Skip
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => void jumpToCurrentFilePendingFeature()}
+                      disabled={!circuitDetail || jumpingToPending}
+                    >
+                      {jumpingToPending ? "Finding Pending..." : "Jump To Pending"}
                     </Button>
                   </div>
 
