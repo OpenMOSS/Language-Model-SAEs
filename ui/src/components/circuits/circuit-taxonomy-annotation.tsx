@@ -28,7 +28,7 @@ import {
 import { normalizeZPattern } from "@/utils/activationUtils";
 import { extractFenFromText, validateFen } from "@/utils/fenUtils";
 
-const TAXONOMY_PREFIX_RE = /^\[(Det|Src|Tgt|Val|Cap|Pro|Mov|Tac|Spa|Uninterpretable)\]\s*/;
+const TAXONOMY_PREFIX_RE = /^\[(Det|Src|Tgt|Val|Reg|Cap|Pro|Mov|Tac|Spa|Uninterpretable)\]\s*/;
 const TAXONOMY_TOP_ACTIVATION_PAGE_SIZE = 6;
 
 const getFeatureCacheKey = (featureRef: CircuitTaxonomyFeatureRef) =>

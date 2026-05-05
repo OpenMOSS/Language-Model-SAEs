@@ -144,6 +144,7 @@ CIRCUIT_TAXONOMY_LABELS = [
     "Src",
     "Tgt",
     "Val",
+    "Reg",
     "Cap",
     "Pro",
     "Mov",
