@@ -3,76 +3,95 @@ import { buildBt4DictionaryFromAnalysisName } from "@/utils/bt4Sae";
 import { decode } from "@msgpack/msgpack";
 import camelcaseKeys from "camelcase-keys";
 
+const API_BASE = import.meta.env.VITE_BACKEND_URL || "";
+const featureCache = new Map<string, Feature>();
+const pendingFeatureRequests = new Map<string, Promise<Feature | null>>();
+
+type FeatureFetchOptions = {
+  forceRefresh?: boolean;
+};
+
+const parseFeatureResponse = async (response: Response): Promise<Feature> => {
+  const arrayBuffer = await response.arrayBuffer();
+  const decoded = decode(new Uint8Array(arrayBuffer)) as Record<string, unknown>;
+  const camelCased = camelcaseKeys(decoded, {
+    deep: true,
+    stopPaths: ["context"],
+  });
+
+  return camelCased as Feature;
+};
+
+const fetchFeatureByResolvedDictionaryName = async (
+  dictionaryName: string,
+  featureId: number,
+  options: FeatureFetchOptions = {},
+): Promise<Feature | null> => {
+  const cacheKey = `${dictionaryName}::${featureId}`;
+
+  if (!options.forceRefresh) {
+    const cached = featureCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const pending = pendingFeatureRequests.get(cacheKey);
+    if (pending) {
+      return pending;
+    }
+  } else {
+    featureCache.delete(cacheKey);
+    pendingFeatureRequests.delete(cacheKey);
+  }
+
+  const request = (async () => {
+    try {
+      const response = await fetch(
+        `${API_BASE}/dictionaries/${encodeURIComponent(dictionaryName)}/features/${featureId}`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/x-msgpack",
+          },
+        },
+      );
+
+      if (!response.ok) {
+        console.warn(`Failed to fetch feature from ${dictionaryName}: ${response.status} ${response.statusText}`);
+        return null;
+      }
+
+      const feature = await parseFeatureResponse(response);
+      featureCache.set(cacheKey, feature);
+      return feature;
+    } catch (error) {
+      console.error(`Error fetching feature ${featureId} from dictionary ${dictionaryName}:`, error);
+      return null;
+    }
+  })().finally(() => {
+    pendingFeatureRequests.delete(cacheKey);
+  });
+
+  pendingFeatureRequests.set(cacheKey, request);
+  return request;
+};
+
 export const fetchFeature = async (
   analysisName: string,
   layer: number,
-  featureId: number
+  featureId: number,
+  options: FeatureFetchOptions = {},
 ): Promise<Feature | null> => {
-  try {
-    // Replace {} with layer in the analysis name
-    const formattedAnalysisName = analysisName.replace("{}", layer.toString());
-        
-    const response = await fetch(
-      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${formattedAnalysisName}/features/${featureId}`,
-      {
-        method: "GET",
-        headers: {
-          Accept: "application/x-msgpack",
-        },
-      }
-    );
-
-    if (!response.ok) {
-      console.warn(`Failed to fetch feature from ${formattedAnalysisName}: ${response.status} ${response.statusText}`);
-      return null;
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const decoded = decode(new Uint8Array(arrayBuffer)) as Record<string, unknown>;
-    const camelCased = camelcaseKeys(decoded, {
-      deep: true,
-      stopPaths: ["context"],
-    });
-
-    return camelCased as Feature;
-  } catch (error) {
-    console.error(`Error fetching feature ${featureId} from layer ${layer}:`, error);
-    return null;
-  }
+  const formattedAnalysisName = analysisName.replace("{}", layer.toString());
+  return fetchFeatureByResolvedDictionaryName(formattedAnalysisName, featureId, options);
 };
 
 export const fetchFeatureByDictionaryName = async (
   dictionaryName: string,
-  featureId: number
+  featureId: number,
+  options: FeatureFetchOptions = {},
 ): Promise<Feature | null> => {
-  try {
-    const response = await fetch(
-      `${import.meta.env.VITE_BACKEND_URL}/dictionaries/${dictionaryName}/features/${featureId}`,
-      {
-        method: "GET",
-        headers: {
-          Accept: "application/x-msgpack",
-        },
-      }
-    );
-
-    if (!response.ok) {
-      console.warn(`Failed to fetch feature from ${dictionaryName}: ${response.status} ${response.statusText}`);
-      return null;
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const decoded = decode(new Uint8Array(arrayBuffer)) as Record<string, unknown>;
-    const camelCased = camelcaseKeys(decoded, {
-      deep: true,
-      stopPaths: ["context"],
-    });
-
-    return camelCased as Feature;
-  } catch (error) {
-    console.error(`Error fetching feature ${featureId} from dictionary ${dictionaryName}:`, error);
-    return null;
-  }
+  return fetchFeatureByResolvedDictionaryName(dictionaryName, featureId, options);
 };
 
 /**
@@ -121,7 +140,11 @@ export interface CircuitAnnotation {
   metadata?: Record<string, any>;
 }
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || "";
+const circuitTaxonomyCircuitCache = new Map<string, CircuitTaxonomyCircuitDetail>();
+const pendingCircuitTaxonomyCircuitRequests = new Map<
+  string,
+  Promise<CircuitTaxonomyCircuitDetail>
+>();
 
 export const createCircuitAnnotation = async (
   circuitInterpretation: string,
@@ -298,13 +321,34 @@ export const fetchCircuitTaxonomyCircuit = async (
   directoryId: string,
   fileName: string,
 ): Promise<CircuitTaxonomyCircuitDetail> => {
-  const response = await fetch(
-    `${API_BASE}/circuit_taxonomy/circuit?directory_id=${encodeURIComponent(directoryId)}&file_name=${encodeURIComponent(fileName)}`,
-  );
-  if (!response.ok) {
-    throw new Error(await response.text());
+  const cacheKey = `${directoryId}::${fileName}`;
+  const cached = circuitTaxonomyCircuitCache.get(cacheKey);
+  if (cached) {
+    return cached;
   }
-  return response.json();
+
+  const pending = pendingCircuitTaxonomyCircuitRequests.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const request = (async () => {
+    const response = await fetch(
+      `${API_BASE}/circuit_taxonomy/circuit?directory_id=${encodeURIComponent(directoryId)}&file_name=${encodeURIComponent(fileName)}`,
+    );
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    const detail = (await response.json()) as CircuitTaxonomyCircuitDetail;
+    circuitTaxonomyCircuitCache.set(cacheKey, detail);
+    return detail;
+  })().finally(() => {
+    pendingCircuitTaxonomyCircuitRequests.delete(cacheKey);
+  });
+
+  pendingCircuitTaxonomyCircuitRequests.set(cacheKey, request);
+  return request;
 };
 
 export const annotateCircuitTaxonomyFeature = async (

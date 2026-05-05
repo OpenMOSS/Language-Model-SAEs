@@ -307,7 +307,11 @@ export const CircuitTaxonomyAnnotation = () => {
     if (!featureRef) {
       return null;
     }
-    const refreshed = await fetchFeatureByDictionaryName(featureRef.dictionary_name, featureRef.feature_index);
+    const refreshed = await fetchFeatureByDictionaryName(
+      featureRef.dictionary_name,
+      featureRef.feature_index,
+      { forceRefresh: true },
+    );
     if (refreshed) {
       setFeatureCache((prev) => ({
         ...prev,

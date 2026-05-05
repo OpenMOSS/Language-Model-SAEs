@@ -143,7 +143,8 @@ export const FeatureCard = ({
   const refreshFeature = useCallback(async () => {
     const refreshedFeature = await fetchFeatureByDictionaryName(
       currentFeature.dictionaryName,
-      currentFeature.featureIndex
+      currentFeature.featureIndex,
+      { forceRefresh: true },
     );
 
     if (!refreshedFeature) {
