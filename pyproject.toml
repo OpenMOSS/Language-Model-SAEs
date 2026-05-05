@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
     "datasets>=3.0.2",
-    "transformers>=4.46.0",
+    "transformers==4.57.1",
     "einops>=0.8.0",
     "fastapi>=0.115.4",
     "matplotlib>=3.9.2",
@@ -43,7 +43,6 @@ dependencies = [
     "kaleido>=0.2.1",
     "ipykernel>=7.1.0",
     "jupyter>=1.1.1",
-    "hf>=1.13.0",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"

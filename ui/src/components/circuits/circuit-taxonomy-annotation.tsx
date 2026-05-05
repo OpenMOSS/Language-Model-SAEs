@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Feature } from "@/types/feature";
-import { FeatureSampleGroup } from "@/components/feature/sample";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { AppPagination } from "@/components/ui/pagination";
+import { ChessBoard } from "@/components/chess/chess-board";
 import {
   Select,
   SelectContent,
@@ -24,8 +25,11 @@ import {
   fetchCircuitTaxonomyDirectories,
   fetchFeatureByDictionaryName,
 } from "@/utils/api";
+import { normalizeZPattern } from "@/utils/activationUtils";
+import { extractFenFromText, validateFen } from "@/utils/fenUtils";
 
 const TAXONOMY_PREFIX_RE = /^\[(Det|Src|Tgt|Val|Cap|Pro|Mov|Tac|Spa|Uninterpretable)\]\s*/;
+const TAXONOMY_TOP_ACTIVATION_PAGE_SIZE = 6;
 
 const getFeatureCacheKey = (featureRef: CircuitTaxonomyFeatureRef) =>
   `${featureRef.dictionary_name}:${featureRef.feature_index}`;
@@ -36,6 +40,136 @@ const extractTaxonomyPrefix = (text?: string | null) => {
   }
   const match = text.match(TAXONOMY_PREFIX_RE);
   return match?.[1] ?? "";
+};
+
+type ChessTopActivationSample = {
+  fen: string;
+  activationStrength: number;
+  activations: number[] | undefined;
+  zPatternIndices?: number[][];
+  zPatternValues?: number[];
+  sampleIndex: number;
+};
+
+const extractChessTopActivationSamples = (
+  sampleGroup: Feature["sampleGroups"][0] | null | undefined,
+): ChessTopActivationSample[] => {
+  if (!sampleGroup) {
+    return [];
+  }
+
+  const chessSamples: ChessTopActivationSample[] = [];
+
+  sampleGroup.samples.forEach((sample, sampleIndex) => {
+      const fen = extractFenFromText(sample.text ?? "");
+      if (!fen || !validateFen(fen)) {
+        return;
+      }
+
+      let activations: number[] | undefined;
+      let activationStrength = 0;
+
+      if (Array.isArray(sample.featureActsIndices) && Array.isArray(sample.featureActsValues)) {
+        activations = new Array(64).fill(0);
+        for (
+          let idx = 0;
+          idx < Math.min(sample.featureActsIndices.length, sample.featureActsValues.length);
+          idx += 1
+        ) {
+          const boardIndex = sample.featureActsIndices[idx];
+          const value = sample.featureActsValues[idx];
+
+          if (boardIndex >= 0 && boardIndex < 64) {
+            activations[boardIndex] = value;
+            if (Math.abs(value) > Math.abs(activationStrength)) {
+              activationStrength = value;
+            }
+          }
+        }
+      }
+
+      chessSamples.push({
+        fen,
+        activationStrength,
+        activations,
+        ...normalizeZPattern(sample.zPatternIndices, sample.zPatternValues),
+        sampleIndex,
+      });
+    });
+
+  return chessSamples.sort((a, b) => Math.abs(b.activationStrength) - Math.abs(a.activationStrength));
+};
+
+const CircuitTaxonomyTopActivationBoards = ({
+  sampleGroup,
+}: {
+  sampleGroup: Feature["sampleGroups"][0];
+}) => {
+  const [page, setPage] = useState(1);
+
+  const chessSamples = useMemo(() => extractChessTopActivationSamples(sampleGroup), [sampleGroup]);
+  const maxPage = Math.max(1, Math.ceil(chessSamples.length / TAXONOMY_TOP_ACTIVATION_PAGE_SIZE));
+  const currentSamples = useMemo(
+    () =>
+      chessSamples.slice(
+        (page - 1) * TAXONOMY_TOP_ACTIVATION_PAGE_SIZE,
+        page * TAXONOMY_TOP_ACTIVATION_PAGE_SIZE,
+      ),
+    [chessSamples, page],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [sampleGroup]);
+
+  if (chessSamples.length === 0) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        No activation samples containing chessboard were found for this feature.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Showing {chessSamples.length} top activation samples as chess boards.
+      </p>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {currentSamples.map((sample, index) => (
+          <div
+            key={`${sample.sampleIndex}-${sample.fen}`}
+            className="rounded-lg border bg-background p-3"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                Sample #{(page - 1) * TAXONOMY_TOP_ACTIVATION_PAGE_SIZE + index + 1}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Max act: {sample.activationStrength.toFixed(3)}
+              </span>
+            </div>
+
+            <ChessBoard
+              fen={sample.fen}
+              size="small"
+              showCoordinates
+              activations={sample.activations}
+              zPatternIndices={sample.zPatternIndices}
+              zPatternValues={sample.zPatternValues}
+              sampleIndex={sample.sampleIndex}
+              analysisName="Taxonomy Top Activation"
+              flip_activation={sample.fen.includes(" b ")}
+              autoFlipWhenBlack
+            />
+          </div>
+        ))}
+      </div>
+
+      {maxPage > 1 && <AppPagination page={page} setPage={setPage} maxPage={maxPage} />}
+    </div>
+  );
 };
 
 export const CircuitTaxonomyAnnotation = () => {
@@ -534,7 +668,7 @@ export const CircuitTaxonomyAnnotation = () => {
             </CardHeader>
             <CardContent>
               {currentFeature && topActivationGroup ? (
-                <FeatureSampleGroup feature={currentFeature} sampleGroup={topActivationGroup} />
+                <CircuitTaxonomyTopActivationBoards sampleGroup={topActivationGroup} />
               ) : (
                 <div className="text-sm text-muted-foreground">
                   {currentFeatureRef ? "Loading top activation samples..." : "Select a feature to inspect samples."}

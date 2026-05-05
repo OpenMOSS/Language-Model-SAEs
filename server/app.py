@@ -71,6 +71,7 @@ import tempfile
 import os
 import time
 import re
+from urllib.parse import unquote
 
 from .umap_utils import compute_decoder_weights_umap_for_name, get_sae_decoder_weights_umap
 
@@ -236,16 +237,23 @@ def _list_circuit_taxonomy_directory_options() -> list[dict[str, str]]:
         root_path = Path(root_cfg["path"]).resolve()
         if not root_path.exists():
             continue
-        for directory in sorted(child for child in root_path.iterdir() if child.is_dir()):
+        candidate_directories = sorted(
+            directory
+            for directory in root_path.rglob("*")
+            if directory.is_dir() and any(path.is_file() for path in directory.glob("*.json"))
+        )
+        for directory in candidate_directories:
             try:
                 relative_path = directory.resolve().relative_to(REPO_ROOT.resolve())
             except ValueError:
                 continue
             file_count = len([path for path in directory.glob("*.json") if path.is_file()])
+            relative_to_root = directory.resolve().relative_to(root_path)
+            relative_to_root_str = str(relative_to_root).replace("\\", "/")
             options.append(
                 {
                     "id": str(relative_path).replace("\\", "/"),
-                    "label": f"{root_cfg['label']} / {directory.name}",
+                    "label": f"{root_cfg['label']} / {relative_to_root_str}",
                     "combo_id": directory.name,
                     "root_id": str(root_cfg["id"]),
                     "file_count": str(file_count),
@@ -255,10 +263,20 @@ def _list_circuit_taxonomy_directory_options() -> list[dict[str, str]]:
 
 
 def _resolve_circuit_taxonomy_directory(directory_id: str) -> Path:
-    normalized = directory_id.strip().replace("\\", "/")
+    normalized = unquote(directory_id).strip().replace("\\", "/")
     for option in _list_circuit_taxonomy_directory_options():
         if option["id"] == normalized:
             return (REPO_ROOT / option["id"]).resolve()
+
+    candidate = (REPO_ROOT / normalized).resolve()
+    if candidate.is_dir() and any(path.is_file() for path in candidate.glob("*.json")):
+        for root_cfg in CIRCUIT_TAXONOMY_ROOTS:
+            root_path = Path(root_cfg["path"]).resolve()
+            try:
+                candidate.relative_to(root_path)
+            except ValueError:
+                continue
+            return candidate
     raise HTTPException(status_code=404, detail=f"Unknown circuit taxonomy directory: {directory_id}")
 
 
