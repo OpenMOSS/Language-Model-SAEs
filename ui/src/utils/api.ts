@@ -279,9 +279,18 @@ export interface CircuitTaxonomyCircuitDetail {
   circuit_index: number;
   total_circuits: number;
   total_features: number;
+  first_unannotated_feature_index: number | null;
   features: CircuitTaxonomyFeatureRef[];
   graph_data: Record<string, unknown>;
   metadata: Record<string, unknown>;
+}
+
+export interface CircuitTaxonomyResumeTarget {
+  directory_id: string;
+  completed: boolean;
+  file_name: string | null;
+  circuit_index: number | null;
+  feature_index: number | null;
 }
 
 export interface CircuitTaxonomyAnnotateResponse {
@@ -349,6 +358,27 @@ export const fetchCircuitTaxonomyCircuit = async (
 
   pendingCircuitTaxonomyCircuitRequests.set(cacheKey, request);
   return request;
+};
+
+export const fetchCircuitTaxonomyResumeTarget = async (
+  directoryId: string,
+  fileName?: string,
+  startFeatureIndex?: number,
+): Promise<CircuitTaxonomyResumeTarget> => {
+  const params = new URLSearchParams();
+  params.set("directory_id", directoryId);
+  if (fileName) {
+    params.set("file_name", fileName);
+  }
+  if (startFeatureIndex !== undefined) {
+    params.set("start_feature_index", String(startFeatureIndex));
+  }
+
+  const response = await fetch(`${API_BASE}/circuit_taxonomy/resume?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
 };
 
 export const annotateCircuitTaxonomyFeature = async (

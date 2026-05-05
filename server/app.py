@@ -366,6 +366,46 @@ def _apply_circuit_taxonomy_prefix(text: str | None, taxonomy: str) -> str:
     return f"[{taxonomy}] {cleaned}".strip()
 
 
+def _get_circuit_taxonomy_feature_text(dictionary_name: str, feature_index: int) -> str:
+    feature_doc = client.feature_collection.find_one(
+        {
+            "sae_name": dictionary_name,
+            "sae_series": sae_series,
+            "index": feature_index,
+        },
+        {
+            "interpretation.text": 1,
+        },
+    )
+    if not feature_doc:
+        return ""
+
+    interpretation = feature_doc.get("interpretation")
+    if not isinstance(interpretation, dict):
+        return ""
+
+    return str(interpretation.get("text", "") or "")
+
+
+def _find_first_unannotated_circuit_taxonomy_feature_index(
+    features: list[dict[str, Any]],
+    start_index: int = 0,
+) -> int | None:
+    for feature_index in range(max(start_index, 0), len(features)):
+        feature = features[feature_index]
+        interpretation_text = _get_circuit_taxonomy_feature_text(
+            str(feature.get("dictionary_name", "")).strip(),
+            int(feature.get("feature_index", -1)),
+        )
+        if not _extract_circuit_taxonomy_prefix(interpretation_text):
+            return feature_index
+    return None
+
+
+def _list_circuit_taxonomy_files(directory: Path) -> list[Path]:
+    return sorted(path for path in directory.glob("*.json") if path.is_file())
+
+
 @app.get("/circuit_taxonomy/directories")
 def list_circuit_taxonomy_directories():
     return {
@@ -384,36 +424,18 @@ def list_circuit_taxonomy_directories():
 def list_circuit_taxonomy_circuits(directory_id: str):
     directory = _resolve_circuit_taxonomy_directory(directory_id)
     circuits: list[dict[str, Any]] = []
-    for index, path in enumerate(sorted(p for p in directory.glob("*.json") if p.is_file())):
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            metadata = payload.get("metadata", {}) or {}
-            feature_count = len(_parse_circuit_taxonomy_features(payload))
-            circuits.append(
-                {
-                    "file_name": path.name,
-                    "index": index,
-                    "prompt": metadata.get("prompt"),
-                    "target_move": metadata.get("target_move"),
-                    "predicted_move_uci": metadata.get("predicted_move_uci"),
-                    "slug": metadata.get("slug"),
-                    "feature_count": feature_count,
-                }
-            )
-        except Exception as exc:
-            circuits.append(
-                {
-                    "file_name": path.name,
-                    "index": index,
-                    "prompt": None,
-                    "target_move": None,
-                    "predicted_move_uci": None,
-                    "slug": None,
-                    "feature_count": 0,
-                    "error": str(exc),
-                }
-            )
+    for index, path in enumerate(_list_circuit_taxonomy_files(directory)):
+        circuits.append(
+            {
+                "file_name": path.name,
+                "index": index,
+                "prompt": None,
+                "target_move": None,
+                "predicted_move_uci": None,
+                "slug": None,
+                "feature_count": 0,
+            }
+        )
     return {"directory_id": directory_id, "circuits": circuits, "total_circuits": len(circuits)}
 
 
@@ -424,20 +446,74 @@ def get_circuit_taxonomy_circuit(directory_id: str, file_name: str):
     if path.parent != directory or not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail=f"Circuit file not found: {file_name}")
 
-    files = sorted(p.name for p in directory.glob("*.json") if p.is_file())
+    files = [path.name for path in _list_circuit_taxonomy_files(directory)]
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
 
     features = _parse_circuit_taxonomy_features(payload)
+    first_unannotated_feature_index = _find_first_unannotated_circuit_taxonomy_feature_index(features)
     return {
         "directory_id": directory_id,
         "file_name": file_name,
         "circuit_index": files.index(file_name),
         "total_circuits": len(files),
         "total_features": len(features),
+        "first_unannotated_feature_index": first_unannotated_feature_index,
         "features": features,
         "graph_data": payload,
         "metadata": payload.get("metadata", {}) or {},
+    }
+
+
+@app.get("/circuit_taxonomy/resume")
+def get_circuit_taxonomy_resume_target(
+    directory_id: str,
+    file_name: str | None = None,
+    start_feature_index: int = 0,
+):
+    directory = _resolve_circuit_taxonomy_directory(directory_id)
+    files = _list_circuit_taxonomy_files(directory)
+
+    if not files:
+        return {
+            "directory_id": directory_id,
+            "completed": True,
+            "file_name": None,
+            "circuit_index": None,
+            "feature_index": None,
+        }
+
+    file_names = [path.name for path in files]
+    start_circuit_index = 0
+    if file_name:
+        if file_name not in file_names:
+            raise HTTPException(status_code=404, detail=f"Circuit file not found: {file_name}")
+        start_circuit_index = file_names.index(file_name)
+
+    for circuit_index in range(start_circuit_index, len(files)):
+        path = files[circuit_index]
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        features = _parse_circuit_taxonomy_features(payload)
+        feature_index = _find_first_unannotated_circuit_taxonomy_feature_index(
+            features,
+            start_feature_index if circuit_index == start_circuit_index else 0,
+        )
+        if feature_index is not None:
+            return {
+                "directory_id": directory_id,
+                "completed": False,
+                "file_name": path.name,
+                "circuit_index": circuit_index,
+                "feature_index": feature_index,
+            }
+
+    return {
+        "directory_id": directory_id,
+        "completed": True,
+        "file_name": file_names[-1],
+        "circuit_index": len(file_names) - 1,
+        "feature_index": None,
     }
 
 

@@ -23,6 +23,7 @@ import {
   fetchCircuitTaxonomyCircuit,
   fetchCircuitTaxonomyCircuits,
   fetchCircuitTaxonomyDirectories,
+  fetchCircuitTaxonomyResumeTarget,
   fetchFeatureByDictionaryName,
 } from "@/utils/api";
 import { normalizeZPattern } from "@/utils/activationUtils";
@@ -172,9 +173,9 @@ const CircuitTaxonomyTopActivationBoards = ({
   );
 };
 
-type CircuitTaxonomyResumeTarget = {
-  detail: CircuitTaxonomyCircuitDetail;
-  featureIndex: number;
+type EnsureFeatureLoadOptions = {
+  syncState?: boolean;
+  forceRefresh?: boolean;
 };
 
 export const CircuitTaxonomyAnnotation = () => {
@@ -194,7 +195,9 @@ export const CircuitTaxonomyAnnotation = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const featureCacheRef = useRef<Record<string, Feature>>({});
   const pendingFeatureLoads = useRef<Map<string, Promise<Feature | null>>>(new Map());
+  const pendingResumeFeatureIndexRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -239,6 +242,7 @@ export const CircuitTaxonomyAnnotation = () => {
       setError(null);
       setCircuitDetail(null);
       setFeatureCache({});
+      featureCacheRef.current = {};
       setSelectedCircuitFile("");
       setCurrentFeatureIndex(0);
       try {
@@ -248,7 +252,16 @@ export const CircuitTaxonomyAnnotation = () => {
         }
         setCircuits(response.circuits);
         if (response.circuits.length > 0) {
-          setSelectedCircuitFile(response.circuits[0].file_name);
+          const resumeTarget = await fetchCircuitTaxonomyResumeTarget(selectedDirectoryId);
+          if (cancelled) {
+            return;
+          }
+          const resumedFileName =
+            !resumeTarget.completed && resumeTarget.file_name
+              ? resumeTarget.file_name
+              : response.circuits[0].file_name;
+          pendingResumeFeatureIndexRef.current = resumeTarget.feature_index ?? null;
+          setSelectedCircuitFile(resumedFileName);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -268,106 +281,83 @@ export const CircuitTaxonomyAnnotation = () => {
     };
   }, [selectedDirectoryId]);
 
-  const currentFeatureRef = useMemo(
-    () => circuitDetail?.features[currentFeatureIndex] ?? null,
-    [circuitDetail, currentFeatureIndex],
+  const currentFeatureRef = useMemo(() => circuitDetail?.features[currentFeatureIndex] ?? null, [circuitDetail, currentFeatureIndex]);
+
+  const storeFeatureInCache = useCallback(
+    (
+      featureRef: CircuitTaxonomyCircuitDetail["features"][number],
+      feature: Feature,
+      options: EnsureFeatureLoadOptions = {},
+    ) => {
+      const cacheKey = getFeatureCacheKey(featureRef);
+      featureCacheRef.current = {
+        ...featureCacheRef.current,
+        [cacheKey]: feature,
+      };
+
+      if (options.syncState !== false) {
+        setFeatureCache((prev) => ({
+          ...prev,
+          [cacheKey]: feature,
+        }));
+      }
+    },
+    [],
   );
 
-  const ensureFeatureLoaded = useCallback(async (featureRef: CircuitTaxonomyFeatureRef | null) => {
-    if (!featureRef) {
-      return null;
-    }
-    const cacheKey = getFeatureCacheKey(featureRef);
-    if (featureCache[cacheKey]) {
-      return featureCache[cacheKey];
-    }
-    if (pendingFeatureLoads.current.has(cacheKey)) {
-      return pendingFeatureLoads.current.get(cacheKey) ?? null;
-    }
+  const ensureFeatureLoaded = useCallback(
+    async (
+      featureRef: CircuitTaxonomyCircuitDetail["features"][number] | null,
+      options: EnsureFeatureLoadOptions = {},
+    ) => {
+      if (!featureRef) {
+        return null;
+      }
 
-    const request = fetchFeatureByDictionaryName(featureRef.dictionary_name, featureRef.feature_index)
-      .then((feature) => {
-        if (feature) {
+      const cacheKey = getFeatureCacheKey(featureRef);
+      const cachedFeature = featureCacheRef.current[cacheKey];
+      if (cachedFeature && !options.forceRefresh) {
+        if (options.syncState !== false) {
           setFeatureCache((prev) => ({
             ...prev,
-            [cacheKey]: feature,
+            ...(prev[cacheKey] ? {} : { [cacheKey]: cachedFeature }),
           }));
         }
-        return feature;
-      })
-      .finally(() => {
-        pendingFeatureLoads.current.delete(cacheKey);
-      });
+        return cachedFeature;
+      }
 
-    pendingFeatureLoads.current.set(cacheKey, request);
-    return request;
-  }, [featureCache]);
+      if (!options.forceRefresh && pendingFeatureLoads.current.has(cacheKey)) {
+        return pendingFeatureLoads.current.get(cacheKey) ?? null;
+      }
+
+      const request = fetchFeatureByDictionaryName(
+        featureRef.dictionary_name,
+        featureRef.feature_index,
+        { forceRefresh: options.forceRefresh },
+      )
+        .then((feature) => {
+          if (feature) {
+            storeFeatureInCache(featureRef, feature, options);
+          }
+          return feature;
+        })
+        .finally(() => {
+          pendingFeatureLoads.current.delete(cacheKey);
+        });
+
+      pendingFeatureLoads.current.set(cacheKey, request);
+      return request;
+    },
+    [storeFeatureInCache],
+  );
 
   const refreshFeature = useCallback(async (featureRef: CircuitTaxonomyFeatureRef | null) => {
     if (!featureRef) {
       return null;
     }
-    const refreshed = await fetchFeatureByDictionaryName(
-      featureRef.dictionary_name,
-      featureRef.feature_index,
-      { forceRefresh: true },
-    );
-    if (refreshed) {
-      setFeatureCache((prev) => ({
-        ...prev,
-        [getFeatureCacheKey(featureRef)]: refreshed,
-      }));
-    }
+    const refreshed = await ensureFeatureLoaded(featureRef, { forceRefresh: true });
     return refreshed;
-  }, []);
-
-  const findFirstUnannotatedFeatureIndex = useCallback(
-    async (
-      detail: CircuitTaxonomyCircuitDetail,
-      startFeatureIndex: number = 0,
-    ): Promise<number | null> => {
-      for (let featureIndex = startFeatureIndex; featureIndex < detail.features.length; featureIndex += 1) {
-        const feature = await ensureFeatureLoaded(detail.features[featureIndex]);
-        if (!extractTaxonomyPrefix(feature?.interpretation?.text)) {
-          return featureIndex;
-        }
-      }
-      return null;
-    },
-    [ensureFeatureLoaded],
-  );
-
-  const findNextResumeTarget = useCallback(
-    async (
-      startCircuitIndex: number,
-      startFeatureIndex: number,
-      initialDetail?: CircuitTaxonomyCircuitDetail,
-    ): Promise<CircuitTaxonomyResumeTarget | null> => {
-      if (!selectedDirectoryId) {
-        return null;
-      }
-
-      for (let circuitIndex = startCircuitIndex; circuitIndex < circuits.length; circuitIndex += 1) {
-        const circuit = circuits[circuitIndex];
-        const detail =
-          initialDetail && circuit.file_name === initialDetail.file_name
-            ? initialDetail
-            : await fetchCircuitTaxonomyCircuit(selectedDirectoryId, circuit.file_name);
-
-        const featureIndex = await findFirstUnannotatedFeatureIndex(
-          detail,
-          circuitIndex === startCircuitIndex ? startFeatureIndex : 0,
-        );
-
-        if (featureIndex !== null) {
-          return { detail, featureIndex };
-        }
-      }
-
-      return null;
-    },
-    [circuits, findFirstUnannotatedFeatureIndex, selectedDirectoryId],
-  );
+  }, [ensureFeatureLoaded]);
 
   useEffect(() => {
     if (!selectedDirectoryId || !selectedCircuitFile) {
@@ -378,35 +368,33 @@ export const CircuitTaxonomyAnnotation = () => {
     const loadCircuitDetail = async () => {
       setLoadingCircuitDetail(true);
       setError(null);
-      setCircuitDetail(null);
-      setFeatureCache({});
-      setCurrentFeatureIndex(0);
       try {
         const detail = await fetchCircuitTaxonomyCircuit(selectedDirectoryId, selectedCircuitFile);
         if (cancelled) {
           return;
         }
 
-        const circuitIndex = circuits.findIndex((item) => item.file_name === selectedCircuitFile);
-        const resumeTarget =
-          circuitIndex >= 0
-            ? await findNextResumeTarget(circuitIndex, 0, detail)
-            : null;
+        const targetFeatureIndex = Math.min(
+          Math.max(
+            pendingResumeFeatureIndexRef.current
+              ?? detail.first_unannotated_feature_index
+              ?? 0,
+            0,
+          ),
+          Math.max(detail.total_features - 1, 0),
+        );
+        pendingResumeFeatureIndexRef.current = null;
+        const targetFeatureRef = detail.features[targetFeatureIndex] ?? null;
+
+        await ensureFeatureLoaded(targetFeatureRef);
 
         if (cancelled) {
           return;
         }
 
-        const targetDetail = resumeTarget?.detail ?? detail;
-        const targetFeatureIndex = resumeTarget?.featureIndex ?? 0;
-
-        setCircuitDetail(targetDetail);
+        setCircuitDetail(detail);
         setCurrentFeatureIndex(targetFeatureIndex);
-        setClickedId(targetDetail.features[targetFeatureIndex]?.node_id ?? null);
-
-        if (resumeTarget && resumeTarget.detail.file_name !== selectedCircuitFile) {
-          setSelectedCircuitFile(resumeTarget.detail.file_name);
-        }
+        setClickedId(targetFeatureRef?.node_id ?? null);
       } catch (loadError) {
         if (!cancelled) {
           setError(loadError instanceof Error ? loadError.message : "Failed to load circuit detail");
@@ -422,7 +410,7 @@ export const CircuitTaxonomyAnnotation = () => {
     return () => {
       cancelled = true;
     };
-  }, [circuits, findNextResumeTarget, selectedDirectoryId, selectedCircuitFile]);
+  }, [ensureFeatureLoaded, selectedDirectoryId, selectedCircuitFile]);
 
   useEffect(() => {
     const prefetch = async () => {
@@ -477,25 +465,27 @@ export const CircuitTaxonomyAnnotation = () => {
   }, [circuitDetail]);
 
   const goToNextFeature = useCallback(async () => {
-    if (!circuitDetail) {
+    if (!circuitDetail || !selectedDirectoryId || !selectedCircuitFile) {
+      return;
+    }
+    const resumeTarget = await fetchCircuitTaxonomyResumeTarget(
+      selectedDirectoryId,
+      selectedCircuitFile,
+      currentFeatureIndex + 1,
+    );
+    if (resumeTarget.completed || resumeTarget.file_name === null || resumeTarget.feature_index === null) {
       return;
     }
 
-    const resumeTarget = await findNextResumeTarget(
-      circuitDetail.circuit_index,
-      currentFeatureIndex + 1,
-      circuitDetail,
-    );
-
-    if (resumeTarget) {
-      setCircuitDetail(resumeTarget.detail);
-      setCurrentFeatureIndex(resumeTarget.featureIndex);
-      setClickedId(resumeTarget.detail.features[resumeTarget.featureIndex]?.node_id ?? null);
-      if (resumeTarget.detail.file_name !== selectedCircuitFile) {
-        setSelectedCircuitFile(resumeTarget.detail.file_name);
-      }
+    if (resumeTarget.file_name === selectedCircuitFile && circuitDetail.file_name === selectedCircuitFile) {
+      setCurrentFeatureIndex(resumeTarget.feature_index);
+      setClickedId(circuitDetail.features[resumeTarget.feature_index]?.node_id ?? null);
+      return;
     }
-  }, [circuitDetail, currentFeatureIndex, findNextResumeTarget, selectedCircuitFile]);
+
+    pendingResumeFeatureIndexRef.current = resumeTarget.feature_index;
+    setSelectedCircuitFile(resumeTarget.file_name);
+  }, [circuitDetail, currentFeatureIndex, selectedCircuitFile, selectedDirectoryId]);
 
   const handleGraphFeatureSelect = useCallback((feature: Feature | null) => {
     if (!feature || !circuitDetail) {
