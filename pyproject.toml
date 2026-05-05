@@ -43,6 +43,7 @@ dependencies = [
     "kaleido>=0.2.1",
     "ipykernel>=7.1.0",
     "jupyter>=1.1.1",
+    "hf>=1.13.0",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"

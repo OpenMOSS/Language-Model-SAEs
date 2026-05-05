@@ -145,6 +145,15 @@ export const AppNavbar = () => {
           >
             Interaction Circuit
           </Link>
+          <Link
+            className={cn(
+              "transition-colors hover:text-foreground/80 text-foreground/60",
+              location.pathname === "/circuit-taxonomy" && "text-foreground"
+            )}
+            to="/circuit-taxonomy"
+          >
+            Circuit Taxonomy
+          </Link>
         </div>
       </div>
     </nav>

@@ -22,6 +22,7 @@ import { FunctionalMicrocircuitPage } from "./routes/functional-microcircuit/pag
 import { PositionFeaturePage } from "./routes/position-feature/page";
 import { FeatureInteractionPage } from "./routes/feature-interaction/page";
 import { InteractionCircuitPage } from "./routes/interaction-circuit/page";
+import { CircuitTaxonomyPage } from "./routes/circuit-taxonomy/page";
 
 
 const router = createBrowserRouter([
@@ -92,6 +93,10 @@ const router = createBrowserRouter([
   {
     path: "/interaction-circuit",
     element: <InteractionCircuitPage />,
+  },
+  {
+    path: "/circuit-taxonomy",
+    element: <CircuitTaxonomyPage />,
   },
   {
     path: "/",

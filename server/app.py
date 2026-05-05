@@ -70,6 +70,7 @@ import json
 import tempfile
 import os
 import time
+import re
 
 from .umap_utils import compute_decoder_weights_umap_for_name, get_sae_decoder_weights_umap
 
@@ -129,6 +130,29 @@ if CIRCUITS_DIR.exists():
     app.mount("/circuits", StaticFiles(directory=str(CIRCUITS_DIR)), name="circuits")
 
 SEARCH_TRACE_OUTPUT_DIR = Path("search_trace_outputs")
+
+CIRCUIT_TAXONOMY_ROOTS = [
+    {
+        "id": "random_data_results_4096",
+        "label": "Random Data Results 4096",
+        "path": REPO_ROOT / "exp" / "60ICLR" / "circuits" / "random_data" / "results" / "results_4096",
+    },
+]
+CIRCUIT_TAXONOMY_LABELS = [
+    "Det",
+    "Src",
+    "Tgt",
+    "Val",
+    "Cap",
+    "Pro",
+    "Mov",
+    "Tac",
+    "Spa",
+    "Uninterpretable",
+]
+_CIRCUIT_TAXONOMY_PREFIX_RE = re.compile(
+    r"^\[(%s)\]\s*" % "|".join(re.escape(label) for label in CIRCUIT_TAXONOMY_LABELS)
+)
 
 client = MongoClient(MongoDBConfig())
 sae_series = os.environ.get("SAE_SERIES", "default")
@@ -204,6 +228,276 @@ def get_sae(name: str) -> SparseAutoEncoder:
     sae = SparseAutoEncoder.from_config(cfg)
     sae.eval()
     return sae
+
+
+def _list_circuit_taxonomy_directory_options() -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    for root_cfg in CIRCUIT_TAXONOMY_ROOTS:
+        root_path = Path(root_cfg["path"]).resolve()
+        if not root_path.exists():
+            continue
+        for directory in sorted(child for child in root_path.iterdir() if child.is_dir()):
+            try:
+                relative_path = directory.resolve().relative_to(REPO_ROOT.resolve())
+            except ValueError:
+                continue
+            file_count = len([path for path in directory.glob("*.json") if path.is_file()])
+            options.append(
+                {
+                    "id": str(relative_path).replace("\\", "/"),
+                    "label": f"{root_cfg['label']} / {directory.name}",
+                    "combo_id": directory.name,
+                    "root_id": str(root_cfg["id"]),
+                    "file_count": str(file_count),
+                }
+            )
+    return options
+
+
+def _resolve_circuit_taxonomy_directory(directory_id: str) -> Path:
+    normalized = directory_id.strip().replace("\\", "/")
+    for option in _list_circuit_taxonomy_directory_options():
+        if option["id"] == normalized:
+            return (REPO_ROOT / option["id"]).resolve()
+    raise HTTPException(status_code=404, detail=f"Unknown circuit taxonomy directory: {directory_id}")
+
+
+def _build_bt4_dictionary_name_from_analysis(
+    analysis_name: str | None,
+    layer_idx: int,
+    feature_type: str,
+) -> str:
+    normalized_type = "lorsa" if feature_type == "lorsa" else "tc"
+    component_suffix = "A" if normalized_type == "lorsa" else "M"
+    default_combo_suffix = "k30_e16"
+
+    match = re.match(r"^BT4_(tc|lorsa)(?:_(k\d+_e\d+))?$", analysis_name or "")
+    if match and match.group(1) == normalized_type:
+        combo_suffix = match.group(2) or default_combo_suffix
+        return f"BT4_{normalized_type}_L{layer_idx}{component_suffix}_{combo_suffix}"
+
+    return f"BT4_{normalized_type}_L{layer_idx}{component_suffix}_{default_combo_suffix}"
+
+
+def _parse_circuit_taxonomy_features(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metadata = payload.get("metadata", {}) or {}
+    raw_features: dict[tuple[int, str, int], dict[str, Any]] = {}
+
+    for node in payload.get("nodes", []):
+        feature_type = str(node.get("feature_type", "")).strip().lower()
+        if feature_type not in {"lorsa", "cross layer transcoder"}:
+            continue
+
+        node_id = str(node.get("node_id", ""))
+        parts = node_id.split("_")
+        if len(parts) < 2:
+            continue
+
+        try:
+            raw_layer = int(parts[0])
+            feature_index = int(parts[1])
+        except ValueError:
+            continue
+
+        layer_idx = raw_layer // 2
+        dictionary_name = _build_bt4_dictionary_name_from_analysis(
+            metadata.get("lorsa_analysis_name") if feature_type == "lorsa" else (metadata.get("tc_analysis_name") or metadata.get("clt_analysis_name")),
+            layer_idx,
+            feature_type,
+        )
+        normalized_type = "lorsa" if feature_type == "lorsa" else "transcoder"
+        key = (layer_idx, normalized_type, feature_index)
+
+        if key in raw_features:
+            continue
+
+        raw_features[key] = {
+            "node_id": node_id,
+            "layer": layer_idx,
+            "feature_index": feature_index,
+            "feature_type": normalized_type,
+            "dictionary_name": dictionary_name,
+            "ctx_idx": node.get("ctx_idx"),
+            "label": f"L{layer_idx} {normalized_type} #{feature_index}",
+        }
+
+    return sorted(
+        raw_features.values(),
+        key=lambda item: (
+            int(item["layer"]),
+            0 if item["feature_type"] == "lorsa" else 1,
+            int(item["feature_index"]),
+        ),
+    )
+
+
+def _extract_circuit_taxonomy_prefix(text: str | None) -> str | None:
+    if not text:
+        return None
+    match = _CIRCUIT_TAXONOMY_PREFIX_RE.match(text)
+    return match.group(1) if match else None
+
+
+def _apply_circuit_taxonomy_prefix(text: str | None, taxonomy: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return f"[{taxonomy}]"
+    if _CIRCUIT_TAXONOMY_PREFIX_RE.match(cleaned):
+        return _CIRCUIT_TAXONOMY_PREFIX_RE.sub(f"[{taxonomy}] ", cleaned, count=1).strip()
+    return f"[{taxonomy}] {cleaned}".strip()
+
+
+@app.get("/circuit_taxonomy/directories")
+def list_circuit_taxonomy_directories():
+    return {
+        "directories": [
+            {
+                **option,
+                "file_count": int(option["file_count"]),
+            }
+            for option in _list_circuit_taxonomy_directory_options()
+        ],
+        "taxonomy_labels": CIRCUIT_TAXONOMY_LABELS,
+    }
+
+
+@app.get("/circuit_taxonomy/circuits")
+def list_circuit_taxonomy_circuits(directory_id: str):
+    directory = _resolve_circuit_taxonomy_directory(directory_id)
+    circuits: list[dict[str, Any]] = []
+    for index, path in enumerate(sorted(p for p in directory.glob("*.json") if p.is_file())):
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            metadata = payload.get("metadata", {}) or {}
+            feature_count = len(_parse_circuit_taxonomy_features(payload))
+            circuits.append(
+                {
+                    "file_name": path.name,
+                    "index": index,
+                    "prompt": metadata.get("prompt"),
+                    "target_move": metadata.get("target_move"),
+                    "predicted_move_uci": metadata.get("predicted_move_uci"),
+                    "slug": metadata.get("slug"),
+                    "feature_count": feature_count,
+                }
+            )
+        except Exception as exc:
+            circuits.append(
+                {
+                    "file_name": path.name,
+                    "index": index,
+                    "prompt": None,
+                    "target_move": None,
+                    "predicted_move_uci": None,
+                    "slug": None,
+                    "feature_count": 0,
+                    "error": str(exc),
+                }
+            )
+    return {"directory_id": directory_id, "circuits": circuits, "total_circuits": len(circuits)}
+
+
+@app.get("/circuit_taxonomy/circuit")
+def get_circuit_taxonomy_circuit(directory_id: str, file_name: str):
+    directory = _resolve_circuit_taxonomy_directory(directory_id)
+    path = (directory / file_name).resolve()
+    if path.parent != directory or not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Circuit file not found: {file_name}")
+
+    files = sorted(p.name for p in directory.glob("*.json") if p.is_file())
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    features = _parse_circuit_taxonomy_features(payload)
+    return {
+        "directory_id": directory_id,
+        "file_name": file_name,
+        "circuit_index": files.index(file_name),
+        "total_circuits": len(files),
+        "total_features": len(features),
+        "features": features,
+        "graph_data": payload,
+        "metadata": payload.get("metadata", {}) or {},
+    }
+
+
+@app.post("/circuit_taxonomy/annotate")
+def annotate_circuit_taxonomy_feature(request: dict):
+    dictionary_name = str(request.get("dictionary_name", "")).strip()
+    taxonomy = str(request.get("taxonomy", "")).strip()
+    overwrite = bool(request.get("overwrite", False))
+
+    try:
+        feature_index = int(request.get("feature_index"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="feature_index must be an integer")
+
+    if taxonomy not in CIRCUIT_TAXONOMY_LABELS:
+        raise HTTPException(status_code=400, detail=f"Unsupported taxonomy label: {taxonomy}")
+    if not dictionary_name:
+        raise HTTPException(status_code=400, detail="dictionary_name is required")
+
+    feature = client.get_feature(
+        sae_name=dictionary_name,
+        sae_series=sae_series,
+        index=feature_index,
+    )
+    if feature is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Feature {feature_index} not found in SAE {dictionary_name}",
+        )
+
+    existing_interpretation = feature.interpretation if isinstance(feature.interpretation, dict) else None
+    existing_text = ""
+    if existing_interpretation is not None:
+        existing_text = str(existing_interpretation.get("text", "") or "")
+    existing_prefix = _extract_circuit_taxonomy_prefix(existing_text)
+
+    if existing_prefix == taxonomy:
+        return {
+            "status": "unchanged",
+            "taxonomy": taxonomy,
+            "existing_taxonomy": existing_prefix,
+            "interpretation": existing_interpretation,
+        }
+
+    if existing_prefix and existing_prefix != taxonomy and not overwrite:
+        return {
+            "status": "conflict",
+            "taxonomy": taxonomy,
+            "existing_taxonomy": existing_prefix,
+            "existing_text": existing_text,
+            "proposed_text": _apply_circuit_taxonomy_prefix(existing_text, taxonomy),
+        }
+
+    new_text = _apply_circuit_taxonomy_prefix(existing_text, taxonomy)
+    updated_interpretation = dict(existing_interpretation or {})
+    updated_interpretation["text"] = new_text
+    updated_interpretation["method"] = updated_interpretation.get("method") or "taxonomy_label"
+    updated_interpretation["validation"] = updated_interpretation.get("validation") or []
+
+    try:
+        client.update_feature(
+            sae_name=dictionary_name,
+            sae_series=sae_series,
+            feature_index=feature_index,
+            update_data={"interpretation": updated_interpretation},
+        )
+    except Exception as update_error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save taxonomy interpretation: {str(update_error)}",
+        )
+
+    return {
+        "status": "updated",
+        "taxonomy": taxonomy,
+        "existing_taxonomy": existing_prefix,
+        "interpretation": updated_interpretation,
+        "overwritten": existing_prefix is not None and existing_prefix != taxonomy,
+    }
 
 
 ###############################################################################

@@ -221,6 +221,117 @@ export const addFeatureToCircuit = async (
   }
 };
 
+export interface CircuitTaxonomyDirectoryOption {
+  id: string;
+  label: string;
+  combo_id: string;
+  root_id: string;
+  file_count: number;
+}
+
+export interface CircuitTaxonomyCircuitSummary {
+  file_name: string;
+  index: number;
+  prompt: string | null;
+  target_move: string | null;
+  predicted_move_uci: string | null;
+  slug: string | null;
+  feature_count: number;
+  error?: string;
+}
+
+export interface CircuitTaxonomyFeatureRef {
+  node_id: string;
+  layer: number;
+  feature_index: number;
+  feature_type: "lorsa" | "transcoder";
+  dictionary_name: string;
+  ctx_idx: number | null;
+  label: string;
+}
+
+export interface CircuitTaxonomyCircuitDetail {
+  directory_id: string;
+  file_name: string;
+  circuit_index: number;
+  total_circuits: number;
+  total_features: number;
+  features: CircuitTaxonomyFeatureRef[];
+  graph_data: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}
+
+export interface CircuitTaxonomyAnnotateResponse {
+  status: "unchanged" | "conflict" | "updated";
+  taxonomy: string;
+  existing_taxonomy?: string | null;
+  existing_text?: string;
+  proposed_text?: string;
+  overwritten?: boolean;
+  interpretation?: Record<string, unknown> | null;
+}
+
+export const fetchCircuitTaxonomyDirectories = async (): Promise<{
+  directories: CircuitTaxonomyDirectoryOption[];
+  taxonomy_labels: string[];
+}> => {
+  const response = await fetch(`${API_BASE}/circuit_taxonomy/directories`);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+};
+
+export const fetchCircuitTaxonomyCircuits = async (
+  directoryId: string,
+): Promise<{ directory_id: string; circuits: CircuitTaxonomyCircuitSummary[]; total_circuits: number }> => {
+  const response = await fetch(
+    `${API_BASE}/circuit_taxonomy/circuits?directory_id=${encodeURIComponent(directoryId)}`,
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+};
+
+export const fetchCircuitTaxonomyCircuit = async (
+  directoryId: string,
+  fileName: string,
+): Promise<CircuitTaxonomyCircuitDetail> => {
+  const response = await fetch(
+    `${API_BASE}/circuit_taxonomy/circuit?directory_id=${encodeURIComponent(directoryId)}&file_name=${encodeURIComponent(fileName)}`,
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+};
+
+export const annotateCircuitTaxonomyFeature = async (
+  dictionaryName: string,
+  featureIndex: number,
+  taxonomy: string,
+  overwrite: boolean = false,
+): Promise<CircuitTaxonomyAnnotateResponse> => {
+  const response = await fetch(`${API_BASE}/circuit_taxonomy/annotate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      dictionary_name: dictionaryName,
+      feature_index: featureIndex,
+      taxonomy,
+      overwrite,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+};
+
 export const removeFeatureFromCircuit = async (
   circuitId: string,
   saeName: string,
