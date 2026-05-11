@@ -183,6 +183,9 @@ class Initializer:
             device_mesh=device_mesh,
         )
 
+        if cfg.sae_pretrained_name_or_path is not None:
+            return sae
+
         sae = self.initialize_parameters(sae)
         if sae.cfg.norm_activation == "dataset-wise":
             if activation_norm is None:

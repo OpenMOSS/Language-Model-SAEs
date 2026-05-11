@@ -132,6 +132,12 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
     top_k: int = 50
     """The k value to use for the topk family of activation functions. For vanilla TopK, the L0 norm of the feature activations will be exactly equal to `top_k`."""
 
+    sae_pretrained_name_or_path: str | None = None
+    """Optional pretrained SAE path or identifier used to restore model weights."""
+
+    strict_loading: bool = True
+    """Whether to strictly enforce an exact state_dict key match when loading pretrained weights."""
+
     use_triton_kernel: bool = False
     """Whether to use the Triton SpMM kernel for the sparse matrix multiplication. Currently only supported for vanilla SAE."""
 
@@ -148,7 +154,7 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
         return d_sae
 
     @classmethod
-    def from_pretrained(cls, pretrained_name_or_path: str, **kwargs):
+    def from_pretrained(cls, pretrained_name_or_path: str, strict_loading: bool = True, **kwargs):
         """Load the config of the sparse dictionary from a pretrained name or path. Config is read from <pretrained_name_or_path>/config.json (for local storage) or <repo_id>/<name>/config.json (for HuggingFace Hub).
 
         Args:
@@ -171,6 +177,9 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
         with open(path, "r") as f:
             sae_config = json.load(f)
 
+        sae_config["sae_pretrained_name_or_path"] = pretrained_name_or_path
+        sae_config["strict_loading"] = strict_loading
+
         if cls is SparseDictionaryConfig:
             cls = SAE_TYPE_TO_CONFIG_CLASS[sae_config["sae_type"]]
 
@@ -179,6 +188,9 @@ class SparseDictionaryConfig(BaseModelConfig, ABC):
     def save_hyperparameters(self, sae_path: str | Path, remove_loading_info: bool = True):
         assert os.path.exists(sae_path), f"{sae_path} does not exist. Unable to save hyperparameters."
         d = self.model_dump()
+        if remove_loading_info:
+            d.pop("sae_pretrained_name_or_path", None)
+            d.pop("strict_loading", None)
 
         with open(os.path.join(sae_path, "config.json"), "w") as f:
             json.dump(d, f, indent=4)
@@ -517,6 +529,16 @@ class SparseDictionary(HookedRootModule, ABC):
         if cls is SparseDictionary:
             cls = SAE_TYPE_TO_MODEL_CLASS[cfg.sae_type]
 
+        if cfg.sae_pretrained_name_or_path is not None:
+            return cls.from_pretrained(
+                cfg.sae_pretrained_name_or_path,
+                device_mesh=device_mesh,
+                fold_activation_scale=False,
+                strict_loading=cfg.strict_loading,
+                device=cfg.device,
+                dtype=cfg.dtype,
+            )
+
         model = cls(cfg, device_mesh)
         total_params = sum(param.numel() for param in model.parameters()) / 1e9
         logger.info(f"Initializing {cfg.sae_type} with {total_params:.2f} B parameters")
@@ -534,7 +556,8 @@ class SparseDictionary(HookedRootModule, ABC):
     ):
         """Load a pretrained sparse dictionary from a local directory."""
 
-        cfg = SparseDictionaryConfig.from_pretrained(path, **kwargs)
+        cfg = SparseDictionaryConfig.from_pretrained(path, strict_loading=strict_loading, **kwargs)
+        cfg.sae_pretrained_name_or_path = None
         model = cls.from_config(cfg, device_mesh=device_mesh)
 
         if path.endswith(".pt") or path.endswith(".safetensors") or path.endswith(".dcp"):

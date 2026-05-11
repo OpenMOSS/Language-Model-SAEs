@@ -25,6 +25,8 @@ dependencies = [
     "more-itertools>=10.7.0",
     "json-repair>=0.44.1",
     "cattrs>=26.1.0",
+    "jupyter>=1.1.1",
+    "ipykernel>=7.2.0",
 ]
 requires-python = ">=3.11,<3.13"
 readme = "README.md"
