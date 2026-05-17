@@ -2,6 +2,8 @@
 # https://hub.docker.com/r/nvidia/cuda
 FROM nvidia/cuda:11.6.2-cudnn8-devel-ubuntu20.04@sha256:55211df43bf393d3393559d5ab53283d4ebc3943d802b04546a24f3345825bd9
 
+ENV LD_LIBRARY_PATH=/usr/local/cuda-13.2/compat:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+
 ARG USERNAME
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
@@ -10,7 +12,7 @@ ARG USER_GID=$USER_UID
 # https://code.visualstudio.com/remote/advancedcontainers/add-nonroot-user
 RUN groupadd --gid $USER_GID $USERNAME \
   && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
-  && usermod -a -G video user \ 
+  && usermod -a -G video user \
   && apt-get update \
   && apt-get install -y sudo \
   && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \

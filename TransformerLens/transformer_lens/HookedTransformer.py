@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import (
     Any,
     Dict,
@@ -1283,6 +1284,23 @@ class HookedTransformer(HookedRootModule):
         if model_name.lower().startswith("t5"):
             raise RuntimeError(
                 "Execution stopped: Please use HookedEncoderDecoder to load T5 models instead of HookedTransformer."
+            )
+
+        try:
+            official_model_name = loading.get_official_model_name(model_name)
+        except ValueError:
+            official_model_name = None
+
+        if official_model_name == "arcinstitute/evo2_7b" or (
+            official_model_name is None and Path(model_name).suffix == ".pt" and Path(model_name).exists()
+        ):
+            from transformer_lens.HookedEvo2 import HookedEvo2
+
+            return HookedEvo2.from_pretrained(
+                model_name=model_name,
+                local_path=from_pretrained_kwargs.pop("local_path", None),
+                dtype=dtype,
+                move_to_device=move_to_device,
             )
 
         assert not (

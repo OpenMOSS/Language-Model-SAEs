@@ -27,6 +27,7 @@ from transformer_lens.pretrained.weight_conversions import (
     convert_bert_weights,
     convert_bloom_weights,
     convert_coder_weights,
+    convert_evo2_weights,
     convert_gemma_weights,
     convert_gpt2_weights,
     convert_gptj_weights,
@@ -270,6 +271,7 @@ OFFICIAL_MODEL_NAMES = [
     "google/medgemma-4b-it",
     "google/medgemma-27b-it",
     "google/medgemma-27b-text-it",
+    "arcinstitute/evo2_7b",
     "01-ai/Yi-6B",
     "01-ai/Yi-34B",
     "01-ai/Yi-6B-Chat",
@@ -318,6 +320,7 @@ MODEL_ALIASES = {
         "attn-only-4l-new",
         "attn-only-4l-c4-code",
     ],
+    "arcinstitute/evo2_7b": ["arcinstitute/evo2-7b", "evo2-7b"],
     "NeelNanda/SoLU_6L768W_C4_Code": ["solu-6l", "solu-6l-new", "solu-6l-c4-code"],
     "NeelNanda/SoLU_8L1024W_C4_Code": ["solu-8l", "solu-8l-new", "solu-8l-c4-code"],
     "NeelNanda/SoLU_10L1280W_C4_Code": ["solu-10l", "solu-10l-new", "solu-10l-c4-code"],
@@ -2402,6 +2405,8 @@ def get_pretrained_state_dict(
         elif cfg.original_architecture == "Gemma3ForConditionalGeneration":
             # Multimodal model - extract text-only weights
             state_dict = convert_gemma_weights(hf_model, cfg)
+        elif cfg.original_architecture == "StripedHyena2":
+            state_dict = convert_evo2_weights(hf_model if hf_model is not None else official_model_name, cfg)
         else:
             raise ValueError(
                 f"Loading weights from the architecture is not currently supported: {cfg.original_architecture}, generated from model name {cfg.model_name}. Feel free to open an issue on GitHub to request this feature."
