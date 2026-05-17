@@ -3,7 +3,8 @@ name = "llamascopium"
 version = "2.0.0b34"
 description = "For OpenMOSS Mechanistic Interpretability Team's Sparse Autoencoder (SAE) research. Open-sourced and constantly updated."
 dependencies = [
-    "transformer-lens>=2.16.2",
+    "transformer-lens",
+    "evo2",
     "datasets>=3.0.2",
     "transformers>=4.57.1",
     "einops>=0.8.0",
@@ -27,6 +28,7 @@ dependencies = [
     "cattrs>=26.1.0",
     "jupyter>=1.1.1",
     "ipykernel>=7.2.0",
+    "typeguard>=4.5.2",
 ]
 requires-python = ">=3.11,<3.13"
 readme = "README.md"
@@ -151,6 +153,7 @@ exclude = [
     "site-packages",
     "venv",
     "TransformerLens",
+    "third_party/evo2",
     "ui",
 ]
 line-length = 120
@@ -180,6 +183,7 @@ ignore = [
     ".venv/",
     "examples",
     "TransformerLens",
+    "third_party/evo2",
     "tests",
     "exp",
     "scripts",
@@ -193,6 +197,10 @@ reportPrivateImportUsage = false
 package = true
 no-build-isolation-package = ["flash-attn"]
 default-groups = ["dev", "server", "docs"]
+
+[tool.uv.sources]
+transformer-lens = { path = "./TransformerLens", editable = true }
+evo2 = { path = "./third_party/evo2", editable = true }
 
 
 [[tool.uv.dependency-metadata]]
