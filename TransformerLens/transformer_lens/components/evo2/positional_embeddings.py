@@ -7,7 +7,8 @@ Wrappers for linearly interpolated rope embeddings to use inside of MHA layers o
 
 import torch
 from einops import rearrange
-from vortex.model.rotary import RotaryEmbedding
+
+from .rotary import RotaryEmbedding
 
 
 # simple wrapper for flash-attn RoPE with linear scaling:

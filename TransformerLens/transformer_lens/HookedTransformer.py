@@ -114,6 +114,248 @@ class HookedTransformer(HookedRootModule):
     ln_final: nn.Module
     tokenizer: Optional[PreTrainedTokenizerBase]
 
+    def _uses_evo2_components(self) -> bool:
+        return self.cfg.original_architecture == "StripedHyena2"
+
+    @staticmethod
+    def _build_evo2_backend_config(cfg: HookedTransformerConfig):
+        from transformer_lens.components.evo2.utils import dotdict
+
+        return dotdict(
+            {
+                "model_name": "shc-evo2-7b-8k-2T-v2",
+                "vocab_size": cfg.d_vocab,
+                "hidden_size": cfg.d_model,
+                "num_filters": cfg.d_model,
+                "hcl_layer_idxs": [2, 6, 9, 13, 16, 20, 23, 27, 30],
+                "hcm_layer_idxs": [1, 5, 8, 12, 15, 19, 22, 26, 29],
+                "hcs_layer_idxs": [0, 4, 7, 11, 14, 18, 21, 25, 28],
+                "attn_layer_idxs": [3, 10, 17, 24, 31],
+                "hcm_filter_length": 128,
+                "hcl_filter_groups": 4096,
+                "hcm_filter_groups": 256,
+                "hcs_filter_groups": 256,
+                "hcs_filter_length": 7,
+                "num_layers": cfg.n_layers,
+                "short_filter_length": 3,
+                "num_attention_heads": cfg.n_heads,
+                "short_filter_bias": False,
+                "mlp_init_method": torch.nn.init.zeros_,
+                "mlp_output_init_method": torch.nn.init.zeros_,
+                "eps": cfg.eps,
+                "state_size": 16,
+                "rotary_emb_base": cfg.rotary_base,
+                "rotary_emb_scaling_factor": 128,
+                "use_interpolated_rotary_pos_emb": True,
+                "make_vocab_size_divisible_by": 8,
+                "inner_size_multiple_of": 16,
+                "inner_mlp_size": cfg.d_mlp,
+                "log_intermediate_values": False,
+                "proj_groups": 1,
+                "hyena_filter_groups": 1,
+                "column_split_hyena": False,
+                "column_split": True,
+                "interleave": True,
+                "evo2_style_activations": True,
+                "model_parallel_size": 1,
+                "pipe_parallel_size": 1,
+                "tie_embeddings": True,
+                "mha_out_proj_bias": True,
+                "hyena_out_proj_bias": True,
+                "hyena_flip_x1x2": False,
+                "qkv_proj_bias": False,
+                "use_fp8_input_projections": False,
+                "max_seqlen": cfg.n_ctx,
+                "max_batch_size": 1,
+                "final_norm": True,
+                "use_flash_attn": False,
+                "use_flash_rmsnorm": False,
+                "use_flash_depthwise": False,
+                "use_flashfft": False,
+                "use_laughing_hyena": False,
+                "inference_mode": True,
+                "tokenizer_type": "CharLevelTokenizer",
+                "prefill_style": "fft",
+                "mlp_activation": cfg.act_fn,
+                "print_activations": False,
+                "params_dtype": cfg.dtype,
+                "attn_block_dtype": cfg.dtype,
+                "mlp_dtype": cfg.dtype,
+                "depthwise_dtype": cfg.dtype,
+            }
+        )
+
+    def _init_evo2_components(
+        self,
+        tokenizer: Optional[Any],
+        move_to_device: bool,
+        default_padding_side: Literal["left", "right"],
+    ) -> None:
+        from transformer_lens.components.evo2.model import StripedHyena
+        from transformer_lens.components.evo2.tokenizer import HookedEvo2Tokenizer
+
+        backend_cfg = self._build_evo2_backend_config(self.cfg)
+        backend_model = StripedHyena(backend_cfg)
+
+        self.evo2_backend_cfg = backend_cfg
+        self.config = backend_cfg
+        self.logger = logging.getLogger("StripedHyena")
+        self.embedding_layer = backend_model.embedding_layer
+        self.blocks = backend_model.blocks
+        self.block_idx_to_device = backend_model.block_idx_to_device
+        self.norm = backend_model.norm
+        self.unembed = backend_model.unembed
+
+        self.hook_embed = HookPoint()
+        self.hook_resid_pre = nn.ModuleList([HookPoint() for _ in range(self.cfg.n_layers)])
+        self.hook_resid_post = nn.ModuleList([HookPoint() for _ in range(self.cfg.n_layers)])
+        self.hook_logits = HookPoint()
+        if self.cfg.use_hook_tokens:
+            self.hook_tokens = HookPoint()
+
+        if tokenizer is not None:
+            self.tokenizer = tokenizer
+        else:
+            self.tokenizer = HookedEvo2Tokenizer(self.cfg.d_vocab, padding_side=default_padding_side)
+        self.cfg.tokenizer_prepends_bos = False
+        self.dataset = None
+        self.setup()
+        nn.Module.to(self, self.cfg.dtype)
+
+        if move_to_device:
+            self.move_model_modules_to_device()
+
+    # ------------------------------------------------------------------
+    # Evo2 public API
+    # ------------------------------------------------------------------
+
+    def _evo2_load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
+        """Load an Evo2 / Savanna checkpoint into this HookedTransformer.
+
+        Handles FP8 ``_extra_state`` injection / stripping and the Wqkv
+        column-split permutation.  Key-name remapping is done upstream by
+        ``convert_evo2_weights`` in ``pretrained/weight_conversions/evo2.py``.
+        """
+        import io as _io
+
+        from transformer_lens.components.evo2.layers import HAS_TE, TELinear
+        from transformer_lens.components.evo2.utils import fixup_fp8_extra_states
+        from transformer_lens.components.evo2.model import AttentionBlock
+
+        model_dict = self.state_dict()
+        missing_in_state_dict = model_dict.keys() - state_dict.keys()
+        extra_in_state_dict   = state_dict.keys() - model_dict.keys()
+
+        if missing_in_state_dict:
+            self.logger.info(f"Keys missing in state_dict: {missing_in_state_dict}")
+        if extra_in_state_dict:
+            self.logger.info(f"Extra keys in state_dict: {extra_in_state_dict}")
+
+        filtered_dict = {k: v for k, v in state_dict.items() if k in model_dict}
+
+        if HAS_TE:
+            from transformer_engine.common.recipe import Format, DelayedScaling
+            default_recipe = DelayedScaling(
+                fp8_format=Format.HYBRID, amax_history_len=16, amax_compute_algo="max"
+            )
+
+            def _resolve_module(path):
+                m = self
+                for attr in path.split("."):
+                    m = getattr(m, attr)
+                return m
+
+            for k in list(filtered_dict.keys()):
+                if not k.endswith("._extra_state"):
+                    continue
+                try:
+                    mod = _resolve_module(k.rsplit("._extra_state", 1)[0])
+                    if not isinstance(mod, TELinear):
+                        continue
+                    val = filtered_dict[k]
+                    meta: dict = {}
+                    if isinstance(val, _io.BytesIO):
+                        val.seek(0)
+                        meta = torch.load(val)
+                    elif isinstance(val, dict):
+                        meta = val
+                    meta.setdefault("recipe", default_recipe)
+                    if hasattr(mod, "fp8_meta"):
+                        for key in ("scaling_fwd", "scaling_bwd"):
+                            if hasattr(mod.fp8_meta, key) and key not in meta:
+                                meta[key] = mod.fp8_meta[key]
+                    buf = _io.BytesIO()
+                    torch.save(meta, buf)
+                    buf.seek(0)
+                    filtered_dict[k] = buf
+                except (AttributeError, Exception):
+                    pass
+
+            for k in missing_in_state_dict:
+                if not k.endswith("._extra_state"):
+                    continue
+                try:
+                    mod = _resolve_module(k.rsplit("._extra_state", 1)[0])
+                    if not isinstance(mod, TELinear):
+                        continue
+                    meta = {"recipe": default_recipe}
+                    if hasattr(mod, "fp8_meta"):
+                        for key in ("scaling_fwd", "scaling_bwd"):
+                            if hasattr(mod.fp8_meta, key):
+                                meta[key] = mod.fp8_meta[key]
+                    buf = _io.BytesIO()
+                    torch.save(meta, buf)
+                    buf.seek(0)
+                    filtered_dict[k] = buf
+                except (AttributeError, Exception):
+                    pass
+        else:
+            extra_state_keys = [k for k in filtered_dict if k.endswith("._extra_state")]
+            for k in extra_state_keys:
+                del filtered_dict[k]
+            if extra_state_keys:
+                self.logger.info(
+                    f"Stripped {len(extra_state_keys)} FP8 _extra_state keys "
+                    "(Transformer Engine not installed)"
+                )
+
+        nn.Module.load_state_dict(self, filtered_dict, strict=strict)
+        fixup_fp8_extra_states(self)
+
+        if self.config.get("column_split", True):
+            self.logger.info("Adjusting Wqkv for column split (permuting rows)")
+            for layer_idx, block in enumerate(self.blocks):
+                if not isinstance(block, AttentionBlock):
+                    continue
+                target_device = block.inner_mha_cls.Wqkv.weight.device
+                Wqkv = state_dict[f"blocks.{layer_idx}.inner_mha_cls.Wqkv.weight"]
+                try:
+                    bias = state_dict[f"blocks.{layer_idx}.inner_mha_cls.Wqkv.bias"]
+                except KeyError:
+                    bias = None
+
+                n_heads = block.num_attention_heads
+                head_dim = block.hidden_size_per_attention_head
+                d = block.hidden_size
+
+                Wqkv = Wqkv.permute(1, 0).reshape(d, n_heads, 3, head_dim)
+                Wq, Wk, Wv = Wqkv.unbind(dim=-2)
+                Wqkv = torch.cat(
+                    [Wq.reshape(d, -1), Wk.reshape(d, -1), Wv.reshape(d, -1)], dim=-1
+                ).permute(1, 0)
+                block.inner_mha_cls.Wqkv.weight.data = Wqkv.to(target_device)
+
+                if bias is not None:
+                    bias = bias.cpu().reshape(n_heads, 3, head_dim)
+                    bq, bk, bv = bias.unbind(dim=-2)
+                    bias = torch.cat(
+                        [bq.reshape(d, -1), bk.reshape(d, -1), bv.reshape(d, -1)], dim=-1
+                    ).reshape(-1)
+                    try:
+                        block.inner_mha_cls.Wqkv.bias.data = bias.to(target_device)
+                    except Exception:
+                        pass
+
     def __init__(
         self,
         cfg: Union[HookedTransformerConfig, Dict],
@@ -144,6 +386,10 @@ class HookedTransformer(HookedRootModule):
             )
 
         self.cfg = HookedTransformerConfig.unwrap(cfg)
+
+        if self._uses_evo2_components():
+            self._init_evo2_components(tokenizer, move_to_device, default_padding_side)
+            return
 
         if tokenizer is not None:
             self.set_tokenizer(tokenizer, default_padding_side=default_padding_side)
@@ -364,6 +610,41 @@ class HookedTransformer(HookedRootModule):
             past_kv_cache (HookedTransformerKeyValueCache, optional): If passed, we're doing caching
                 and attention_mask will be stored in the cache.
         """
+        if self._uses_evo2_components():
+            if isinstance(input, (str, list)):
+                assert self.tokenizer is not None, "Must provide a tokenizer if passing a string to the model"
+                tokenized = self.tokenizer(
+                    input,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=self.cfg.n_ctx,
+                )
+                tokens = tokenized["input_ids"]
+                if attention_mask is None:
+                    attention_mask = tokenized["attention_mask"]
+            else:
+                tokens = input
+                if attention_mask is None and tokens.ndim == 2 and self.tokenizer is not None:
+                    pad_token_id = getattr(self.tokenizer, "pad_token_id", None)
+                    if pad_token_id is not None:
+                        attention_mask = (tokens != pad_token_id).long()
+
+            if len(tokens.shape) == 1:
+                tokens = tokens[None]
+
+            first_device = self.block_idx_to_device[0]
+            tokens = tokens.to(first_device)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(first_device)
+
+            if self.cfg.use_hook_tokens:
+                tokens = self.hook_tokens(tokens)
+
+            residual = self.hook_embed(self.embedding_layer(tokens))
+            residual = residual.to(dtype=next(self.embedding_layer.parameters()).dtype)
+            return residual, tokens, None, attention_mask
+
         if isinstance(input, str) or isinstance(input, list):
             # If text, convert to tokens (batch_size=1)
             assert (
@@ -583,6 +864,63 @@ class HookedTransformer(HookedRootModule):
         with utils.LocallyOverridenDefaults(
             self, prepend_bos=prepend_bos, padding_side=padding_side
         ):
+            if self._uses_evo2_components():
+                if start_at_layer is None:
+                    residual, tokens, _, attention_mask = self.input_to_embed(
+                        input,
+                        prepend_bos=prepend_bos,
+                        padding_side=padding_side,
+                        attention_mask=attention_mask,
+                        past_kv_cache=past_kv_cache,
+                    )
+                else:
+                    assert isinstance(input, torch.Tensor)
+                    residual = input
+
+                if start_at_layer is None:
+                    start_at_layer = 0
+
+                if type(attention_mask) == torch.Tensor:
+                    residual = residual * attention_mask[..., None]
+
+                blocks_and_idxs = list(zip(range(self.cfg.n_layers), self.blocks))
+                for i, block in blocks_and_idxs[start_at_layer:stop_at_layer]:  # type: ignore
+                    block_device = self.block_idx_to_device[i]
+                    residual = residual.to(block_device)
+                    residual = residual.to(dtype=next(block.parameters()).dtype)
+                    block_attention_mask = (
+                        attention_mask.to(block_device) if attention_mask is not None else None
+                    )
+                    residual = self.hook_resid_pre[i](residual)
+                    residual, _ = block(
+                        residual,
+                        inference_params=None,
+                        padding_mask=block_attention_mask,
+                    )
+                    residual = self.hook_resid_post[i](residual)
+
+                if stop_at_layer is not None:
+                    return residual
+
+                residual = residual.to(self.block_idx_to_device[0])
+                residual = residual.to(dtype=next(self.norm.parameters()).dtype)
+                residual = self.norm(residual)
+                if return_type is None:
+                    return None
+
+                logits = self.hook_logits(self.unembed(residual))
+                if return_type == "logits":
+                    return logits
+
+                assert tokens is not None, "tokens must be passed in if return_type is 'loss' or 'both'"
+                loss = self.loss_fn(logits, tokens, attention_mask, per_token=loss_per_token)
+                if return_type == "loss":
+                    return loss
+                if return_type == "both":
+                    return Output(logits, loss)
+                logging.warning(f"Invalid return_type passed in: {return_type}")
+                return None
+
             if start_at_layer is None:
                 (
                     residual,
@@ -721,6 +1059,13 @@ class HookedTransformer(HookedRootModule):
             default_padding_side (str): "right" or "left", which side to pad on.
 
         """
+        if self._uses_evo2_components():
+            self.tokenizer = tokenizer
+            if hasattr(self.tokenizer, "padding_side"):
+                self.tokenizer.padding_side = default_padding_side
+            self.cfg.tokenizer_prepends_bos = False
+            return
+
         assert isinstance(
             tokenizer, PreTrainedTokenizerBase
         ), f"{type(tokenizer)} is not a supported tokenizer, please use PreTrainedTokenizer or PreTrainedTokenizerFast"
@@ -794,6 +1139,24 @@ class HookedTransformer(HookedRootModule):
                 whether to truncate the output tokens to the model's max context window. Does nothing
                 for shorter inputs. Defaults to True.
         """
+        if self._uses_evo2_components():
+            assert self.tokenizer is not None, "Cannot use to_tokens without a tokenizer"
+            previous_padding_side = getattr(self.tokenizer, "padding_side", "right")
+            if padding_side is not USE_DEFAULT_VALUE and hasattr(self.tokenizer, "padding_side"):
+                self.tokenizer.padding_side = padding_side
+            tokens = self.tokenizer(
+                input,
+                return_tensors="pt",
+                padding=True,
+                truncation=truncate,
+                max_length=self.cfg.n_ctx if truncate else None,
+            )["input_ids"]
+            if hasattr(self.tokenizer, "padding_side"):
+                self.tokenizer.padding_side = previous_padding_side
+            if move_to_device:
+                tokens = tokens.to(self.block_idx_to_device[0])
+            return tokens
+
         with utils.LocallyOverridenDefaults(
             self, prepend_bos=prepend_bos, padding_side=padding_side
         ):
@@ -839,6 +1202,16 @@ class HookedTransformer(HookedRootModule):
 
         Accepts lists of tokens and numpy arrays as inputs too (and converts to tensors internally)
         """
+        if self._uses_evo2_components():
+            assert self.tokenizer is not None, "Cannot use to_string without a tokenizer"
+            if not isinstance(tokens, torch.Tensor):
+                tokens = torch.tensor(tokens)
+            if len(tokens.shape) == 2:
+                return self.tokenizer.batch_decode(tokens, clean_up_tokenization_spaces=False)
+            if len(tokens.shape) <= 1:
+                return self.tokenizer.decode(tokens, clean_up_tokenization_spaces=False)
+            raise ValueError(f"Invalid shape passed in: {tokens.shape}")
+
         assert self.tokenizer is not None, "Cannot use to_string without a tokenizer"
 
         if not isinstance(tokens, torch.Tensor):
@@ -899,6 +1272,28 @@ class HookedTransformer(HookedRootModule):
         Returns:
             str_tokens: List of individual tokens as strings
         """
+        if self._uses_evo2_components():
+            assert self.tokenizer is not None
+            if isinstance(input, list) and input and isinstance(input[0], str):
+                return [self.to_str_tokens(item, prepend_bos, padding_side) for item in input]
+            if isinstance(input, str):
+                tokens = self.to_tokens(input, prepend_bos=prepend_bos, padding_side=padding_side)[0]
+            elif isinstance(input, torch.Tensor):
+                tokens = input.squeeze()
+                if tokens.dim() == 0:
+                    tokens = tokens.unsqueeze(0)
+            elif isinstance(input, np.ndarray):
+                tokens = torch.tensor(input).squeeze()
+                if tokens.dim() == 0:
+                    tokens = tokens.unsqueeze(0)
+            elif isinstance(input, list):
+                return [self.to_str_tokens(item, prepend_bos, padding_side) for item in input]
+            else:
+                raise ValueError(f"Invalid input type to to_str_tokens: {type(input)}")
+
+            assert isinstance(tokens, torch.Tensor)
+            return [self.tokenizer.decode_token(int(token)) for token in tokens.tolist()]
+
         with utils.LocallyOverridenDefaults(
             self, prepend_bos=prepend_bos, padding_side=padding_side
         ):
@@ -1103,6 +1498,18 @@ class HookedTransformer(HookedRootModule):
         return self.to(torch.device("mps"))
 
     def move_model_modules_to_device(self):
+        if self._uses_evo2_components():
+            first_device = self.block_idx_to_device[0]
+            self.hook_embed.to(first_device)
+            self.hook_logits.to(first_device)
+            if hasattr(self, "hook_tokens"):
+                self.hook_tokens.to(first_device)
+            for hook_point in self.hook_resid_pre:
+                hook_point.to(first_device)
+            for hook_point in self.hook_resid_post:
+                hook_point.to(first_device)
+            return
+
         self.embed.to(devices.get_best_available_device(self.cfg))
         self.hook_embed.to(devices.get_best_available_device(self.cfg))
         if self.cfg.positional_embedding_type != "rotary":
@@ -1289,19 +1696,11 @@ class HookedTransformer(HookedRootModule):
         try:
             official_model_name = loading.get_official_model_name(model_name)
         except ValueError:
-            official_model_name = None
-
-        if official_model_name == "arcinstitute/evo2_7b" or (
-            official_model_name is None and Path(model_name).suffix == ".pt" and Path(model_name).exists()
-        ):
-            from transformer_lens.HookedEvo2 import HookedEvo2
-
-            return HookedEvo2.from_pretrained(
-                model_name=model_name,
-                local_path=from_pretrained_kwargs.pop("local_path", None),
-                dtype=dtype,
-                move_to_device=move_to_device,
-            )
+            if Path(model_name).suffix == ".pt" and Path(model_name).exists():
+                official_model_name = "arcinstitute/evo2_7b"
+                from_pretrained_kwargs.setdefault("local_path", str(Path(model_name).resolve()))
+            else:
+                official_model_name = None
 
         assert not (
             from_pretrained_kwargs.get("load_in_8bit", False)
@@ -1344,7 +1743,8 @@ class HookedTransformer(HookedRootModule):
             logging.warning("float16 models may not work on CPU. Consider using a GPU or bfloat16.")
 
         # Get the model name used in HuggingFace, rather than the alias.
-        official_model_name = loading.get_official_model_name(model_name)
+        if official_model_name is None:
+            official_model_name = loading.get_official_model_name(model_name)
 
         # Load the config into an HookedTransformerConfig object. If loading from a
         # checkpoint, the config object will contain the information about the
@@ -1626,6 +2026,11 @@ class HookedTransformer(HookedRootModule):
             logging.warning(
                 "When running MoE models, it is advised to use a higher precision data type. See docs for more info."
             )
+
+        if self._uses_evo2_components():
+            self._evo2_load_state_dict(state_dict, strict=True)
+            nn.Module.to(self, self.cfg.dtype)
+            return
 
         state_dict = self.fill_missing_keys(state_dict)
         if fold_ln:

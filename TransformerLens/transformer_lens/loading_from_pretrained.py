@@ -47,6 +47,10 @@ from transformer_lens.pretrained.weight_conversions import (
     convert_t5_weights,
 )
 
+DEFAULT_EVO2_7B_PATH = Path(
+    "/inspire/hdd/global_user/hezhengfu-240208120186/models/evo2_7b/evo2_7b.pt"
+)
+
 OFFICIAL_MODEL_NAMES = [
     "gpt2",
     "gpt2-medium",
@@ -821,7 +825,9 @@ def convert_hf_model_config(model_name: str, **kwargs: Any):
         official_model_name = get_official_model_name(model_name)
 
     # Load HuggingFace model config
-    if "llama" in official_model_name.lower():
+    if official_model_name.startswith("arcinstitute/evo2_7b"):
+        architecture = "StripedHyena2"
+    elif "llama" in official_model_name.lower():
         architecture = "LlamaForCausalLM"
     elif "gemma-3" in official_model_name.lower() or "medgemma" in official_model_name.lower():
         # Gemma 3: 270M and 1B are text-only (CausalLM), 4B+ are multimodal (ConditionalGeneration)
@@ -1946,6 +1952,27 @@ def convert_hf_model_config(model_name: str, **kwargs: Any):
             "final_rms": True,
             "use_normalization_before_and_after": True,
         }
+    elif official_model_name.startswith("arcinstitute/evo2_7b"):
+        cfg_dict = {
+            "d_model": 4096,
+            "d_head": 128,
+            "n_heads": 32,
+            "d_mlp": 11264,
+            "n_layers": 32,
+            "n_ctx": 1048576,
+            "eps": 1e-06,
+            "d_vocab": 512,
+            "d_vocab_out": 512,
+            "act_fn": "gelu",
+            "initializer_range": 0.02,
+            "normalization_type": "RMS",
+            "rotary_base": 10000,
+            "rotary_dim": 128,
+            "positional_embedding_type": "rotary",
+            "final_rms": True,
+            "gated_mlp": True,
+            "default_prepend_bos": False,
+        }
     elif architecture == "T5ForConditionalGeneration":
         cfg_dict = {
             "d_model": hf_config.d_model,
@@ -2259,6 +2286,7 @@ def get_pretrained_state_dict(
     if "n_ctx" in kwargs:
         # n_ctx is handled in get_pretrained_model_config, don't pass to HuggingFace
         del kwargs["n_ctx"]
+    local_path = kwargs.pop("local_path", None)
     try:
         official_model_name = get_official_model_name(official_model_name)
     except ValueError:
@@ -2274,6 +2302,21 @@ def get_pretrained_state_dict(
             f"Loading model {official_model_name} state dict requires setting trust_remote_code=True"
         )
         kwargs["trust_remote_code"] = True
+    if cfg.original_architecture == "StripedHyena2":
+        if local_path is not None:
+            checkpoint = local_path
+        elif DEFAULT_EVO2_7B_PATH.exists():
+            checkpoint = DEFAULT_EVO2_7B_PATH
+        elif Path(official_model_name).exists():
+            checkpoint = official_model_name
+        else:
+            checkpoint = utils.download_file_from_hf(
+                "arcinstitute/evo2_7b",
+                "evo2_7b.pt",
+                force_is_torch=True,
+                **kwargs,
+            )
+        return convert_evo2_weights(checkpoint, cfg)
     if (
         official_model_name.startswith("NeelNanda")
         or official_model_name.startswith("ArthurConmy")

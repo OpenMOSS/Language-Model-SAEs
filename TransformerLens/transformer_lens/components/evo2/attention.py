@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 
-from vortex.model.utils import get_dim_for_local_rank
+from .utils import get_dim_for_local_rank
 
 try:
     from vortex.ops import (
@@ -25,7 +25,7 @@ except ImportError:
 
 FusedDense, ColumnParallelLinear, RowParallelLinear = None, None, None
 
-from vortex.model.rotary import RotaryEmbedding
+from .rotary import RotaryEmbedding
 
 
 # From https://github.com/ofirpress/attention_with_linear_biases/blob/4b92f28a005ead2567abe2359f633e73e08f3833/fairseq/models/transformer.py#L742
