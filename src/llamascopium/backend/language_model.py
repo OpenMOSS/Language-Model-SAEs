@@ -5,6 +5,7 @@ import os
 import re
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from contextlib import contextmanager
 from itertools import accumulate
 from typing import (
@@ -16,6 +17,7 @@ from typing import (
     Union,
     cast,
 )
+from unittest.mock import patch
 
 import torch
 import torch.distributed as dist
@@ -33,6 +35,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
+from llamascopium.backend.evo2 import load_evo2
 from llamascopium.backend.tl_addons import run_with_cache_until, run_with_ref_cache
 from llamascopium.config import BaseModelConfig
 from llamascopium.utils.auto import PretrainedSAEType, auto_infer_pretrained_sae_type
@@ -134,7 +137,7 @@ class LanguageModelConfig(BaseModelConfig):
     """ Whether to only load the model from the local files. Should have the same effect as `HF_HUB_OFFLINE=1`. """
     max_length: int = 2048
     """ The maximum length of the input. """
-    backend: Literal["huggingface", "transformer_lens", "tokenizer_only", "auto"] = "auto"
+    backend: Literal["huggingface", "transformer_lens", "tokenizer_only", "evo2", "auto"] = "auto"
     """ The backend to use for the language model. ``"tokenizer_only"`` loads only the tokenizer without model weights. """
     prepend_bos: bool = True
     """ Whether to prepend the BOS token to the input. """
@@ -890,3 +893,234 @@ class QwenVLLanguageModel(HuggingFaceLanguageModel):
         )
 
         return inputs, processed_raw
+
+
+class Evo2LanguageModel(LanguageModel):
+    """Language model wrapper for Evo2 / StripedHyena with explicit hook support."""
+
+    HOOK_PATTERN = re.compile(r"^blocks\.(\d+)\.hook_(mlp|attn|conv|fir|filter)_(in|out)$")
+
+    class _PatchedAttributeHandle:
+        def __init__(self, obj: Any, attr: str, replacement: Any):
+            self.obj = obj
+            self.attr = attr
+            self.original = getattr(obj, attr)
+            setattr(obj, attr, replacement)
+
+        def remove(self) -> None:
+            setattr(self.obj, self.attr, self.original)
+
+    def __init__(self, cfg: LanguageModelConfig):
+        self.cfg = cfg
+        if cfg.device == "cuda":
+            self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
+        elif cfg.device == "npu":
+            self.device = torch.device(f"npu:{torch.npu.current_device()}")  # type: ignore[reportAttributeAccessIssue]
+        else:
+            self.device = torch.device(cfg.device)
+        self.evo2 = load_evo2(
+            model_name=cfg.model_name,
+            local_path=cfg.model_from_pretrained_path,
+            target_device=self.device,
+        )
+        self.model = self.evo2.model
+        self.model.eval()
+        self.tokenizer = self.evo2.tokenizer
+        self.primary_device = self.device
+
+    def preprocess_raw_data(self, raw: dict[str, Any]) -> dict[str, Any]:
+        return raw
+
+    @property
+    def eos_token_id(self) -> int | None:
+        return getattr(self.tokenizer, "eos_id", None)
+
+    @property
+    def bos_token_id(self) -> int | None:
+        return None
+
+    @property
+    def pad_token_id(self) -> int | None:
+        return getattr(self.tokenizer, "pad_id", None)
+
+    def _tokenize_batch(self, texts: list[str], n_context: Optional[int]) -> torch.Tensor:
+        token_lists = [list(self.tokenizer.tokenize(text)) for text in texts]
+        max_length = n_context or self.cfg.max_length
+        padded = torch.full(
+            (len(token_lists), max_length),
+            fill_value=self.pad_token_id or 0,
+            dtype=torch.long,
+            device=self.primary_device,
+        )
+        for row_idx, token_list in enumerate(token_lists):
+            truncated = token_list[:max_length]
+            if truncated:
+                padded[row_idx, : len(truncated)] = torch.tensor(
+                    truncated,
+                    dtype=torch.long,
+                    device=self.primary_device,
+                )
+        return padded
+
+    def _resolve_hook_target(self, hook_point: str) -> tuple[int, torch.nn.Module, str, Literal["in", "out"]]:
+        match = self.HOOK_PATTERN.match(hook_point)
+        if match is None:
+            raise ValueError(
+                f"Unsupported Evo2 hook point: {hook_point}. "
+                "Expected blocks.{layer}.hook_(mlp|attn|conv|fir|filter)_(in|out)."
+            )
+
+        layer_idx = int(match.group(1))
+        module_kind = match.group(2)
+        direction = cast(Literal["in", "out"], match.group(3))
+        block = self.model.blocks[layer_idx]
+
+        if module_kind == "mlp":
+            module = block.mlp
+        elif module_kind == "attn":
+            if not hasattr(block, "inner_mha_cls"):
+                raise ValueError(f"Layer {layer_idx} is not an Evo2 attention block, cannot capture {hook_point}.")
+            module = block.inner_mha_cls
+        elif module_kind == "conv":
+            module = block
+        elif module_kind == "filter":
+            if direction != "out":
+                raise ValueError(f"Unsupported Evo2 hook point direction for {hook_point}. filter hooks are out-only.")
+            if not hasattr(block, "filter"):
+                raise ValueError(f"Layer {layer_idx} is not an Evo2 convolution block, cannot capture {hook_point}.")
+            module = block.filter
+        else:
+            if direction != "out":
+                raise ValueError(f"Unsupported Evo2 hook point direction for {hook_point}. fir hooks are out-only.")
+            if not hasattr(block, "filter") or not hasattr(block.filter, "engine"):
+                raise ValueError(f"Layer {layer_idx} is not an Evo2 convolution block, cannot capture {hook_point}.")
+            module = block.filter
+
+        return layer_idx, module, module_kind, direction
+
+    @staticmethod
+    def _unwrap_activation(tensor_or_tuple: Any) -> torch.Tensor:
+        if isinstance(tensor_or_tuple, tuple):
+            tensor_or_tuple = tensor_or_tuple[0]
+        if not isinstance(tensor_or_tuple, torch.Tensor):
+            raise TypeError(f"Expected tensor activation, got {type(tensor_or_tuple).__name__}")
+        return tensor_or_tuple
+
+    def to_activations(
+        self, raw: dict[str, Any], hook_points: list[str], n_context: Optional[int] = None
+    ) -> dict[str, torch.Tensor]:
+        texts = raw["text"]
+        if isinstance(texts, str):
+            texts = [texts]
+
+        tokens = self._tokenize_batch(cast(list[str], texts), n_context)
+        activations: dict[str, torch.Tensor] = {}
+        handles: list[Any] = []
+        fir_capture_seen: set[int] = set()
+
+        for hook_point in hook_points:
+            layer_idx, module, module_kind, direction = self._resolve_hook_target(hook_point)
+
+            if module_kind == "fir":
+                block = self.model.blocks[layer_idx]
+                engine = block.filter.engine
+
+                def _capture_fir_output(output: Any, *, hook_name: str = hook_point) -> None:
+                    if layer_idx in fir_capture_seen:
+                        return
+                    activation = self._unwrap_activation(output).detach().to(self.primary_device)
+                    activations[hook_name] = activation
+                    fir_capture_seen.add(layer_idx)
+
+                if hasattr(engine, "parallel_fir"):
+                    original_parallel_fir = engine.parallel_fir
+
+                    def _parallel_fir_wrapper(*args: Any, **kwargs: Any) -> Any:
+                        result = original_parallel_fir(*args, **kwargs)
+                        if not kwargs.get("gate", False):
+                            _capture_fir_output(result[0] if isinstance(result, tuple) else result)
+                        return result
+
+                    handles.append(self._PatchedAttributeHandle(engine, "parallel_fir", _parallel_fir_wrapper))
+
+                if hasattr(engine, "step_fir"):
+                    original_step_fir = engine.step_fir
+
+                    def _step_fir_wrapper(*args: Any, **kwargs: Any) -> Any:
+                        result = original_step_fir(*args, **kwargs)
+                        _capture_fir_output(result[0] if isinstance(result, tuple) else result)
+                        return result
+
+                    handles.append(self._PatchedAttributeHandle(engine, "step_fir", _step_fir_wrapper))
+                continue
+
+            if module_kind == "conv" and direction == "out":
+                def _capture_block_output(
+                    _module: torch.nn.Module,
+                    _inputs: tuple[torch.Tensor, ...],
+                    output: Any,
+                    *,
+                    hook_name: str = hook_point,
+                ) -> None:
+                    activation = self._unwrap_activation(output).detach().to(self.primary_device)
+                    activations[hook_name] = activation
+
+                handles.append(module.register_forward_hook(_capture_block_output))
+                continue
+
+            if direction == "in":
+                def _capture_input(
+                    _module: torch.nn.Module,
+                    inputs: tuple[torch.Tensor, ...],
+                    *,
+                    hook_name: str = hook_point,
+                ) -> None:
+                    activation = self._unwrap_activation(inputs[0]).detach().to(self.primary_device)
+                    activations[hook_name] = activation
+
+                handles.append(module.register_forward_pre_hook(_capture_input, with_kwargs=False))
+            else:
+                def _capture_output(
+                    _module: torch.nn.Module,
+                    _inputs: tuple[torch.Tensor, ...],
+                    output: Any,
+                    *,
+                    hook_name: str = hook_point,
+                ) -> None:
+                    activation = self._unwrap_activation(output).detach().to(self.primary_device)
+                    activations[hook_name] = activation
+
+                handles.append(module.register_forward_hook(_capture_output))
+
+        try:
+            with torch.no_grad():
+                if torch.cuda.is_available():
+                    self.model(tokens)
+                else:
+                    with patch("torch.cuda.device", new=lambda *_args, **_kwargs: nullcontext()):
+                        self.model(tokens)
+        finally:
+            for handle in handles:
+                handle.remove()
+
+        missing = [hook_point for hook_point in hook_points if hook_point not in activations]
+        if missing:
+            raise RuntimeError(f"Failed to capture Evo2 activations for hook points: {missing}")
+
+        activations["tokens"] = tokens
+        activations["mask"] = tokens != (self.pad_token_id or 0)
+        return activations
+
+    def trace(self, raw: dict[str, Any], n_context: Optional[int] = None) -> list[list[Any]]:
+        texts = raw["text"]
+        if isinstance(texts, str):
+            texts = [texts]
+
+        max_length = n_context or self.cfg.max_length
+        traces: list[list[Any]] = []
+        for text in cast(list[str], texts):
+            token_count = min(len(self.tokenizer.tokenize(text)), max_length)
+            offsets = [{"key": "text", "range": (i, i + 1)} for i in range(token_count)]
+            offsets.extend([None] * (max_length - token_count))
+            traces.append(offsets)
+        return traces

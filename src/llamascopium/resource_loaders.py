@@ -4,6 +4,7 @@ import datasets
 from torch.distributed.device_mesh import DeviceMesh
 
 from llamascopium.backend.language_model import (
+    Evo2LanguageModel,
     HuggingFaceLanguageModel,
     LanguageModel,
     LanguageModelConfig,
@@ -57,11 +58,13 @@ def load_dataset(
     return shard, shard_metadata
 
 
-def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_lens"]:
+def infer_model_backend(model_name: str) -> Literal["huggingface", "transformer_lens", "evo2"]:
     if model_name.startswith("Qwen/Qwen2.5-VL"):
         return "huggingface"
     elif model_name.startswith("Qwen/Qwen2.5"):
         return "huggingface"
+    elif model_name.startswith("evo2_"):
+        return "evo2"
     else:
         return "transformer_lens"
 
@@ -77,5 +80,7 @@ def load_model(cfg: LanguageModelConfig, device_mesh: DeviceMesh | None = None) 
             return HuggingFaceLanguageModel(cfg)
     elif backend == "transformer_lens":
         return TransformerLensLanguageModel(cfg, device_mesh)
+    elif backend == "evo2":
+        return Evo2LanguageModel(cfg)
     else:
         raise NotImplementedError(f"Backend {backend} not supported.")

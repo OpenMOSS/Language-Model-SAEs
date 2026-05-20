@@ -16,6 +16,7 @@ from .analysis import (
     FeatureAnalyzerConfig,
 )
 from .backend.language_model import (
+    Evo2LanguageModel,
     HuggingFaceLanguageModel,
     LanguageModel,
     LanguageModelConfig,
@@ -114,6 +115,7 @@ __all__ = [
     "JumpReLU",
     "LanguageModel",
     "LanguageModelConfig",
+    "Evo2LanguageModel",
     "HuggingFaceLanguageModel",
     "TokenizerOnlyLanguageModel",
     "DatasetConfig",

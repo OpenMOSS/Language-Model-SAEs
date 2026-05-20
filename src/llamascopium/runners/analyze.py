@@ -16,7 +16,7 @@ from llamascopium.backend.language_model import LanguageModelConfig, Transformer
 from llamascopium.config import DatasetConfig
 from llamascopium.database import MongoClient, MongoDBConfig
 from llamascopium.models.crosscoder import Crosscoder
-from llamascopium.models.sparse_dictionary import SparseDictionary
+from llamascopium.models.sparse_dictionary import SparseDictionary, SparseDictionaryConfig
 from llamascopium.resource_loaders import load_dataset, load_model
 from llamascopium.utils.distributed.utils import broadcast_object
 from llamascopium.utils.logging import get_distributed_logger, setup_logging
@@ -94,7 +94,7 @@ def save_analysis_to_file(
 class AnalyzeSAESettings(BaseSettings):
     """Settings for analyzing a Sparse Autoencoder."""
 
-    sae: PretrainedSAE
+    sae: SparseDictionaryConfig | PretrainedSAE
     """Configuration for the SAE model architecture and parameters"""
 
     sae_name: str
@@ -201,14 +201,17 @@ def analyze_sae(settings: AnalyzeSAESettings) -> None:
 
     activation_factory = ActivationFactory(settings.activation_factory, device_mesh=device_mesh)
 
-    sae = SparseDictionary.from_pretrained(
-        settings.sae.pretrained_name_or_path,
-        device_mesh=device_mesh,
-        device=settings.sae.device,
-        dtype=settings.sae.dtype,
-        fold_activation_scale=settings.sae.fold_activation_scale,
-        strict_loading=settings.sae.strict_loading,
-    )
+    if isinstance(settings.sae, PretrainedSAE):
+        sae = SparseDictionary.from_pretrained(
+            settings.sae.pretrained_name_or_path,
+            device_mesh=device_mesh,
+            device=settings.sae.device,
+            dtype=settings.sae.dtype,
+            fold_activation_scale=settings.sae.fold_activation_scale,
+            strict_loading=settings.sae.strict_loading,
+        )
+    else:
+        sae = SparseDictionary.from_config(settings.sae, device_mesh=device_mesh)
 
     logger.info(f"SAE model loaded: {type(sae).__name__}")
 
