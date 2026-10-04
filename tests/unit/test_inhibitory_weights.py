@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 from transformer_lens import HookedTransformer, HookedTransformerConfig
@@ -12,6 +14,7 @@ from llamascopium.circuits.global_weights import (
     compute_inhibitory_weights,
     search_inhibitory_atlas,
 )
+from llamascopium.circuits.global_weights.weights import _feature_specs
 from llamascopium.models.lorsa import LorsaConfig, LowRankSparseAttention
 from llamascopium.models.sae import SAEConfig, SparseAutoEncoder
 
@@ -148,6 +151,50 @@ def test_inhibitory_statistics_pool_positions_across_prompts():
     assert stats.mu_off[0] == pytest.approx(4.0)
     assert stats.delta[0] == pytest.approx(3.0)
     assert stats.normalized_inhibitory_score[0] == pytest.approx(1.5)
+
+
+def test_lazy_encoder_preserves_ln_virtual_weights_without_full_precision_copy():
+    sae = SparseAutoEncoder(
+        SAEConfig(
+            d_model=2,
+            expansion_factor=1,
+            hook_point_in="blocks.0.ln2.hook_normalized",
+            hook_point_out="blocks.0.hook_mlp_out",
+            device="cpu",
+            dtype=torch.float16,
+        )
+    )
+    with torch.no_grad():
+        sae.W_E.copy_(torch.tensor([[1, 2], [3, 4]], dtype=torch.float16))
+        sae.W_D.copy_(torch.tensor([[-2, 1], [1, -1]], dtype=torch.float16))
+    model = SimpleNamespace(
+        device_mesh=None,
+        cfg=SimpleNamespace(parallel_attn_mlp=False, normalization_type="LN"),
+        blocks=[SimpleNamespace(ln2=SimpleNamespace(w=torch.tensor([2.0, 3.0])))],
+    )
+    source = _spec("source", (-1, 0), [[0], [0]], [[-2, 1], [1, -1]])
+    lazy = _feature_specs(model, [sae], lazy_encoder=True)[0]
+    eager = _feature_specs(model, [sae])[0]
+    assert lazy.encoder.data_ptr() == sae.W_E.data_ptr()
+    assert lazy.encoder.dtype == torch.float16
+    lazy_result = InhibitoryWeights([source, lazy], [(lazy.name, 0)])
+    eager_result = InhibitoryWeights([source, eager], [(eager.name, 0)])
+    torch.testing.assert_close(lazy_result.virtual_weights, eager_result.virtual_weights)
+
+
+def test_completed_inhibitory_statistics_remain_available_after_offload():
+    source = _spec("source", (0, 0), [[1], [0]], [[-2, 0]])
+    target = _spec("target", (1, 0), [[1], [0]], [[1, 0]])
+    result = InhibitoryWeights([source, target], [("target", 0)])
+    result.update(
+        {"source": torch.tensor([[0.0], [1.0]]).to_sparse()},
+        {("target", 0): torch.tensor([4.0, 0.0])},
+        {"target.scale": torch.ones(2)},
+    )
+    before = result.topk(("target", 0))
+    result.offload_to_cpu()
+    assert result.topk(("target", 0)) == before
+    assert result.statistics(("target", 0), "source").virtual_weight.device.type == "cpu"
 
 
 def test_inhibitory_atlas_uses_positive_priority_and_causal_edge_direction():

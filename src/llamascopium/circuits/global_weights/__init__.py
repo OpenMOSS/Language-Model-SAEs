@@ -1,4 +1,10 @@
-from llamascopium.circuits.global_weights.atlas import InhibitoryAtlas, search_inhibitory_atlas
+from llamascopium.circuits.global_weights.atlas import (
+    Atlas,
+    ConnectedFeatures,
+    InhibitoryAtlas,
+    search_inhibitory_atlas,
+)
+from llamascopium.circuits.global_weights.forward_only_replacement_model import ForwardOnlyReplacementModel
 from llamascopium.circuits.global_weights.inhibitory import (
     InhibitoryConnection,
     InhibitoryStatistics,
@@ -14,6 +20,9 @@ from llamascopium.circuits.global_weights.weights import (
 )
 
 __all__ = [
+    "Atlas",
+    "ConnectedFeatures",
+    "ForwardOnlyReplacementModel",
     "FeatureSpec",
     "GlobalConnection",
     "GlobalWeights",

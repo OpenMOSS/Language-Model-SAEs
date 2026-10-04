@@ -22,6 +22,7 @@ class FeatureSpec:
     is_lorsa: bool = False
     ov_group_size: int = 1
     center_decoder: bool = False
+    encoder_gain: torch.Tensor | None = None  # Applied lazily when the full encoder is retained in its original dtype.
 
 
 @dataclass(frozen=True)
@@ -185,7 +186,10 @@ class GlobalWeights:
 
 
 def _feature_specs(
-    model: TransformerLensLanguageModel, dictionaries: list[SparseAutoEncoder | LowRankSparseAttention]
+    model: TransformerLensLanguageModel,
+    dictionaries: list[SparseAutoEncoder | LowRankSparseAttention],
+    *,
+    lazy_encoder: bool = False,
 ) -> list[FeatureSpec]:
     if model.device_mesh is not None or any(isinstance(sae.W_E, DTensor) for sae in dictionaries):
         raise ValueError("Global weights currently require a non-distributed model and dictionaries")
@@ -205,9 +209,10 @@ def _feature_specs(
         if hook_in != expected_in or hook_out != expected_out:
             raise ValueError(f"Unsupported dictionary hook pair: {hook_in}, {hook_out}")
         norm = getattr(model.blocks[layer], f"ln{1 if is_lorsa else 2}")
-        encoder = sae.W_E.detach().float()
-        if model.cfg.normalization_type == "LN":
-            encoder = encoder * norm.w.detach().float()[:, None]
+        encoder = sae.W_E.detach() if lazy_encoder else sae.W_E.detach().float()
+        gain = norm.w.detach() if model.cfg.normalization_type == "LN" else None
+        if gain is not None and not lazy_encoder:
+            encoder = encoder * gain.float()[:, None]
         specs.append(
             FeatureSpec(
                 name=hook_out,
@@ -218,6 +223,7 @@ def _feature_specs(
                 is_lorsa=is_lorsa,
                 ov_group_size=sae.cfg.ov_group_size if is_lorsa else 1,
                 center_decoder=model.cfg.normalization_type == "LN",
+                encoder_gain=gain if lazy_encoder else None,
             )
         )
     return specs

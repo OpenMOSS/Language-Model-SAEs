@@ -295,6 +295,8 @@ class TransformerLensLanguageModel(HookedTransformer, LanguageModel):
             hf_cfg=hf_model.config.to_dict(),
             device=self.device,
             dtype=cfg.dtype,
+            local_files_only=cfg.local_files_only or os.environ.get("HF_HUB_OFFLINE") == "1",
+            trust_remote_code=True,
         )
         state_dict = loading.get_pretrained_state_dict(cfg.model_name, tl_cfg, hf_model, dtype=cfg.dtype)
         HookedTransformer.__init__(self, tl_cfg, hf_tokenizer, move_to_device=False)

@@ -4,6 +4,71 @@ from dataclasses import dataclass
 from typing import Callable
 
 from llamascopium.circuits.global_weights.inhibitory import Feature, InhibitoryConnection, InhibitoryWeights
+from llamascopium.circuits.utils.batched_features import BatchedFeatures, ConnectedFeatures
+
+
+@dataclass
+class Node:
+    name: str
+    influence: float
+    visited: bool
+
+
+class Atlas:
+    """Explore the reference global-weight graph in both directions."""
+
+    def __init__(self, features: BatchedFeatures):
+        if len(features) != 1:
+            raise ValueError("Atlas requires exactly one seed feature")
+        name = features.to_str_nodes()[0]
+        self.device = features.layer.device
+        self.nodes = {name: Node(name, influence=1.0, visited=True)}
+        self.links: dict[tuple[str, str], float] = {}
+        self.iteration = 0
+
+    def add_link(self, source: str, target: str, weight: float) -> None:
+        if (source, target) in self.links:
+            return
+        self.links[source, target] = weight
+        influence = self.nodes[source].influence * weight
+        if target not in self.nodes:
+            self.nodes[target] = Node(target, influence=influence, visited=False)
+        else:
+            self.nodes[target].influence += influence
+
+    def update(self, feature_to_explore: BatchedFeatures, connected_features: list[ConnectedFeatures]) -> None:
+        if len(feature_to_explore) != len(connected_features):
+            raise ValueError("Each explored feature requires one connection result")
+        for index, connected in enumerate(connected_features):
+            feature = feature_to_explore[index].to_str_nodes()[0]
+            if feature not in self.nodes:
+                raise ValueError(f"Feature has not been selected for exploration: {feature}")
+            for neighbor, weight in zip(connected.upstream_features.to_str_nodes(), connected.upstream_values.tolist()):
+                self.add_link(feature, neighbor, weight)
+            for neighbor, weight in zip(connected.downstream_features.to_str_nodes(), connected.downstream_values.tolist()):
+                self.add_link(feature, neighbor, weight)
+        self.iteration += 1
+
+    def select_top_k_nodes_to_visit(self, k: int) -> BatchedFeatures:
+        if k < 0:
+            raise ValueError("k must be nonnegative")
+        nodes = sorted(
+            (node for node in self.nodes.values() if not node.visited),
+            key=lambda node: node.influence,
+            reverse=True,
+        )[:k]
+        for node in nodes:
+            node.visited = True
+        return BatchedFeatures.from_str_nodes([node.name for node in nodes], device=self.device)
+
+    def export_to_json(self) -> dict:
+        return {
+            "nodes": [{node.name: node.influence} for node in self.nodes.values()],
+            "links": [
+                {"source": source, "target": target, "weight": weight}
+                for (source, target), weight in self.links.items()
+            ],
+        }
 
 
 @dataclass
@@ -100,5 +165,9 @@ def search_inhibitory_atlas(
         frontier = atlas.select_top_k_nodes_to_visit(expansion_width)
         if not frontier:
             break
+        if level == 0 and isinstance(result, InhibitoryWeights):
+            result.offload_to_cpu()
+        elif level > 0:
+            del result
     assert root_result is not None
     return atlas, root_result

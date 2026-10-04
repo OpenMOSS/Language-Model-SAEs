@@ -56,6 +56,17 @@ def _positive_sparse_activations(activations: torch.Tensor) -> torch.Tensor:
     ).coalesce()
 
 
+def _virtual_weights(decoder: torch.Tensor, encoder: torch.Tensor, center: bool) -> torch.Tensor:
+    """Compute float32 virtual weights without copying a full SAE decoder to float32."""
+    weights = torch.empty(decoder.shape[0], device=decoder.device, dtype=torch.float32)
+    for start in range(0, decoder.shape[0], 4096):
+        rows = decoder[start : start + 4096].float()
+        if center:
+            rows = rows - rows.mean(dim=-1, keepdim=True)
+        weights[start : start + 4096] = rows @ encoder
+    return weights
+
+
 class InhibitoryWeights:
     """Stream source-weighted on and inactive off means for upstream pairs.
 
@@ -79,18 +90,19 @@ class InhibitoryWeights:
                 raise ValueError(f"Unknown target feature: {target}")
             target_spec = self.specs[name]
             encoder = target_spec.encoder[:, index].float()
+            if target_spec.encoder_gain is not None:
+                encoder = encoder * target_spec.encoder_gain.float()
             self.virtual_weights[target] = {}
             self.s_on[target] = {}
             self.weighted_on[target] = {}
             for source in specs:
                 if source.order >= target_spec.order:
                     continue
-                decoder = source.decoder.float()
-                if target_spec.center_decoder:
-                    decoder = decoder - decoder.mean(dim=-1, keepdim=True)
-                self.virtual_weights[target][source.name] = decoder @ encoder  # [source_feature]
+                self.virtual_weights[target][source.name] = _virtual_weights(
+                    source.decoder, encoder, target_spec.center_decoder
+                )  # [source_feature]
                 self.s_on[target][source.name] = torch.zeros(
-                    source.decoder.shape[0], device=decoder.device, dtype=torch.float32
+                    source.decoder.shape[0], device=source.decoder.device, dtype=torch.float32
                 )
                 self.weighted_on[target][source.name] = torch.zeros_like(self.s_on[target][source.name])
         source_names = {name for sums in self.s_on.values() for name in sums}
@@ -104,6 +116,19 @@ class InhibitoryWeights:
         self.abs_pre_total = {target: torch.zeros_like(total) for target, total in self.s_total.items()}
         self.n_total = 0
         self.num_samples = 0
+
+    def offload_to_cpu(self) -> None:
+        """Move completed scan statistics off GPU before expanding another atlas level."""
+        for per_target in (self.virtual_weights, self.s_on, self.weighted_on):
+            for values in per_target.values():
+                for name, tensor in values.items():
+                    values[name] = tensor.cpu()
+        for per_source in (self.n_on, self.activation_sum):
+            for name, tensor in per_source.items():
+                per_source[name] = tensor.cpu()
+        for per_target in (self.s_total, self.abs_pre_total):
+            for target, tensor in per_target.items():
+                per_target[target] = tensor.cpu()
 
     @torch.no_grad()
     def update(
@@ -237,7 +262,7 @@ def compute_inhibitory_global_weights(
     Downstream inhibitory search requires pre-TopK activation for candidate
     target features and is intentionally a separate future implementation.
     """
-    result = InhibitoryWeights(_feature_specs(model, dictionaries), targets)
+    result = InhibitoryWeights(_feature_specs(model, dictionaries, lazy_encoder=True), targets)
     target_indices: dict[str, list[int]] = {}
     for name, index in result.targets:
         target_indices.setdefault(name, []).append(index)

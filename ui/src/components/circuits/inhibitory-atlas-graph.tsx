@@ -36,6 +36,8 @@ export function InhibitoryAtlasGraph({
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null)
+  const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity)
+  const positionsRef = useRef(new Map<string, { x: number; y: number }>())
   const [minimumPercent, setMinimumPercent] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const edges = result.connections ?? result.upstream
@@ -142,16 +144,18 @@ export function InhibitoryAtlasGraph({
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.4, 3])
-      .on('zoom', (event) =>
-        canvas.attr('transform', event.transform.toString()),
-      )
+      .on('zoom', (event) => {
+        zoomTransformRef.current = event.transform
+        canvas.attr('transform', event.transform.toString())
+      })
     zoomRef.current = zoom
     svg.call(zoom)
+    svg.call(zoom.transform, zoomTransformRef.current)
 
     const nodes = Array.from(visibleIds)
       .map((id) => graph.nodes.get(id))
       .filter((node): node is AtlasNode => node !== undefined)
-      .map((node) => ({ ...node }))
+      .map((node) => ({ ...node, ...positionsRef.current.get(node.id) }))
     const byId = new Map(nodes.map((node) => [node.id, node]))
     const links: AtlasLink[] = visibleEdges.flatMap((edge) => {
       const source = byId.get(keyOf(edge.source, edge.sourceFeature))
@@ -173,7 +177,7 @@ export function InhibitoryAtlasGraph({
       .selectAll('line')
       .data(links)
       .join('line')
-      .attr('stroke', '#e8a34d')
+      .attr('stroke', '#c77814')
       .attr(
         'stroke-width',
         (item) => 1 + 4 * Math.sqrt(item.value / (graph.maxValue || 1)),
@@ -201,21 +205,38 @@ export function InhibitoryAtlasGraph({
       .attr('r', (item) => (item.id === rootId ? 11 : 8))
       .attr('fill', (item) =>
         item.id === rootId
-          ? '#20b6a4'
+          ? '#0d9488'
           : item.hook.includes('attn')
-            ? '#38bdf8'
-            : '#fb923c',
+            ? '#0284c7'
+            : '#ea580c',
       )
-      .attr('stroke', '#b8c3d1')
+      .attr('stroke', '#64748b')
       .attr('stroke-width', 1.5)
-    node
-      .append('text')
-      .attr('x', 14)
-      .attr('y', 4)
-      .attr('fill', '#f1f5f9')
-      .attr('font-size', 12)
-      .attr('font-family', 'monospace')
+    const labels = node
+      .append('foreignObject')
+      .attr('x', -92)
+      .attr('y', 16)
+      .attr('width', 184)
+      .attr('height', 84)
+      .append('xhtml:div')
+      .style('text-align', 'center')
+      .style('overflow-wrap', 'anywhere')
+      .style('pointer-events', 'none')
+    labels
+      .append('div')
+      .style('font', '600 12px monospace')
+      .style('color', '#0f172a')
       .text(labelOf)
+    labels
+      .append('div')
+      .style('font', '11px/1.3 sans-serif')
+      .style('color', '#475569')
+      .style('margin-top', '3px')
+      .style('display', '-webkit-box')
+      .style('-webkit-line-clamp', '4')
+      .style('-webkit-box-orient', 'vertical')
+      .style('overflow', 'hidden')
+      .text((item) => item.interpretation || 'No interpretation available')
     node
       .append('title')
       .text(
@@ -225,22 +246,26 @@ export function InhibitoryAtlasGraph({
 
     const simulation = d3
       .forceSimulation(nodes)
+      .alpha(positionsRef.current.size ? 0.05 : 1)
       .force(
         'link',
         d3
           .forceLink<AtlasNode, AtlasLink>(links)
           .id((item) => item.id)
-          .distance(105)
+          .distance(155)
           .strength(0.35),
       )
-      .force('charge', d3.forceManyBody().strength(-260))
-      .force('collision', d3.forceCollide<AtlasNode>().radius(38))
+      .force('charge', d3.forceManyBody().strength(-380))
+      .force('collision', d3.forceCollide<AtlasNode>().radius(92))
       .force(
         'x',
         d3.forceX<AtlasNode>((item) => 970 - item.depth * 270).strength(0.7),
       )
       .force('y', d3.forceY<AtlasNode>(340).strength(0.08))
       .on('tick', () => {
+        for (const item of nodes) {
+          positionsRef.current.set(item.id, { x: item.x ?? 0, y: item.y ?? 0 })
+        }
         link
           .attr('x1', (item) => item.source.x ?? 0)
           .attr('y1', (item) => item.source.y ?? 0)
@@ -251,20 +276,34 @@ export function InhibitoryAtlasGraph({
           (item) => `translate(${item.x ?? 0},${item.y ?? 0})`,
         )
       })
+    const dragged = new Set<string>()
+    const dragOrigins = new Map<string, { x: number; y: number }>()
     node.call(
       d3
         .drag<SVGGElement, AtlasNode>()
+        .clickDistance(4)
         .on('start', (event, item) => {
-          if (!event.active) simulation.alphaTarget(0.2).restart()
+          dragOrigins.set(item.id, { x: event.x, y: event.y })
           item.fx = item.x
           item.fy = item.y
         })
         .on('drag', (event, item) => {
+          if (!dragged.has(item.id)) {
+            const origin = dragOrigins.get(item.id)
+            if (
+              origin &&
+              Math.hypot(event.x - origin.x, event.y - origin.y) < 5
+            )
+              return
+            dragged.add(item.id)
+            simulation.alphaTarget(0.12).restart()
+          }
           item.fx = event.x
           item.fy = event.y
         })
-        .on('end', (event, item) => {
-          if (!event.active) simulation.alphaTarget(0)
+        .on('end', (_, item) => {
+          dragOrigins.delete(item.id)
+          if (dragged.delete(item.id)) simulation.alphaTarget(0)
           item.fx = null
           item.fy = null
         }),
@@ -293,7 +332,7 @@ export function InhibitoryAtlasGraph({
       .selectAll<SVGGElement, AtlasNode>('.atlas-nodes > g')
       .attr('opacity', (node) => (adjacent.has(node.id) ? 1 : 0.24))
       .select('circle')
-      .attr('stroke', (node) => (node.id === activeId ? '#ffffff' : '#b8c3d1'))
+      .attr('stroke', (node) => (node.id === activeId ? '#0f172a' : '#64748b'))
       .attr('stroke-width', (node) => (node.id === activeId ? 3 : 1.5))
   }, [activeId, visibleEdges])
 
@@ -307,8 +346,8 @@ export function InhibitoryAtlasGraph({
   }
 
   return (
-    <div className="border border-slate-800 bg-[#151820]">
-      <div className="flex flex-wrap items-center gap-4 border-b border-white/10 px-4 py-2 text-xs text-slate-200">
+    <div className="border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center gap-4 border-b border-slate-200 px-4 py-2 text-xs text-slate-700">
         <span>
           {visibleIds.size} features · {visibleEdges.length} connections
         </span>
@@ -320,7 +359,7 @@ export function InhibitoryAtlasGraph({
             max={100}
             value={minimumPercent}
             onChange={(event) => setMinimumPercent(Number(event.target.value))}
-            className="w-32 accent-amber-400"
+            className="w-32 accent-amber-600"
             aria-label="Minimum connection score"
           />
           <span className="w-16 text-right tabular-nums">
@@ -333,7 +372,7 @@ export function InhibitoryAtlasGraph({
             onClick={() => zoomBy(1.25)}
             title="Zoom in"
             aria-label="Zoom in"
-            className="rounded p-1 hover:bg-white/10"
+            className="rounded p-1 hover:bg-slate-100"
           >
             <Plus className="size-4" />
           </button>
@@ -342,7 +381,7 @@ export function InhibitoryAtlasGraph({
             onClick={() => zoomBy(0.8)}
             title="Zoom out"
             aria-label="Zoom out"
-            className="rounded p-1 hover:bg-white/10"
+            className="rounded p-1 hover:bg-slate-100"
           >
             <Minus className="size-4" />
           </button>
@@ -359,7 +398,7 @@ export function InhibitoryAtlasGraph({
             }
             title="Reset view"
             aria-label="Reset view"
-            className="rounded p-1 hover:bg-white/10"
+            className="rounded p-1 hover:bg-slate-100"
           >
             <Maximize2 className="size-4" />
           </button>
@@ -370,18 +409,18 @@ export function InhibitoryAtlasGraph({
           <svg
             ref={svgRef}
             viewBox="0 0 1100 680"
-            className="h-[520px] min-w-[800px] w-full touch-none lg:h-[680px]"
+            className="h-[520px] min-w-[800px] w-full touch-none bg-white lg:h-[680px]"
             role="img"
             aria-label="Inhibitory global weight atlas"
           />
         </div>
-        <div className="min-w-0 border-t border-white/10 p-4 text-slate-100 lg:border-l lg:border-t-0">
+        <div className="min-w-0 border-t border-slate-200 p-4 text-slate-900 lg:border-l lg:border-t-0">
           {activeNode && (
             <>
               <div className="font-mono text-sm font-semibold">
                 {labelOf(activeNode)}
               </div>
-              <p className="mt-2 break-words text-xs leading-5 text-slate-300">
+              <p className="mt-2 break-words text-xs leading-5 text-slate-600">
                 {activeNode.interpretation || 'No interpretation available'}
               </p>
               <Link
@@ -390,11 +429,11 @@ export function InhibitoryAtlasGraph({
                   dictionaryName: activeNode.saeName,
                   featureIndex: String(activeNode.featureIndex),
                 }}
-                className="mt-3 block break-all text-xs text-sky-300 hover:underline"
+                className="mt-3 block break-all text-xs text-sky-700 hover:underline"
               >
                 {activeNode.saeName} #{activeNode.featureIndex}
               </Link>
-              <div className="mt-5 border-t border-white/10 pt-3 text-xs text-slate-400">
+              <div className="mt-5 border-t border-slate-200 pt-3 text-xs text-slate-500">
                 {incidentEdges.length} adjacent connections
               </div>
               <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
@@ -409,12 +448,12 @@ export function InhibitoryAtlasGraph({
                         key={`${other.id}-${index}`}
                         type="button"
                         onClick={() => setSelectedId(other.id)}
-                        className="flex w-full items-center justify-between gap-2 rounded-sm px-1 py-1 text-left text-xs hover:bg-white/10"
+                        className="flex w-full items-center justify-between gap-2 rounded-sm px-1 py-1 text-left text-xs hover:bg-slate-100"
                       >
                         <span className="truncate font-mono">
                           {labelOf(other)}
                         </span>
-                        <span className="shrink-0 tabular-nums text-amber-300">
+                        <span className="shrink-0 tabular-nums text-amber-700">
                           {(normalized
                             ? edge.normalizedInhibitoryScore
                             : edge.score
