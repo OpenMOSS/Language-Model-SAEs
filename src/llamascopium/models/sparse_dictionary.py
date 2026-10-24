@@ -929,7 +929,12 @@ class SparseDictionary(HookedRootModule, ABC):
                 assert isinstance(self, NormComputing), "NormComputing is required for Lp loss computation"
                 with timer.time("lp_loss_calculation"):
                     jumprelu_threshold = self.activation_function.get_jumprelu_threshold()
-                    l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre) * self.decoder_norm()
+                    if self.cfg.sparsity_include_decoder_norm:
+                        # The threshold gates hidden_pre * ||W_d|| (see encode), the decoder-norm
+                        # scaled activation that ReLU(exp(t) - f_i(x)) ||W_{d,i}||_2 corresponds to.
+                        l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre * self.decoder_norm())
+                    else:
+                        l_p = torch.nn.functional.relu(jumprelu_threshold - hidden_pre) * self.decoder_norm()
                     l_p = lp_coefficient * l_p.sum(dim=-1)
                     l_p, _ = apply_token_mask(l_p, self.specs.loss(l_p), batch.get("mask"), "mean")
                     loss_dict["l_p"] = l_p

@@ -237,3 +237,39 @@ def test_forward(sae_config: SAEConfig, sae: SparseAutoEncoder):
     # We'll just verify it runs without error and gives expected shape for now,
     # or use simpler values if exact match is needed.
     assert output.shape == (1, 2)
+
+
+@pytest.mark.parametrize("sparsity_include_decoder_norm", [True, False])
+def test_jumprelu_lp_loss_is_invariant_to_latent_rescaling(sparsity_include_decoder_norm: bool):
+    """Scaling every latent's encoder by s and its decoder by 1/s leaves the SAE's function
+    unchanged, so the JumpReLU pre-act loss must not change either."""
+
+    def lp_loss(scale: float) -> torch.Tensor:
+        torch.manual_seed(0)
+        cfg = SAEConfig(
+            hook_point_in="in",
+            hook_point_out="in",
+            d_model=8,
+            expansion_factor=4,
+            device="cpu",
+            dtype=torch.float32,
+            act_fn="jumprelu",
+            jumprelu_threshold_window=0.1,
+            sparsity_include_decoder_norm=sparsity_include_decoder_norm,
+        )
+        sae = SparseAutoEncoder(cfg)
+        with torch.no_grad():
+            for param in (sae.W_E, sae.b_E, sae.W_D, sae.b_D):
+                param.normal_(0, 0.5)
+            sae.activation_function.log_jumprelu_threshold.fill_(-1.0)
+            if not sparsity_include_decoder_norm:
+                # Without the decoder norm in the gate, the threshold moves with the encoder.
+                sae.activation_function.log_jumprelu_threshold.add_(math.log(scale))
+            sae.W_E.mul_(scale)
+            sae.b_E.mul_(scale)
+            sae.W_D.div_(scale)
+        torch.manual_seed(1)
+        batch = {"in": torch.randn(64, 8), "tokens": torch.zeros(64, dtype=torch.long)}
+        return sae.compute_loss(batch, lp_coefficient=1.0)["l_p"].mean()
+
+    torch.testing.assert_close(lp_loss(5.0), lp_loss(1.0))
