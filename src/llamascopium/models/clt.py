@@ -611,8 +611,11 @@ class CrossLayerTranscoder(
         # print(f'{x.shape=} {self.W_E[layer].shape=} {self.b_E[layer].shape=}')
 
         if self.cfg.sparsity_include_decoder_norm:
-            # print(f'{hidden_pre.shape=} {self.decoder_norm_per_feature(layer=layer).shape=}')
-            hidden_pre = hidden_pre * self.decoder_norm_per_feature(layer=layer)
+            # The norm of this layer's decoders concatenated over every target layer, i.e. row
+            # `layer` of `decoder_norm_per_feature()`, as used by `encode`. The per-target norms
+            # are zero for target layers before `layer`.
+            decoder_norm = self.decoder_norm_per_feature(layer=layer).pow(2).sum(dim=0).sqrt()
+            hidden_pre = hidden_pre * decoder_norm
 
         # Apply activation function (ReLU, TopK, etc.)
         if self.cfg.act_fn.lower() == "jumprelu":
@@ -621,6 +624,9 @@ class CrossLayerTranscoder(
             feature_acts = hidden_pre * hidden_pre.gt(jumprelu_threshold[layer])
         else:
             feature_acts = self.activation_function(hidden_pre)
+
+        if self.cfg.sparsity_include_decoder_norm:
+            feature_acts = feature_acts / decoder_norm
 
         if return_hidden_pre:
             return feature_acts, hidden_pre
