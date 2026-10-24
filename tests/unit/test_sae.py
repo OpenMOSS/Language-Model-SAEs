@@ -237,3 +237,38 @@ def test_forward(sae_config: SAEConfig, sae: SparseAutoEncoder):
     # We'll just verify it runs without error and gives expected shape for now,
     # or use simpler values if exact match is needed.
     assert output.shape == (1, 2)
+
+
+def test_auxk_loss_only_trains_dead_latents():
+    """AuxK fits the dead latents to the main reconstruction's residual (Gao et al., 2024),
+    so it must not send gradient to the alive latents or the decoder bias."""
+    torch.manual_seed(0)
+    cfg = SAEConfig(
+        hook_point_in="in",
+        hook_point_out="in",
+        d_model=8,
+        expansion_factor=4,
+        device="cpu",
+        dtype=torch.float32,
+        act_fn="topk",
+        top_k=2,
+    )
+    sae = SparseAutoEncoder(cfg)
+    with torch.no_grad():
+        for param in (sae.W_E, sae.b_E, sae.W_D, sae.b_D):
+            param.normal_(0, 0.5)
+    dead = torch.zeros(cfg.d_sae, dtype=torch.bool)
+    dead[::2] = True
+
+    output = sae.compute_loss(
+        {"in": torch.randn(16, 8), "tokens": torch.zeros(16, dtype=torch.long)},
+        auxk_coefficient=1.0,
+        k_aux=4,
+        update_dead_statistics=lambda feature_acts, mask, specs: dead,
+    )
+    output["l_aux"].mean().backward()
+
+    assert sae.W_D.grad[dead].abs().sum() > 0
+    assert torch.all(sae.W_D.grad[~dead] == 0)
+    assert torch.all(sae.W_E.grad[:, ~dead] == 0)
+    assert sae.b_D.grad is None or torch.all(sae.b_D.grad == 0)
