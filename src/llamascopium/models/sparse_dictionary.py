@@ -946,7 +946,9 @@ class SparseDictionary(HookedRootModule, ABC):
 
                 with timer.time("auxk_loss_calculation"):
                     # Get reconstruction error
-                    e = label - reconstructed  # (batch, d_model) or (batch, seq_len, d_model)
+                    # Detached: AuxK trains the dead latents to model the main reconstruction's
+                    # residual (Gao et al., 2024), it must not pull the main reconstruction.
+                    e = (label - reconstructed).detach()  # (batch, d_model) or (batch, seq_len, d_model)
 
                     # Get the top-k_aux dead latents based on their activation values
                     current_k = self.current_k
